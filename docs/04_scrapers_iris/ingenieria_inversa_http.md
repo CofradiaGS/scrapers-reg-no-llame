@@ -2,7 +2,7 @@
 
 Este documento detalla el análisis exhaustivo de ingeniería inversa realizado sobre el portal de operaciones **Movistar IRIS** (sustentado sobre la infraestructura legacy de **Oracle WebLogic Server**, **BEA AquaLogic User Interaction / Plumtree** y el motor de procesos de negocio **Fuego BPM / Oracle BPM 10g/11g**).
 
-El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
+El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
 
 ---
 
@@ -20,7 +20,7 @@ El servidor `http://iris.tmoviles.com.ar` no expone una API REST moderna; su int
 
 ### Comparativa: Motor HTTP vs Playwright Chromium
 
-| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
+| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
 | :--- | :--- | :--- | :--- |
 | **Latencia por consulta** | 15 a 22 segundos | **4 a 8 segundos** | Eliminación del parseo DOM, CSSOM y scripts JS pesados. |
 | **Consumo de Memoria RAM** | ~1.200 MB por worker | **~35 MB por worker** | Reducción del 97% del footprint en memoria. |
@@ -204,7 +204,7 @@ Regex utilizadas:
 
 ## 4. Estrategia de Connection Pooling y Resiliencia
 
-El método [`start()`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
+El método [`start()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
 
 ```python
 retries = Retry(

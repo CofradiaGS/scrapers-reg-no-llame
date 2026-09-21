@@ -1,6 +1,6 @@
 # Contrato de Motores de Scraping: IScraperEnginePort
 
-El puerto secundario o conducido (*Driven Port*) [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/ports/scraper_port.py) define el contrato abstracto que cualquier motor de extracción externa debe implementar para operar dentro del ecosistema hexagonal del proyecto.
+El puerto secundario o conducido (*Driven Port*) [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/ports/scraper_port.py) define el contrato abstracto que cualquier motor de extracción externa debe implementar para operar dentro del ecosistema hexagonal del proyecto.
 
 ---
 
@@ -58,7 +58,7 @@ class IScraperEnginePort(ABC):
 
 ### 2.1. `@property def nombre(self) -> str`
 - **Retorno**: `str` en minúsculas y sin espacios (ej. `"iris"`, `"claro"`, `"personal"`, `"movistar"`).
-- **Semántica**: Es la clave bajo la cual se reclama el lote en la base de datos (`scraper_actual = 'claro'`), la clave del namespace en el JSON enriquecido (`datos_json = {"claro": {...}}`), y el nombre de referencia en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L126-L172).
+- **Semántica**: Es la clave bajo la cual se reclama el lote en la base de datos (`scraper_actual = 'claro'`), la clave del namespace en el JSON enriquecido (`datos_json = {"claro": {...}}`), y el nombre de referencia en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L126-L172).
 
 ### 2.2. `def iniciar(self) -> None`
 - **Semántica**: Debe encargarse de instanciar pools de conexiones HTTP, sesiones con reintentos o lanzar el motor headless de navegación. No debe bloquear indebidamente si el portal no está disponible.
@@ -68,8 +68,8 @@ class IScraperEnginePort(ABC):
 - **Semántica**: Permite verificar tokens OAuth, cookies JSESSIONID o credenciales activas. Si el portal no requiere autenticación (ej. consulta pública), debe retornar `True`.
 
 ### 2.4. `def consultar_linea(self, linea: Linea) -> ScrapeResult`
-- **Parámetro**: [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L12-L38) (*Value Object* inmutable que garantiza un ANI numérico de 10 dígitos).
-- **Retorno**: [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L97-L131) tipado con enum `StatusScraping`.
+- **Parámetro**: [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L12-L38) (*Value Object* inmutable que garantiza un ANI numérico de 10 dígitos).
+- **Retorno**: [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L97-L131) tipado con enum `StatusScraping`.
 - **Invariante**: **Nunca debe retornar None**. Si no hay coincidencia, debe retornar un `ScrapeResult` con `status=StatusScraping.SIN_COINCIDENCIA`. Si ocurre un fallo irrecuperable de transporte, debe elevar una excepción adecuada para que el caso de uso la registre en el estado `error`.
 - **Trazabilidad Temporal Automática**: La entidad `ScrapeResult` estampa de forma automática su atributo `ultima_modificacion` en formato `YYYY-MM-DD HH:MM:SS` al momento de instanciarse. Al llamar a `to_namespace_dict()`, esta marca de tiempo se inyecta directamente en el diccionario del scraper, asegurando auditoría temporal independiente para cada motor.
 
@@ -84,7 +84,7 @@ class IScraperEnginePort(ABC):
 
 ## 3. Clase Base Reutilizable: BaseScraperAdapter
 
-Para evitar duplicación de código en la gestión de pausas aleatorias que protegen la tasa de peticiones del portal remoto, el framework provee [`BaseScraperAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/base_scraper.py):
+Para evitar duplicación de código en la gestión de pausas aleatorias que protegen la tasa de peticiones del portal remoto, el framework provee [`BaseScraperAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/base_scraper.py):
 
 ```python
 class BaseScraperAdapter(IScraperEnginePort):

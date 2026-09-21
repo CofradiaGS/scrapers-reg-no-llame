@@ -1,6 +1,6 @@
 ﻿# Concurrencia y Bloqueos con SELECT FOR UPDATE SKIP LOCKED
 
-Este documento expone la mecánica de concurrencia a nivel de fila utilizada en el repositorio central de MySQL 8, detallando cómo la cláusula `FOR UPDATE SKIP LOCKED` implementada en [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L68-L184) elimina la contención entre procesos, previene deadlocks y asegura el aislamiento transaccional estricto.
+Este documento expone la mecánica de concurrencia a nivel de fila utilizada en el repositorio central de MySQL 8, detallando cómo la cláusula `FOR UPDATE SKIP LOCKED` implementada en [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L68-L184) elimina la contención entre procesos, previene deadlocks y asegura el aislamiento transaccional estricto.
 
 ---
 
@@ -41,14 +41,14 @@ sequenceDiagram
 
 ### Ventajas Operativas
 * **Cero Tiempos de Espera (No-Wait)**: Los workers nunca entran en estado de bloqueo esperando a otros procesos.
-* **Escalabilidad Horizontal Lineal**: Es posible elevar la cantidad de workers concurrentes (ej. 9 workers en [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/runtime/supervisor.py#L37)) sin que se degraden los tiempos de respuesta de la base de datos.
+* **Escalabilidad Horizontal Lineal**: Es posible elevar la cantidad de workers concurrentes (ej. 9 workers en [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/runtime/supervisor.py#L37)) sin que se degraden los tiempos de respuesta de la base de datos.
 * **Inexistencia de Deadlocks por Reclamo**: Al respetarse el orden estricto `ORDER BY id ASC` y omitirse los registros ocupados, dos transacciones nunca intentarán bloquearse mutuamente en orden inverso.
 
 ---
 
 ## 3. Implementación Literal en Python y Atomismo Transaccional
 
-En [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L102-L141), la reserva se realiza en dos fases atómicas bajo la misma conexión con `autocommit=False`:
+En [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L102-L141), la reserva se realiza en dos fases atómicas bajo la misma conexión con `autocommit=False`:
 
 ```python
 # Fase 1: Selección con bloqueo omitiendo bloqueados
@@ -112,7 +112,7 @@ transaction-isolation = READ-COMMITTED
 
 ## 5. Manejo de Reversión Segura y Recuperación de Fallos
 
-Si durante la ejecución del lote el proceso del worker es interrumpido (ej. detención ordenada solicitada por el supervisor vía `stop_event` o falla recuperable), el caso de uso invoca [`revertir_a_pendiente`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L246-L286):
+Si durante la ejecución del lote el proceso del worker es interrumpido (ej. detención ordenada solicitada por el supervisor vía `stop_event` o falla recuperable), el caso de uso invoca [`revertir_a_pendiente`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L246-L286):
 
 ```sql
 UPDATE `queue_registro_no_llame`

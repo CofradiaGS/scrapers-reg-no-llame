@@ -1,6 +1,6 @@
 # Entidades y Value Objects de Dominio
 
-En el núcleo de la arquitectura ([`core/domain/`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain)), los modelos representan los conceptos centrales del negocio de telecomunicaciones y procesamiento de colas.
+En el núcleo de la arquitectura ([`core/domain/`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain)), los modelos representan los conceptos centrales del negocio de telecomunicaciones y procesamiento de colas.
 
 Siguiendo los principios del **Domain-Driven Design (DDD)**:
 - Los **Value Objects** carecen de identidad conceptual propia, son inmutables o intercambiables según el valor de sus atributos, y garantizan la validez de los datos desde su instanciación.
@@ -10,7 +10,7 @@ Siguiendo los principios del **Domain-Driven Design (DDD)**:
 
 ## 1. Value Object: `Linea`
 
-La clase [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L10-L38) modela una línea telefónica normalizada de la República Argentina. Está definida como `@dataclass(frozen=True)`, garantizando su inmutabilidad absoluta y permitiendo utilizarla como clave de diccionarios o elementos de conjuntos (*sets*).
+La clase [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L10-L38) modela una línea telefónica normalizada de la República Argentina. Está definida como `@dataclass(frozen=True)`, garantizando su inmutabilidad absoluta y permitiendo utilizarla como clave de diccionarios o elementos de conjuntos (*sets*).
 
 ### 1.1. Código Fuente Real
 ```python
@@ -56,7 +56,7 @@ class Linea:
 
 ## 2. Value Object: `Titular`
 
-La clase [`Titular`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L39-L62) encapsula la información de titularidad registral y comercial de la línea obtenida de cualquier motor de extracción:
+La clase [`Titular`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L39-L62) encapsula la información de titularidad registral y comercial de la línea obtenida de cualquier motor de extracción:
 
 ### 2.1. Código Fuente Real
 ```python
@@ -97,7 +97,7 @@ class Titular:
 
 ## 3. Value Object: `Servicio`
 
-La clase [`Servicio`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L64-L77) encapsula las características técnicas y comerciales del plan telefónico:
+La clase [`Servicio`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L64-L77) encapsula las características técnicas y comerciales del plan telefónico:
 
 ### 3.1. Código Fuente Real
 ```python
@@ -125,7 +125,7 @@ class Servicio:
 
 ## 4. Entidad: `ScrapeResult`
 
-La clase [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L79-L111) es la entidad canónica de intercambio que **todos los adaptadores de scraping deben retornar** de manera obligatoria al invocar [`consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/ports/scraper_port.py#L30-L35).
+La clase [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L79-L111) es la entidad canónica de intercambio que **todos los adaptadores de scraping deben retornar** de manera obligatoria al invocar [`consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/ports/scraper_port.py#L30-L35).
 
 ### 4.1. Código Fuente Real
 ```python
@@ -175,7 +175,7 @@ Adicionalmente, cada objeto serializado incluye de forma obligatoria el campo `u
 
 ## 5. Entidad: `RegistroCola`
 
-La clase [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L114-L124) representa un registro individual extraído y reservado de la cola de base de datos para su procesamiento:
+La clase [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L114-L124) representa un registro individual extraído y reservado de la cola de base de datos para su procesamiento:
 
 ### 5.1. Código Fuente Real
 ```python
@@ -196,10 +196,10 @@ class RegistroCola:
 | Campo SQL (`queue_registro_no_llame`) | Tipo SQL | Atributo `RegistroCola` | Tipo Dominio |
 | :--- | :--- | :--- | :--- |
 | `id` | `BIGINT AUTO_INCREMENT` | `id` | `int` |
-| `ani` | `BIGINT` | `linea` | [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L10) |
-| (Calculado por B-Tree) | N/A | `prioridad` | [`Prioridad`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/enums.py#L8) |
+| `ani` | `BIGINT` | `linea` | [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L10) |
+| (Calculado por B-Tree) | N/A | `prioridad` | [`Prioridad`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/enums.py#L8) |
 | (Calculado por B-Tree) | N/A | `prioridad_nombre` | `str` |
-| `estado` | `ENUM(...)` | `estado` | [`EstadoRegistro`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/enums.py#L36) |
+| `estado` | `ENUM(...)` | `estado` | [`EstadoRegistro`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/enums.py#L36) |
 | `scraper_actual` | `VARCHAR(50)` | `scraper_actual` | `str` |
 | `fuente` | `TEXT` | `fuente` | `Optional[str]` |
 | `datos_json` | `LONGTEXT` / `JSON` | `datos_existentes` | `Dict[str, Any]` |
@@ -208,7 +208,7 @@ class RegistroCola:
 
 ## 6. Enums de Dominio (`core/domain/enums.py`)
 
-El archivo [`core/domain/enums.py`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/enums.py) provee las definiciones constantes que garantizan tipado fuerte en todo el sistema:
+El archivo [`core/domain/enums.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/enums.py) provee las definiciones constantes que garantizan tipado fuerte en todo el sistema:
 
 ### 6.1. Enum `Prioridad`
 ```python
@@ -357,7 +357,7 @@ classDiagram
 ---
 
 ## 8. Referencias Cruzadas
-- [Regla de Pipeline en Dominio](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Arquitectura Hexagonal](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/01_arquitectura/arquitectura_hexagonal.md)
+- [Regla de Pipeline en Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Arquitectura Hexagonal](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/01_arquitectura/arquitectura_hexagonal.md)
 - [Esquema de Base de Datos](../03_base_de_datos_y_colas/esquema_ddl_vps.md)

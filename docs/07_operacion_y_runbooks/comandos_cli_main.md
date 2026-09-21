@@ -1,6 +1,6 @@
 # CLI de Operación y Comandos del Sistema (`main.py`)
 
-El archivo [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py) constituye el **Punto de Entrada Unificado** (CLI Principal) del sistema de scraping distribuido bajo arquitectura hexagonal. Permite ejecutar operaciones de diagnóstico, inspección de motores registrados, pruebas atómicas unitarias, pruebas transaccionales de micro-lotes con soporte para colas en memoria (*dry-run*), mantenimiento de registros huérfanos y arranque supervisado de workers.
+El archivo [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py) constituye el **Punto de Entrada Unificado** (CLI Principal) del sistema de scraping distribuido bajo arquitectura hexagonal. Permite ejecutar operaciones de diagnóstico, inspección de motores registrados, pruebas atómicas unitarias, pruebas transaccionales de micro-lotes con soporte para colas en memoria (*dry-run*), mantenimiento de registros huérfanos y arranque supervisado de workers.
 
 ---
 
@@ -50,8 +50,8 @@ flowchart TD
 ### 2.1. `stats`
 Consulta el estado global de la tabla central de cola en el VPS (`queue_registro_no_llame`) agrupando por scraper y estado.
 
-* **Firma / Implementación:** `cmd_stats(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L40-L63).
-* **Adaptador utilizado:** Instancia de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L36) con pool dedicado (`cli_stats_pool`, `pool_size=2`).
+* **Firma / Implementación:** `cmd_stats(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L40-L63).
+* **Adaptador utilizado:** Instancia de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L36) con pool dedicado (`cli_stats_pool`, `pool_size=2`).
 * **Sintaxis PowerShell / CMD:**
   ```powershell
   python main.py stats
@@ -80,9 +80,9 @@ Consulta el estado global de la tabla central de cola en el VPS (`queue_registro
 ---
 
 ### 2.2. `list-scrapers`
-Lista todos los adaptadores de scraping registrados dinámicamente en el [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/registry.py).
+Lista todos los adaptadores de scraping registrados dinámicamente en el [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/registry.py).
 
-* **Firma / Implementación:** `cmd_list_scrapers(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L65-L74).
+* **Firma / Implementación:** `cmd_list_scrapers(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L65-L74).
 * **Sintaxis PowerShell / CMD:**
   ```powershell
   python main.py list-scrapers
@@ -104,7 +104,7 @@ Lista todos los adaptadores de scraping registrados dinámicamente en el [`Scrap
 ### 2.3. `test-line`
 Ejecuta la extracción y normalización completa de un único ANI (10 dígitos) usando el scraper especificado. Útil para verificar cambios en parsers o credenciales sin interactuar con la cola.
 
-* **Firma / Implementación:** `cmd_test_line(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L76-L108).
+* **Firma / Implementación:** `cmd_test_line(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L76-L108).
 * **Parámetros y Flags:**
   | Argumento / Flag | Tipo | Default | Descripción |
   | :--- | :---: | :---: | :--- |
@@ -182,15 +182,15 @@ Ejecuta la extracción y normalización completa de un único ANI (10 dígitos) 
 ---
 
 ### 2.4. `test-batch`
-Prueba el ciclo transaccional completo del caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/use_cases/process_batch_use_case.py). Permite probar con la base de datos real del VPS o en modo aislado en memoria (`--dry-run`).
+Prueba el ciclo transaccional completo del caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/use_cases/process_batch_use_case.py). Permite probar con la base de datos real del VPS o en modo aislado en memoria (`--dry-run`).
 
-* **Firma / Implementación:** `cmd_test_batch(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L110-L148).
+* **Firma / Implementación:** `cmd_test_batch(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L110-L148).
 * **Parámetros y Flags:**
   | Argumento / Flag | Tipo | Default | Descripción |
   | :--- | :---: | :---: | :--- |
   | `--scraper` | Opción (`str`) | `"iris_http"` | Motor de scraping a utilizar |
   | `--batch-size` | Opción (`int`) | `3` | Cantidad de registros a procesar en el micro-lote |
-  | `--dry-run` | Flag booleano | `False` | Utiliza [`MemoryQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/memory_adapter.py) con ANIs simulados sin tocar la BD VPS |
+  | `--dry-run` | Flag booleano | `False` | Utiliza [`MemoryQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/memory_adapter.py) con ANIs simulados sin tocar la BD VPS |
   | `--proxy-pool` | Flag booleano | `False` | Ejecuta el lote mediante el pool local de proxies públicos rotativos |
 * **Sintaxis PowerShell / CMD:**
   ```powershell
@@ -218,9 +218,9 @@ Prueba el ciclo transaccional completo del caso de uso [`ProcesarLoteUseCase`](f
 ---
 
 ### 2.5. `sweep-orphans`
-Ejecuta manualmente el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/use_cases/cleanup_orphans_use_case.py) para recuperar registros que quedaron trabados en estado `procesando` debido a cortes de energía, caídas de red o cierres forzados de procesos workers.
+Ejecuta manualmente el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/use_cases/cleanup_orphans_use_case.py) para recuperar registros que quedaron trabados en estado `procesando` debido a cortes de energía, caídas de red o cierres forzados de procesos workers.
 
-* **Firma / Implementación:** `cmd_sweep_orphans(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L150-L156).
+* **Firma / Implementación:** `cmd_sweep_orphans(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L150-L156).
 * **Parámetros y Flags:**
   | Argumento / Flag | Tipo | Default | Descripción |
   | :--- | :---: | :---: | :--- |
@@ -241,9 +241,9 @@ Ejecuta manualmente el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/
 ---
 
 ### 2.6. `supervise`
-Inicia el orquestador industrial [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/runtime/supervisor.py) directamente desde la interfaz de `main.py`.
+Inicia el orquestador industrial [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/runtime/supervisor.py) directamente desde la interfaz de `main.py`.
 
-* **Firma / Implementación:** `cmd_supervise(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/main.py#L158-L176).
+* **Firma / Implementación:** `cmd_supervise(args)` en [main.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/main.py#L158-L176).
 * **Parámetros y Flags:**
   | Flag | Tipo | Default | Descripción |
   | :--- | :---: | :---: | :--- |

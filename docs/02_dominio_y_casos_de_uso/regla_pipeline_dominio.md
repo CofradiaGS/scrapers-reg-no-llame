@@ -1,6 +1,6 @@
 # Regla de Dominio del Pipeline: Lógica Condicional, Ventana Temporal de 7 Días y Cortocircuito
 
-La clase [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
+La clase [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
 
 Al residir en el núcleo de dominio, esta lógica no depende de procedimientos almacenados (*stored procedures*), disparadores (*triggers*) de SQL ni condicionales dispersos en los controladores de la interfaz o en los hilos del supervisor.
 
@@ -455,9 +455,9 @@ Esto permite escenarios operativos avanzados, tales como:
 ---
 
 ## 5. Referencias Cruzadas
-- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/01_arquitectura/pipeline_cascada.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/01_arquitectura/pipeline_cascada.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Guía Scraper CuitOnline](../05_guia_nuevos_scrapers/guia_creacion_cuitonline.md)
 - [Guía Scraper Datuar](../05_guia_nuevos_scrapers/guia_creacion_datuar.md)
 - [Guía Scraper Claro](../05_guia_nuevos_scrapers/guia_creacion_claro.md)

@@ -1,14 +1,14 @@
 # Mapeo de Campos y Parser de Datos de IRIS
 
-Este documento detalla el funcionamiento del módulo de extracción y normalización [`adapters/scrapers/iris/parser.py`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/parser.py).
+Este documento detalla el funcionamiento del módulo de extracción y normalización [`adapters/scrapers/iris/parser.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/parser.py).
 
-El parser es compartido de manera agnóstica tanto por el motor HTTP ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py)) como por el motor de Playwright ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py)), garantizando consistencia absoluta en las estructuras de datos generadas.
+El parser es compartido de manera agnóstica tanto por el motor HTTP ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py)) como por el motor de Playwright ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py)), garantizando consistencia absoluta en las estructuras de datos generadas.
 
 ---
 
 ## 1. Función de Limpieza y Normalización (`clean_val`)
 
-El motor Fuego BPM incrusta prefijos internos en los campos de sólo lectura o generados por el servidor. La función [`clean_val()`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/parser.py#L5-L19) aplica los siguientes filtros:
+El motor Fuego BPM incrusta prefijos internos en los campos de sólo lectura o generados por el servidor. La función [`clean_val()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/parser.py#L5-L19) aplica los siguientes filtros:
 
 ```python
 def clean_val(text: str) -> str:
@@ -31,7 +31,7 @@ def clean_val(text: str) -> str:
 
 ## 2. Catálogo de los 25+ Campos Extraídos
 
-La función [`parse_iris_detail()`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/parser.py#L21-L113) recibe el código HTML completo de la pantalla de *Detalle de Operación* y procesa cinco secciones de datos:
+La función [`parse_iris_detail()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/parser.py#L21-L113) recibe el código HTML completo de la pantalla de *Detalle de Operación* y procesa cinco secciones de datos:
 
 | # | Campo Diccionario (`datos`) | ID del Componente DOM | Tipo de Dato | Descripción / Ejemplo |
 | :---: | :--- | :--- | :--- | :--- |
@@ -87,7 +87,7 @@ lineas_a_portar = list(dict.fromkeys(lineas_encontradas))
 
 ## 4. Transformación al Modelo de Dominio ScrapeResult
 
-Tanto [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_http_adapter.py#L31-L101) como [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/scrapers/iris/iris_browser_adapter.py#L32-L102) transforman este diccionario en la entidad central del dominio:
+Tanto [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_adapter.py#L31-L101) como [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_browser_adapter.py#L32-L102) transforman este diccionario en la entidad central del dominio:
 
 ```python
 titular = Titular(

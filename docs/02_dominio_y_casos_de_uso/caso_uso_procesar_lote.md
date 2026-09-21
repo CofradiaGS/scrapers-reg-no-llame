@@ -1,14 +1,14 @@
 # Caso de Uso: Procesar Lote (`ProcesarLoteUseCase`)
 
-El caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/use_cases/process_batch_use_case.py#L19-L133) es el corazón orquestador de la capa de aplicación. Su responsabilidad es coordinar el ciclo de vida completo de un micro-lote de registros desde su reserva atómica en la cola hasta su persistencia enriquecida en la base de datos central.
+El caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/use_cases/process_batch_use_case.py#L19-L133) es el corazón orquestador de la capa de aplicación. Su responsabilidad es coordinar el ciclo de vida completo de un micro-lote de registros desde su reserva atómica en la cola hasta su persistencia enriquecida en la base de datos central.
 
 ---
 
 ## 1. Responsabilidades del Caso de Uso
 
-1. **Reclamo Atómico:** Solicita un micro-lote de registros disponibles al puerto de cola [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/ports/queue_port.py#L11-L57) para el scraper especificado.
-2. **Ejecución de Scraping:** Invoca secuencialmente la consulta externa a través del puerto [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/ports/scraper_port.py#L10-L49).
-3. **Aplicación de Reglas de Negocio:** Evalúa el resultado mediante [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/core/domain/entities.py#L126-L172) para resolver el próximo scraper y estado.
+1. **Reclamo Atómico:** Solicita un micro-lote de registros disponibles al puerto de cola [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/ports/queue_port.py#L11-L57) para el scraper especificado.
+2. **Ejecución de Scraping:** Invoca secuencialmente la consulta externa a través del puerto [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/ports/scraper_port.py#L10-L49).
+3. **Aplicación de Reglas de Negocio:** Evalúa el resultado mediante [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L126-L172) para resolver el próximo scraper y estado.
 4. **Fusión Acumulativa de Namespaces:** Agrega la información nueva al diccionario `datos_json` existente sin sobreescribir datos previos.
 5. **Auditoría de Fuentes:** Actualiza la lista JSON histórica en la columna `fuente`.
 6. **Persistencia en Lote:** Persiste masivamente las actualizaciones de estado y datos con una sola llamada atómica.
@@ -212,7 +212,7 @@ El parámetro opcional `should_stop: Optional[Callable[[], bool]] = None` recibe
   5. Ningún registro queda bloqueado ni perdido en el limbo.
 
 ### 4.4. Actualización Obligatoria de `updated_at` en MySQL
-Toda operación que altere el estado o los datos de un registro en `queue_registro_no_llame` debe actualizar sin excepción la columna relacional `updated_at`. En el adaptador [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L197-L203):
+Toda operación que altere el estado o los datos de un registro en `queue_registro_no_llame` debe actualizar sin excepción la columna relacional `updated_at`. En el adaptador [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L197-L203):
 - Al persistir resultados (`persistir_resultados`): `SET estado = %s, scraper_actual = %s, fuente = %s, datos_json = %s, updated_at = CURRENT_TIMESTAMP`.
 - Al revertir a pendiente (`revertir_a_pendiente`): `SET estado = 'pendiente', updated_at = CURRENT_TIMESTAMP`.
 - Al reclamar lote o liberar huérfanos: `updated_at = CURRENT_TIMESTAMP`.
@@ -220,8 +220,8 @@ Toda operación que altere el estado o los datos de un registro en `queue_regist
 ---
 
 ## 5. Referencias Cruzadas
-- [Regla de Pipeline en Dominio](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
-- [Caso de Uso: Liberar Huérfanos](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_liberar_huerfanos.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scraper%20iris%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Regla de Pipeline en Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
+- [Caso de Uso: Liberar Huérfanos](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/caso_uso_liberar_huerfanos.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Adaptador de Cola MySQL VPS](../03_base_de_datos_y_colas/esquema_ddl_vps.md)
 - [Worker Runtime y Ciclo de Vida](../06_runtime_y_concurrencia/ciclo_de_vida_worker.md)
