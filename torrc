@@ -1,0 +1,18 @@
+# Plantilla de referencia para torrc (Cobro Express / Claro Telefonía)
+# NOTA: TorController genera automáticamente torrc_runtime en tiempo de ejecución
+# con las rutas absolutas exactas del usuario y máquina activa.
+
+DataDirectory tor_data
+SocksPort 9050 IsolateSOCKSAuth
+ControlPort 9051
+CookieAuthentication 0
+DormantCanceledByStartup 1
+
+# Priorización regional Cono Sur para Cobro Express (StrictNodes 0 permite fallback si escasean nodos)
+ExitNodes {ar},{cl},{uy},{br}
+StrictNodes 0
+
+# Optimización de latencias y timeouts de circuitos
+CircuitBuildTimeout 10
+KeepalivePeriod 60
+MaxCircuitDirtiness 300

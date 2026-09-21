@@ -1,0 +1,194 @@
+# ==============================================================================
+# .gitignore - Sistema de Scraping Concurrente y Arquitectura Hexagonal
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. SEGURIDAD Y SECRETOS (CRÍTICO)
+# Variables de entorno y credenciales de acceso a VPS MySQL y motores de scraping
+# ------------------------------------------------------------------------------
+.env
+.env.*
+*.env
+secrets/
+credentials/
+sessions/
+cookies/
+auth_state.json
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+
+# ------------------------------------------------------------------------------
+# 2. TOR, PROXIES Y RED EFÍMERA
+# Archivos de circuitos, descriptores cacheados (>40 MB), llaves privadas onion, locks y proxies
+# ------------------------------------------------------------------------------
+tor_data/
+tor_data_*/
+tor_data_test/
+tor/
+Tor/
+torrc_runtime
+*.torrc_runtime
+tor.log
+tor_*.log
+live_proxies.txt
+proxies_*.txt
+
+# ------------------------------------------------------------------------------
+# 3. PYTHON RUNTIME, COMPILACIÓN Y ANÁLISIS
+# Bytecode generado, cachés de importación, multiprocessing coverage y análisis estático
+# ------------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+.coverage
+.coverage.*
+htmlcov/
+build/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+
+# ------------------------------------------------------------------------------
+# 4. ENTORNOS VIRTUALES (VENV Y CONDA)
+# Paquetes y dependencias locales aisladas (usar requirements.txt)
+# ------------------------------------------------------------------------------
+.venv/
+venv/
+env/
+ENV/
+.conda/
+env.bak/
+venv.bak/
+
+# ------------------------------------------------------------------------------
+# 5. LOGS Y MONITOREO INDUSTRIAL
+# Registros de supervisor_vps.py (con rotación *.log.*), workers y demonio BAT
+# ------------------------------------------------------------------------------
+*.log
+*.log.*
+logs/
+supervisor_*.log
+supervisor_247.log
+*.out
+*.err
+pip-log.txt
+
+# ------------------------------------------------------------------------------
+# 6. AUTOMATIZACIÓN DE NAVEGADORES (PLAYWRIGHT / CHROMIUM)
+# Perfiles persistentes, descargas, traces de red y reportes pesados
+# ------------------------------------------------------------------------------
+browser_profile/
+browser_data/
+.playwright/
+playwright/.cache/
+test-results/
+playwright-report/
+traces/
+*.trace*
+har/
+*.har
+screenshots/
+downloads/
+
+# ------------------------------------------------------------------------------
+# 7. CACHÉS LOCALES DE SCRAPERS Y BASES SQLITE
+# Bases de datos SQLite locales de enriquecimiento y journallings
+# ------------------------------------------------------------------------------
+*.sqlite
+*.sqlite3
+*.db
+*.db3
+*.db-journal
+*.db-wal
+*.db-shm
+cuitonline_cache.*
+datuar_cache.*
+
+# ------------------------------------------------------------------------------
+# 8. EXPORTACIONES, DUMPS Y PAYLOADS CON DATOS PERSONALES
+# Resultados de scraping, exportaciones masivas y volcados JSON/CSV
+# ------------------------------------------------------------------------------
+resultados_*.json
+*_results.json
+*_payload.json
+*_data.json
+dump_*.json
+export_*.json
+test_*.json
+*.jsonl
+*.csv
+*.xlsx
+*.parquet
+*.sql
+lineas_*.txt
+registros_*.txt
+
+# ------------------------------------------------------------------------------
+# 9. DATOS DE TRABAJO Y ENACOM
+# Excluye volcados temporales en data/ pero PRESERVA la base oficial de ENACOM
+# ------------------------------------------------------------------------------
+data/*
+!data/enacom/
+!data/enacom/**
+output/
+exports/
+scratch/
+prueba/
+prueba
+prueba.*
+test_local.*
+scratch.*
+tmp/
+temp/
+*.tmp
+*.bak
+
+# ------------------------------------------------------------------------------
+# 10. EDITORES, IDES Y ASISTENTES IA (VSCODE, PYCHARM, CURSOR, GEMINI)
+# Configuraciones de workspace personales y cachés de entorno de desarrollo
+# ------------------------------------------------------------------------------
+.vscode/
+.idea/
+.cursor/
+.gemini/
+.claude/
+*.sublime-project
+*.sublime-workspace
+.history/
+*.swp
+*.swo
+*~
+
+# ------------------------------------------------------------------------------
+# 11. SISTEMAS OPERATIVOS (WINDOWS Y OTROS)
+# Metadatos del explorador de archivos, miniaturas y accesos directos
+# ------------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+.DS_Store
+
+# ------------------------------------------------------------------------------
+# 12. AGENTES / ASISTENTE IA (DIRECTORIOS TEMPORALES)
+# Excluye carpetas efímeras dentro de .agents preservando rules/ y skills/
+# ------------------------------------------------------------------------------
+.agents/scratch/
+.agents/.cache/
+.agents/tmp/
+.agents/temp/
+.agents/logs/
+.agents/history/

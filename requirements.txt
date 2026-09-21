@@ -1,0 +1,18 @@
+# Core HTTP, Red y Concurrencia
+requests>=2.31.0
+urllib3>=2.0.0
+PySocks>=1.7.1
+stem>=1.8.2
+
+# Base de Datos
+mysql-connector-python>=8.0.33
+sqlalchemy>=2.0.0
+
+# Scraping y Renderizado
+playwright>=1.40.0
+beautifulsoup4>=4.12.0
+
+# Datos y Configuración
+python-dotenv>=1.0.0
+pandas>=2.0.0
+openpyxl>=3.1.0
