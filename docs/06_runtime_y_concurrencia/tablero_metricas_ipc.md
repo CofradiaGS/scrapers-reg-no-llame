@@ -85,7 +85,7 @@ Emitido en el bloque `finally` de terminación del proceso:
 
 ## 3. Implementación del Bucle Drenador (`_metrics_dashboard_loop`)
 
-Definido en las líneas 118-170 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/runtime/supervisor.py#L118-L170):
+Definido en las líneas 118-170 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L118-L170):
 
 ```python
 def _metrics_dashboard_loop(self):

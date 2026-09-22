@@ -47,7 +47,7 @@ El portal IRIS (`http://iris.tmoviles.com.ar`) reside dentro de una red privada 
    ```
    *Debe responder con `StatusCode : 200`.*
 4. **Comportamiento Automático del Supervisor:**
-   No es necesario reiniciar el supervisor. Una vez restablecido el enlace, el hilo centinela [`_circuit_breaker_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/runtime/supervisor.py#L63) detectará el código 200 y liberará el evento `pause_event`, reanudando los workers en menos de 25 segundos de forma automática.
+   No es necesario reiniciar el supervisor. Una vez restablecido el enlace, el hilo centinela [`_circuit_breaker_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L63) detectará el código 200 y liberará el evento `pause_event`, reanudando los workers en menos de 25 segundos de forma automática.
 
 ---
 
@@ -122,14 +122,14 @@ El portal IRIS (`http://iris.tmoviles.com.ar`) reside dentro de una red privada 
 
 ### 5.3. Solución Implementada en el Código y Diagnóstico
 1. **Auto-Sanación Nativa:**
-   En [adapters/scrapers/iris/iris_http_bot.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py#L156-L161), el método `_open_query_screen` intercepta automáticamente el mensaje `SESSION_TIMED_OUT` o redirecciones a `login.xhtml` y reautentica la sesión de inmediato sin abortar el worker:
+   En [adapters/scrapers/iris/iris_http_bot.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L156-L161), el método `_open_query_screen` intercepta automáticamente el mensaje `SESSION_TIMED_OUT` o redirecciones a `login.xhtml` y reautentica la sesión de inmediato sin abortar el worker:
    ```python
    if "SESSION_TIMED_OUT" in r_cb.text or "login.xhtml" in r_cb.url:
        logger.warning("Detectada expiración de sesión en servidor IRIS. Auto-sanando sesión HTTP...")
        self.login()
    ```
 2. **Auditoría de Credenciales:**
-   Verificar que las credenciales en [.env](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/.env) no hayan expirado:
+   Verificar que las credenciales en [.env](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/.env) no hayan expirado:
    ```powershell
    python main.py test-line 1144332211 --scraper iris_http
    ```

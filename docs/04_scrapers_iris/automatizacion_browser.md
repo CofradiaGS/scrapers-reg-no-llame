@@ -1,8 +1,8 @@
 # Automatización de Navegador: Playwright Chromium en IRIS Movistar
 
-Este documento documenta en detalle la implementación del motor de automatización de navegador basado en **Playwright (Chromium)**, contenido en [`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py) y expuesto a través de [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_browser_adapter.py).
+Este documento documenta en detalle la implementación del motor de automatización de navegador basado en **Playwright (Chromium)**, contenido en [`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py) y expuesto a través de [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py).
 
-Aunque el motor HTTP ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_http_bot.py)) es el preferido por rendimiento, el motor de navegador headless cumple dos funciones estratégicas vitales:
+Aunque el motor HTTP ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)) es el preferido por rendimiento, el motor de navegador headless cumple dos funciones estratégicas vitales:
 1. **Mecanismo de Fallback**: Permite continuar la operación si Movistar actualiza tokens ofuscados o mecanismos anti-bot a nivel HTTP.
 2. **Inspección Visual y Depuración (Headful)**: Diagnóstico visual del portal IRIS en tiempo real mediante `HEADLESS=False`.
 
@@ -10,7 +10,7 @@ Aunque el motor HTTP ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/
 
 ## 1. Configuración y Lanzamiento de Chromium
 
-El arranque del navegador se ejecuta en [`IrisBot.start()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py#L23-L51) utilizando flags de optimización y evasión de bloqueos en entornos Linux/Windows:
+El arranque del navegador se ejecuta en [`IrisBot.start()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py#L23-L51) utilizando flags de optimización y evasión de bloqueos en entornos Linux/Windows:
 
 ```python
 launch_args = ["--no-sandbox", "--disable-dev-shm-usage"]
@@ -128,7 +128,7 @@ Para evitar errores por ordenamiento variable o filas mixtas (ej. consultas prev
 ```
 
 ### 3.6. Cierre del Diálogo Modal (Ciclo Limpio)
-Para prevenir acumulación de pestañas modales y fugas de estado DOM entre consultas consecutivas, [`close_execution_dialog()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py#L112-L141) implementa una estrategia defensiva de tres niveles:
+Para prevenir acumulación de pestañas modales y fugas de estado DOM entre consultas consecutivas, [`close_execution_dialog()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py#L112-L141) implementa una estrategia defensiva de tres niveles:
 1. **Selector directo ID**: `#portletComponentApplications_menuActionNormalModeApplications_executionDialogViewApplications_executionDialogApplications_CloseButton`
 2. **Selector XPath alternativo**: `//input[@title='Cerrar'][contains(@id, 'executionDialogApplications_CloseButton')]`
 3. **Fallback JavaScript nativo**:
@@ -141,7 +141,7 @@ Para prevenir acumulación de pestañas modales y fugas de estado DOM entre cons
 
 ## 4. Estrategia de Auto-Sanación (*Self-Healing*)
 
-En entornos de alta carga o redes inestables, el portal puede cerrar la sesión o mostrar páginas intermedias de error. [`ensure_in_query_screen()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/scrapers/iris/iris_bot.py#L142-L226) audita el estado del navegador antes de cada consulta:
+En entornos de alta carga o redes inestables, el portal puede cerrar la sesión o mostrar páginas intermedias de error. [`ensure_in_query_screen()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py#L142-L226) audita el estado del navegador antes de cada consulta:
 - **Expiración de Sesión**: Si detecta `login.xhtml` o inputs de login visibles, reinvoca `self.login()`.
 - **Navegación Extraviada**: Si la URL no contiene `workspace.xhtml`, fuerza una redirección hacia la URL base de Workspace.
 - **Ventanas Congeladas**: Si el diálogo está abierto pero no muestra el formulario de búsqueda, lo cierra y reabre desde el menú lateral.
