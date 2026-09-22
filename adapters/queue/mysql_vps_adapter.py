@@ -49,6 +49,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             user=config.VPS_DBUSER,
             password=config.VPS_DBPASS,
             database=config.VPS_DBNAME,
+            use_pure=getattr(config, "VPS_DB_USE_PURE", True),
             autocommit=False,
             connection_timeout=20
         )

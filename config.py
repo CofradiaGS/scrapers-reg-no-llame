@@ -24,6 +24,7 @@ VPS_DBUSER = os.getenv("VPS_DBUSER", "ignacio_acuna")
 VPS_DBPASS = os.getenv("VPS_DBPASS", "goodTimes2026*")
 VPS_DBNAME = os.getenv("VPS_DBNAME", "bases")
 VPS_DB_TABLE = os.getenv("VPS_DB_TABLE", "queue_registro_no_llame")
+VPS_DB_USE_PURE = os.getenv("VPS_DB_USE_PURE", "True").strip().lower() in ("true", "1", "yes")
 
 # Política de Horario Comercial Oficial IRIS (Movistar Argentina)
 HORARIO_COMERCIAL_ACTIVO = os.getenv("HORARIO_COMERCIAL_ACTIVO", "True").strip().lower() in ("true", "1", "yes")
