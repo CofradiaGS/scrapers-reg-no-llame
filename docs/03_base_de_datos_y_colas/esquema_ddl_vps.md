@@ -1,6 +1,6 @@
 # Especificación del Esquema DDL en MySQL 8 VPS
 
-Este documento detalla la arquitectura de almacenamiento relacional e híbrida implementada en el servidor central MySQL 8 del VPS para el sistema de scraping concurrente distribuido. La implementación desacoplada en el adaptador [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L36-L358) interactúa con la tabla maestra configurada en [`config.VPS_DB_TABLE`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/config.py#L26) (por defecto `queue_registro_no_llame`).
+Este documento detalla la arquitectura de almacenamiento relacional e híbrida implementada en el servidor central MySQL 8 del VPS para el sistema de scraping concurrente distribuido. La implementación desacoplada en el adaptador [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36-L358) interactúa con la tabla maestra configurada en [`config.VPS_DB_TABLE`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/config.py#L26) (por defecto `queue_registro_no_llame`).
 
 ---
 
@@ -31,7 +31,7 @@ CREATE TABLE IF NOT EXISTS `queue_registro_no_llame` (
 
 ## 2. Diccionario de Datos y Análisis de Columnas
 
-A continuación se detalla cada campo utilizado de forma literal en las consultas de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py):
+A continuación se detalla cada campo utilizado de forma literal en las consultas de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py):
 
 | Columna | Tipo de Dato MySQL | Nullable | Valor por Defecto | Propósito y Dinámica en Runtime |
 | :--- | :--- | :--- | :--- | :--- |
@@ -49,7 +49,7 @@ A continuación se detalla cada campo utilizado de forma literal en las consulta
 
 ## 3. Matriz de Estados y Transiciones del Ciclo de Vida
 
-Los estados están formalizados en Python en el enum [`EstadoRegistro`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/enums.py#L36-L43):
+Los estados están formalizados en Python en el enum [`EstadoRegistro`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/enums.py#L36-L43):
 
 ```mermaid
 stateDiagram-v2
@@ -77,14 +77,14 @@ stateDiagram-v2
 1. **`pendiente`**: El registro está listo para ser reclamado por un worker asignado al `scraper_actual`.
 2. **`procesando`**: Reclamado atómicamente por una transacción de worker. Permanece en este estado durante la consulta externa.
 3. **`completado`**: Finalización exitosa con coincidencia positiva confirmada por la entidad de dominio.
-4. **`no_coincidencia`**: El registro atravesó todos los eslabones configurados en [`ReglaPipeline.CADENA_DEFAULT`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L131) sin arrojar titularidad.
+4. **`no_coincidencia`**: El registro atravesó todos los eslabones configurados en [`ReglaPipeline.CADENA_DEFAULT`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) sin arrojar titularidad.
 5. **`error`**: Registro con falla técnica persistente en scraping o corrupción de respuesta.
 
 ---
 
 ## 4. Estructura y Esquema del Payload JSON (`datos_json`)
 
-El campo `datos_json` almacena un documento JSON con espacios de nombres aislados por cada scraper que haya procesado la línea ([`ScrapeResult.to_namespace_dict()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/domain/entities.py#L97-L111)). La persistencia acumulativa se orquesta en [`ProcesarLoteUseCase.ejecutar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/use_cases/process_batch_use_case.py#L82-L84):
+El campo `datos_json` almacena un documento JSON con espacios de nombres aislados por cada scraper que haya procesado la línea ([`ScrapeResult.to_namespace_dict()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L97-L111)). La persistencia acumulativa se orquesta en [`ProcesarLoteUseCase.ejecutar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L82-L84):
 
 ```python
 datos_acumulados = dict(reg.datos_existentes or {})
@@ -173,7 +173,7 @@ datos_acumulados.update(resultado.to_namespace_dict())
 
 ### 4.1. Trazabilidad Temporal por Scraper (`ultima_modificacion`) y de Registro (`updated_at`)
 - **A nivel de JSON (`ultima_modificacion`)**: Cada scraper (`iris`, `enacom`, `claro`, `movistar`, `personal`, `datuar`, `cuitonline`) almacena dentro de su propio namespace la clave `ultima_modificacion` en formato estándar `YYYY-MM-DD HH:MM:SS`. De esta forma se registra la fecha y hora exacta en que se ejecutó cada flujo independientemente de los demás.
-- **A nivel de BD (`updated_at`)**: Toda sentencia SQL de actualización ejecutada por los adaptadores ([`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py)) o scripts (`scripts/enrich_enacom.py`) incluye obligatoriamente `updated_at = CURRENT_TIMESTAMP`, garantizando que la columna de auditoría relacional de la tabla `queue_registro_no_llame` se actualice en el 100% de los updates.
+- **A nivel de BD (`updated_at`)**: Toda sentencia SQL de actualización ejecutada por los adaptadores ([`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py)) o scripts (`scripts/enrich_enacom.py`) incluye obligatoriamente `updated_at = CURRENT_TIMESTAMP`, garantizando que la columna de auditoría relacional de la tabla `queue_registro_no_llame` se actualice en el 100% de los updates.
 
 ---
 
@@ -298,7 +298,7 @@ graph LR
 
 1. **Primera Forma Normal (1NF)**:
    - **Incumplimiento Parcial**: `datos_json` almacena estructuras jerárquicas multi-namespace (`{"iris": {...}, "claro": {...}}`) en un tipo no estructurado (`longtext`). `fuente` almacena listas serializadas (`["pumpagos", "iris"]`).
-   - **Mitigación Arquitectónica**: Se adoptó el patrón híbrido *Document-in-RDBMS* para evitar operaciones `JOIN` de 5 tablas hijas durante el reclamo concurrente de 10 PCs. El software garantiza la validación estricta y formato JSON con [`ProcesarLoteUseCase.normalizar_fuente`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/core/use_cases/process_batch_use_case.py#L48-L60).
+   - **Mitigación Arquitectónica**: Se adoptó el patrón híbrido *Document-in-RDBMS* para evitar operaciones `JOIN` de 5 tablas hijas durante el reclamo concurrente de 10 PCs. El software garantiza la validación estricta y formato JSON con [`ProcesarLoteUseCase.normalizar_fuente`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L48-L60).
 
 2. **Segunda Forma Normal (2NF) y Tercera Forma Normal (3NF)**:
    - **Incumplimiento Operacional**: La tabla mezcla atributos del ciclo de vida de la cola transaccional (`estado`, `updated_at`, `scraper_actual`) con datos de dominio inmutables (`ani`) y resultados históricos (`datos_json`).
@@ -317,7 +317,7 @@ graph LR
 2. **Reorganización de Índices con Online DDL**:
    Se ejecutó `DROP INDEX idx_ani`, `DROP INDEX idx_estado` y `ADD INDEX idx_scraper_estado_ani_id` con `ALGORITHM=INPLACE, LOCK=NONE`, sin interrupción operativa.
 3. **Optimización con Index Hinting (`FORCE INDEX`)**:
-   En [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L115-L130), se forzó el uso del índice con `FORCE INDEX (idx_scraper_estado)`, reduciendo la latencia de reserva a **30 ms estables**.
+   En [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L115-L130), se forzó el uso del índice con `FORCE INDEX (idx_scraper_estado)`, reduciendo la latencia de reserva a **30 ms estables**.
 4. **Fallback Transaccional contra Colisiones `IntegrityError` (1062)**:
-   En [`MySQLQueueAdapter.persistir_resultados`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/adapters/queue/mysql_vps_adapter.py#L235-L255), si `cursor.executemany` detecta una duplicación de clave única en `(ani, fuente)`, ejecuta un rollback automático y reintenta fila por fila para persistir los registros válidos y aislar la fila conflictiva.
+   En [`MySQLQueueAdapter.persistir_resultados`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L235-L255), si `cursor.executemany` detecta una duplicación de clave única en `(ani, fuente)`, ejecuta un rollback automático y reintenta fila por fila para persistir los registros válidos y aislar la fila conflictiva.
 

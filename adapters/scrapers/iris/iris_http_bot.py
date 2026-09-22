@@ -70,8 +70,24 @@ class IrisHttpBot:
         logger.info("Sesión HTTP cerrada correctamente.")
 
     def close_execution_dialog(self):
-        """No-op compatible con la interfaz de IrisBot (en HTTP cada request es stateless)."""
-        pass
+        """Envía la petición AJAX de aborto de diálogo al motor JSF de IRIS para liberar el estado en el servidor."""
+        if not self.session or not self.logged_in:
+            return
+        try:
+            headers_ajax = {
+                "alui_request_type": "AJAX_CALLBACK",
+                "pt-httprequest-type": "CLIENT_SIDE",
+                "alui_ajax_controls": self.app_link_id,
+                "content-type": "application/x-www-form-urlencoded",
+                "referer": self.url_ws
+            }
+            data_ajax = {
+                "portletComponentApplications:menuActionNormalModeApplications:executionDialogViewApplications:abortExecutionListener": "",
+                "portletComponentApplications": "portletComponentApplications"
+            }
+            self.session.post(self.url_ws, headers=headers_ajax, data=data_ajax, timeout=10)
+        except Exception as e:
+            logger.debug(f"Error al cerrar diálogo de ejecución HTTP en IRIS: {e}")
 
     def sleep_jitter(self):
         """Pausa de cortesía entre consultas."""
@@ -81,13 +97,16 @@ class IrisHttpBot:
     def login(self) -> bool:
         """
         Ejecuta el login directo vía HTTP en el portal IRIS BPM.
-        1. GET inicial a login.xhtml para obtener cookie de sesión JSESSIONID.
-        2. POST de credenciales loginForm.
-        3. POST de inicialización de workspace (UAI).
-        4. Extracción dinámica del link a CCConsultaDeOperacion.
+        Fuerza la recreación limpia de la sesión HTTP (destruye cookies obsoletas).
         """
-        if not self.session:
-            self.start()
+        if self.session:
+            try:
+                self.session.close()
+            except Exception:
+                pass
+            self.session = None
+
+        self.start()
 
         logger.info(f"Navegando a login HTTP: {config.IRIS_LOGIN_URL}")
         try:
@@ -137,44 +156,99 @@ class IrisHttpBot:
             logger.error(f"Error durante el login HTTP: {e}")
             return False
 
+    def check_health(self) -> bool:
+        """Verifica si la sesión HTTP de IRIS está inicializada y activa."""
+        return self.logged_in and self.session is not None
+
     def _open_query_screen(self, max_retries: int = 2) -> tuple:
-        """Dispara el callback AJAX para obtener la pantalla de formulario inicial de consulta."""
+        """
+        Dispara el callback AJAX para obtener la pantalla de formulario inicial de consulta.
+        Implementa auto-sanación de sesión: si el callback falla o expira, fuerza un login limpio.
+        """
         for intento in range(1, max_retries + 1):
-            headers_ajax = {
-                "alui_request_type": "AJAX_CALLBACK",
-                "pt-httprequest-type": "CLIENT_SIDE",
-                "alui_ajax_controls": self.app_link_id,
-                "content-type": "application/x-www-form-urlencoded",
-                "referer": self.url_ws
-            }
-            data_ajax = {
-                "portletComponentApplications:menuActionNormalModeApplications:executionDialogViewApplications:abortExecutionListener": "",
-                "portletComponentApplications": "portletComponentApplications"
-            }
-            r_cb = self.session.post(self.url_ws, headers=headers_ajax, data=data_ajax, timeout=20)
+            try:
+                # Cierre preventivo de cualquier diálogo colgado previo en el servidor WebLogic
+                self.close_execution_dialog()
 
-            # Auto-sanación si la sesión expiró en el servidor
-            if "SESSION_TIMED_OUT" in r_cb.text or "login.xhtml" in r_cb.url:
-                logger.warning("Detectada expiración de sesión en servidor IRIS. Auto-sanando sesión HTTP...")
-                self.login()
-                continue
+                headers_ajax = {
+                    "alui_request_type": "AJAX_CALLBACK",
+                    "pt-httprequest-type": "CLIENT_SIDE",
+                    "alui_ajax_controls": self.app_link_id,
+                    "content-type": "application/x-www-form-urlencoded",
+                    "referer": self.url_ws
+                }
+                data_ajax = {
+                    "portletComponentApplications:menuActionNormalModeApplications:executionDialogViewApplications:abortExecutionListener": "",
+                    "portletComponentApplications": "portletComponentApplications"
+                }
+                r_cb = self.session.post(self.url_ws, headers=headers_ajax, data=data_ajax, timeout=20)
 
-            match_dialog = re.search(r'executeDialogApplications\(["\']([^"\']+)["\']', r_cb.text)
-            if not match_dialog:
+                # Auto-sanación si la sesión expiró en el servidor
+                es_sesion_expirada = (
+                    r_cb.status_code != 200 or
+                    "SESSION_TIMED_OUT" in r_cb.text or
+                    "login.xhtml" in r_cb.url or
+                    "loginForm" in r_cb.text or
+                    "session expired" in r_cb.text.lower()
+                )
+
+                if es_sesion_expirada:
+                    logger.warning(f"Expiración/Fallo de sesión en servidor IRIS (Status {r_cb.status_code}). Re-autenticando sesión HTTP...")
+                    self.logged_in = False
+                    if not self.login():
+                        raise RuntimeError("Fallo al re-autenticar sesión HTTP en IRIS.")
+                    headers_ajax["alui_ajax_controls"] = self.app_link_id
+                    r_cb = self.session.post(self.url_ws, headers=headers_ajax, data=data_ajax, timeout=20)
+
+                match_dialog = re.search(r'executeDialogApplications\(["\']([^"\']+)["\']', r_cb.text)
+                if not match_dialog:
+                    logger.warning(
+                        f"No se halló diálogo de consulta AJAX en respuesta (intento {intento}/{max_retries}, len: {len(r_cb.text)}). "
+                        "Forzando re-login limpio y reintento..."
+                    )
+                    self.logged_in = False
+                    if self.login():
+                        headers_ajax["alui_ajax_controls"] = self.app_link_id
+                        r_cb = self.session.post(self.url_ws, headers=headers_ajax, data=data_ajax, timeout=20)
+                        match_dialog = re.search(r'executeDialogApplications\(["\']([^"\']+)["\']', r_cb.text)
+
+                if not match_dialog:
+                    if intento < max_retries:
+                        time.sleep(1.0)
+                        continue
+                    self.logged_in = False
+                    raise RuntimeError("No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX.")
+
+                dialog_url = match_dialog.group(1)
+                r_form = self.session.get("http://iris.tmoviles.com.ar" + dialog_url, timeout=20)
+
+                doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)';", r_form.text)
+                form_action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_form.text, re.IGNORECASE)
+
+                if doc_key_match and form_action_match:
+                    return doc_key_match.group(1), form_action_match.group(1)
+
+                logger.warning(
+                    f"Tokens docKey/form_action no encontrados en pantalla de consulta (intento {intento}/{max_retries})."
+                )
+                self.logged_in = False
                 if intento < max_retries:
+                    self.login()
                     time.sleep(1.0)
-                    continue
-                raise RuntimeError("No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX.")
 
-            dialog_url = match_dialog.group(1)
-            r_form = self.session.get("http://iris.tmoviles.com.ar" + dialog_url, timeout=20)
+            except Exception as e:
+                logger.warning(f"Error en _open_query_screen (intento {intento}/{max_retries}): {e}")
+                self.logged_in = False
+                if intento < max_retries:
+                    try:
+                        self.login()
+                    except Exception:
+                        pass
+                    time.sleep(1.0)
+                else:
+                    raise
 
-            doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)';", r_form.text)
-            form_action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_form.text, re.IGNORECASE)
-
-            if doc_key_match and form_action_match:
-                return doc_key_match.group(1), form_action_match.group(1)
-
+        self.logged_in = False
         raise RuntimeError("No se pudieron extraer los tokens docKey y form_action del formulario de consulta.")
 
     def consultar_linea(self, nro_linea: str) -> Optional[Dict[str, Any]]:
@@ -192,72 +266,104 @@ class IrisHttpBot:
         linea_limpia = "".join(filter(str.isdigit, str(nro_linea).strip()))
         logger.info(f"--- [HTTP] Consultando línea: {linea_limpia} ---")
 
-        # 1. Obtener pantalla inicial de consulta
-        doc_key, form_action = self._open_query_screen()
+        try:
+            # 1. Obtener pantalla inicial de consulta
+            doc_key, form_action = self._open_query_screen()
 
-        # 2. POST de búsqueda de línea
-        ts_now = int(time.time() * 1000)
-        post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={ts_now}"
-        query_payload = {
-            "xo$Action": "11",
-            "xo$AttName": "att$button6",
-            "xo$ChangedAtts": "att$nroLinea,att$combo3,",
-            "xo$DocSessKey": doc_key,
-            "xo$ScreenSessKey": "0",
-            "xo$executionType": "rscript",
-            "att$nroLinea": linea_limpia,
-            "att$combo3": "4",
-            "": "undefined"
-        }
+            # 2. POST de búsqueda de línea
+            ts_now = int(time.time() * 1000)
+            post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={ts_now}"
+            query_payload = {
+                "xo$Action": "11",
+                "xo$AttName": "att$button6",
+                "xo$ChangedAtts": "att$nroLinea,att$combo3,",
+                "xo$DocSessKey": doc_key,
+                "xo$ScreenSessKey": "0",
+                "xo$executionType": "rscript",
+                "att$nroLinea": linea_limpia,
+                "att$combo3": "4",
+                "": "undefined"
+            }
 
-        r_post = self.session.post(post_url, data=query_payload, timeout=25)
-        finish_url_match = re.search(r'url="([^"]+)"', r_post.text)
-        if not finish_url_match:
-            logger.warning(f"Línea {linea_limpia}: Respuesta de consulta inesperada (sin finishUrl).")
-            return None
+            r_post = self.session.post(post_url, data=query_payload, timeout=25)
 
-        finish_url = finish_url_match.group(1).replace("'", "")
+            # Sanidad: Si durante el POST la sesión expiró o redirigió al login
+            if "login.xhtml" in r_post.url or "loginForm" in r_post.text:
+                logger.warning(f"Línea {linea_limpia}: Sesión expirada en POST de búsqueda. Re-autenticando...")
+                self.logged_in = False
+                if self.login():
+                    doc_key, form_action = self._open_query_screen()
+                    post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={int(time.time() * 1000)}"
+                    query_payload["xo$DocSessKey"] = doc_key
+                    r_post = self.session.post(post_url, data=query_payload, timeout=25)
 
-        # 3. GET de la tabla de resultados
-        r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=25)
-        table_lower = r_table.text.lower()
+            finish_url_match = re.search(r'url="([^"]+)"', r_post.text)
+            if not finish_url_match:
+                logger.warning(f"Línea {linea_limpia}: Respuesta de consulta inesperada (sin finishUrl).")
+                return None
 
-        # Si no tiene registros o no es Port Out
-        if "port out" not in table_lower and "portout" not in table_lower:
-            logger.info(f"Línea {linea_limpia}: Sin registros o no posee Port Out.")
-            return None
+            finish_url = finish_url_match.group(1).replace("'", "")
 
-        # 4. Localizar botón lupa de la fila Port Out
-        lupa_match = re.search(r'id=[\'"](grp\$array1\$detalle\$[0-9]+)[\'"]', r_table.text)
-        if not lupa_match:
-            logger.warning(f"Línea {linea_limpia}: Tiene Port Out pero no se halló ID de lupa.")
-            return None
+            # 3. GET de la tabla de resultados
+            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=25)
+            table_lower = r_table.text.lower()
 
-        lupa_id = lupa_match.group(1)
-        new_doc_key = re.search(r"var docKey\s*=\s*'([^']+)';", r_table.text).group(1)
-        new_action = re.search(r'<FORM[^>]*action="([^"]+)"', r_table.text, re.IGNORECASE).group(1)
+            # Si no tiene registros o no es Port Out
+            if "port out" not in table_lower and "portout" not in table_lower:
+                logger.info(f"Línea {linea_limpia}: Sin registros o no posee Port Out.")
+                return None
 
-        logger.info(f"Línea {linea_limpia}: Fila Port Out identificada ({lupa_id}). Solicitando detalle...")
+            # 4. Localizar botón lupa de la fila Port Out
+            lupa_match = re.search(r'id=[\'"](grp\$array1\$detalle\$[0-9]+)[\'"]', r_table.text)
+            if not lupa_match:
+                logger.warning(f"Línea {linea_limpia}: Tiene Port Out pero no se halló ID de lupa.")
+                return None
 
-        # 5. POST de clic en la lupa para abrir detalle
-        ts_now2 = int(time.time() * 1000)
-        detail_post_url = f"http://iris.tmoviles.com.ar{new_action}&C=undefined&U={ts_now2}"
-        detail_payload = {
-            "xo$Action": "11",
-            "xo$AttName": lupa_id,
-            "xo$ChangedAtts": "",
-            "xo$DocSessKey": new_doc_key,
-            "xo$ScreenSessKey": "0",
-            "xo$executionType": "rscript"
-        }
+            lupa_id = lupa_match.group(1)
+            doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)';", r_table.text)
+            action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table.text, re.IGNORECASE)
 
-        r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=25)
-        detail_finish_url = re.search(r'url="([^"]+)"', r_detail_post.text).group(1).replace("'", "")
+            if not doc_key_match or not action_match:
+                logger.warning(f"Línea {linea_limpia}: No se extrajo docKey/action de la tabla de resultados.")
+                return None
 
-        # 6. GET del HTML completo de la pantalla de detalle
-        r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=25)
+            new_doc_key = doc_key_match.group(1)
+            new_action = action_match.group(1)
 
-        # 7. Parsear detalle con la lógica central existente
-        datos_extraidos = parse_iris_detail(r_detail.text)
-        logger.info(f"Línea {linea_limpia}: Extraído con éxito vía HTTP - Trámite ABD: {datos_extraidos.get('nro_tramite_abd')}, Titular: {datos_extraidos.get('nombre')}")
-        return datos_extraidos
+            logger.info(f"Línea {linea_limpia}: Fila Port Out identificada ({lupa_id}). Solicitando detalle...")
+
+            # 5. POST de clic en la lupa para abrir detalle
+            ts_now2 = int(time.time() * 1000)
+            detail_post_url = f"http://iris.tmoviles.com.ar{new_action}&C=undefined&U={ts_now2}"
+            detail_payload = {
+                "xo$Action": "11",
+                "xo$AttName": lupa_id,
+                "xo$ChangedAtts": "",
+                "xo$DocSessKey": new_doc_key,
+                "xo$ScreenSessKey": "0",
+                "xo$executionType": "rscript"
+            }
+
+            r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=25)
+            detail_match = re.search(r'url="([^"]+)"', r_detail_post.text)
+            if not detail_match:
+                logger.warning(f"Línea {linea_limpia}: No se extrajo URL de detalle en respuesta de lupa.")
+                return None
+
+            detail_finish_url = detail_match.group(1).replace("'", "")
+
+            # 6. GET del HTML completo de la pantalla de detalle
+            r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=25)
+
+            # 7. Parsear detalle con la lógica central existente
+            datos_extraidos = parse_iris_detail(r_detail.text)
+            logger.info(f"Línea {linea_limpia}: Extraído con éxito vía HTTP - Trámite ABD: {datos_extraidos.get('nro_tramite_abd')}, Titular: {datos_extraidos.get('nombre')}")
+            return datos_extraidos
+
+        except Exception as e:
+            logger.error(f"Error procesando línea {linea_limpia}: {e}")
+            self.logged_in = False
+            raise
+        finally:
+            self.close_execution_dialog()
+

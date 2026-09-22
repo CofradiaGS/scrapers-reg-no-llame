@@ -55,11 +55,17 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
     def _get_connection(self, max_retries: int = 4, retry_delay: float = 2.0):
         for attempt in range(1, max_retries + 1):
+            conn = None
             try:
                 conn = self.pool.get_connection()
                 conn.ping(reconnect=True, attempts=3, delay=1)
                 return conn
             except Exception as e:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
                 logger.warning(f"Reintento {attempt}/{max_retries} de conexión a VPS: {e}")
                 if attempt == max_retries:
                     raise
@@ -88,7 +94,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             cursor = None
             try:
                 conn = self._get_connection()
-                cursor = conn.cursor(dictionary=True)
+                cursor = conn.cursor(dictionary=True, buffered=True)
                 filas = []
 
                 for nivel in niveles:
@@ -192,7 +198,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             cursor = None
             try:
                 conn = self._get_connection()
-                cursor = conn.cursor()
+                cursor = conn.cursor(buffered=True)
                 query = f"""
                     UPDATE `{self.table}`
                     SET scraper_actual = %s,
@@ -252,7 +258,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             cursor = None
             try:
                 conn = self._get_connection()
-                cursor = conn.cursor()
+                cursor = conn.cursor(buffered=True)
                 format_ids = ",".join(["%s"] * len(ids))
                 query = f"""
                     UPDATE `{self.table}`
@@ -291,7 +297,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
         afectados = 0
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             query = f"""
                 UPDATE `{self.table}`
                 SET estado = 'pendiente',
@@ -330,7 +336,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
         stats = {}
         try:
             conn = self._get_connection()
-            cursor = conn.cursor(dictionary=True)
+            cursor = conn.cursor(dictionary=True, buffered=True)
             cursor.execute(f"""
                 SELECT scraper_actual, estado, COUNT(*) as cant 
                 FROM `{self.table}` 

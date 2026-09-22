@@ -60,7 +60,7 @@ flowchart TD
 > Ejecuta las siguientes 4 fases para dejar esta máquina completamente vinculada y lista para recibir órdenes.
 
 ### Opción 1: Instalación Automática en 1 Clic (Recomendada)
-Simplemente haz doble clic en **[`setup_pc.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/setup_pc.bat)**.
+Simplemente haz doble clic en **[`setup_pc.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/setup_pc.bat)**.
 El script detectará e instalará automáticamente:
 - Python 3.11 (si la PC no lo tiene).
 - Tor Portable oficial para rotación de IPs anónimas.
@@ -129,7 +129,7 @@ New-NetFirewallRule -DisplayName "Scraper Node Agent LAN" -Direction Inbound -Lo
 
 ### A. Tarea Programada cada 10 Minutos (Recomendado 24/7)
 Para que Windows vigile el agente cada 10 minutos y lo levante en segundo plano si la PC se reinicia o se cierra el proceso:
-1. Haz doble clic en **[`crear_tarea_programada.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/crear_tarea_programada.bat)**.
+1. Haz doble clic en **[`crear_tarea_programada.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/crear_tarea_programada.bat)**.
 2. **Garantía Singleton Estricta**:
    - Si el agente ya está corriendo: El chequeo termina en milisegundos sin abrir nada nuevo.
    - Si se cerró o la PC encendió: Lo levanta en segundo plano de forma invisible.
@@ -138,7 +138,7 @@ Para que Windows vigile el agente cada 10 minutos y lo levante en segundo plano 
 ### B. Auto-Arranque Tradicional (shell:startup)
 Como alternativa o complemento:
 1. Presiona `Win + R` -> escribe `shell:startup` y presiona Enter.
-2. Crea un acceso directo a [`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/run_node.bat) en esa carpeta.
+2. Crea un acceso directo a [`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_node.bat) en esa carpeta.
 
 ---
 
@@ -201,11 +201,11 @@ Abre `http://localhost:5000` con tarjetas para cada PC, botones de inicio/parada
 
 ## 6. Estructura del Proyecto y Documentación Técnica
 
-* **[`cluster/node_agent.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/cluster/node_agent.py)**: Servidor HTTP multihilo del nodo worker (puerto 5555).
-* **[`cluster/master_control.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/cluster/master_control.py)**: Orquestador central con CLI, escáner LAN y Dashboard Web.
-* **[`cluster/nodes.json`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/cluster/nodes.json)**: Registro de inventario de PCs y sus direcciones IP.
-* **[`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/run_node.bat)**: Lanzador del worker para PCs Hijas.
-* **[`run_master.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/run_master.bat)**: Menú interactivo para la PC Madre.
-* **[`docs/README.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/README.md)**: Índice exhaustivo de la documentación técnica en 7 capas.
-* **[`docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md)**: Especificación formal de la arquitectura Master-Worker, endpoints REST y runbooks.
-* **[`AGENTS.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers%20reg%20no%20llame/AGENTS.md)**: Reglas inviolables de arquitectura hexagonal y verificación de enlaces.
+* **[`cluster/node_agent.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/node_agent.py)**: Servidor HTTP multihilo del nodo worker (puerto 5555).
+* **[`cluster/master_control.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/master_control.py)**: Orquestador central con CLI, escáner LAN y Dashboard Web.
+* **[`cluster/nodes.json`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/nodes.json)**: Registro de inventario de PCs y sus direcciones IP.
+* **[`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_node.bat)**: Lanzador del worker para PCs Hijas.
+* **[`run_master.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_master.bat)**: Menú interactivo para la PC Madre.
+* **[`docs/README.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/README.md)**: Índice exhaustivo de la documentación técnica en 7 capas.
+* **[`docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md)**: Especificación formal de la arquitectura Master-Worker, endpoints REST y runbooks.
+* **[`AGENTS.md`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/AGENTS.md)**: Reglas inviolables de arquitectura hexagonal y verificación de enlaces.
