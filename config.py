@@ -26,6 +26,12 @@ VPS_DBNAME = os.getenv("VPS_DBNAME", "bases")
 VPS_DB_TABLE = os.getenv("VPS_DB_TABLE", "queue_registro_no_llame")
 VPS_DB_USE_PURE = os.getenv("VPS_DB_USE_PURE", "True").strip().lower() in ("true", "1", "yes")
 
+# Configuración Modular de Cola (registro_no_llame / cola_automatizacion)
+import socket
+QUEUE_TYPE = os.getenv("QUEUE_TYPE", "registro_no_llame").strip().lower()
+COLA_AUTO_ID = os.getenv("COLA_AUTO_ID", "iris_scraper").strip()
+WORKER_PC_ID = os.getenv("WORKER_PC_ID", socket.gethostname()).strip()
+
 # Política de Horario Comercial Oficial IRIS (Movistar Argentina)
 HORARIO_COMERCIAL_ACTIVO = os.getenv("HORARIO_COMERCIAL_ACTIVO", "True").strip().lower() in ("true", "1", "yes")
 HORARIO_COMERCIAL_INICIO_LV = os.getenv("HORARIO_COMERCIAL_INICIO_LV", "08:00")

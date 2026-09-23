@@ -36,6 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from runtime.supervisor import SupervisorIndustrial
 from adapters.scrapers.registry import ScraperRegistry
+import config
 
 # Configuración de Logging Industrial con Rotación Estricta
 LOG_FILE = PROJECT_ROOT / "supervisor_247.log"
@@ -73,6 +74,9 @@ def main():
     parser.add_argument("--tor", action="store_true", help="Habilitar enrutamiento anónimo con Tor Stream Isolation (para scrapers Datuar, Claro, Movistar y Personal)")
     parser.add_argument("--proxy-pool", action="store_true", help="Habilitar pool de proxies públicos rotativos de alta velocidad (para scrapers Claro, Movistar y Personal)")
     parser.add_argument("--solo-sin-coincidencia", action="store_true", default=False, help="Filtrar solo registros que no tengan coincidencia en ninguna de las 3 compañías (Claro, Personal, Movistar)")
+    parser.add_argument("--queue", choices=["registro_no_llame", "cola_automatizacion"], default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Origen de cola: 'registro_no_llame' o 'cola_automatizacion' (default: según config/env)")
+    parser.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "iris_scraper"), help="Identificador auto_id para 'cola_automatizacion' (default: iris_scraper)")
+    parser.add_argument("--pc-id", type=str, default=getattr(config, "WORKER_PC_ID", "PC-00"), help="Identificador del nodo worker para 'cola_automatizacion' (default: PC-00)")
 
     args = parser.parse_args()
 
@@ -102,7 +106,10 @@ def main():
         delay_max=args.delay_max,
         scraper_kwargs=scraper_kwargs,
         forzar_horario=args.forzar_horario,
-        solo_sin_coincidencia=args.solo_sin_coincidencia
+        solo_sin_coincidencia=args.solo_sin_coincidencia,
+        queue_type=args.queue,
+        auto_id=args.auto_id,
+        pc_id=args.pc_id
     )
 
     supervisor.ejecutar()

@@ -2,7 +2,7 @@
 
 Este documento detalla el análisis exhaustivo de ingeniería inversa realizado sobre el portal de operaciones **Movistar IRIS** (sustentado sobre la infraestructura legacy de **Oracle WebLogic Server**, **BEA AquaLogic User Interaction / Plumtree** y el motor de procesos de negocio **Fuego BPM / Oracle BPM 10g/11g**).
 
-El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
+El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
 
 ---
 
@@ -20,7 +20,7 @@ El servidor `http://iris.tmoviles.com.ar` no expone una API REST moderna; su int
 
 ### Comparativa: Motor HTTP vs Playwright Chromium
 
-| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
+| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
 | :--- | :--- | :--- | :--- |
 | **Latencia por consulta** | 15 a 22 segundos | **4 a 8 segundos** | Eliminación del parseo DOM, CSSOM y scripts JS pesados. |
 | **Consumo de Memoria RAM** | ~1.200 MB por worker | **~35 MB por worker** | Reducción del 97% del footprint en memoria. |
@@ -151,60 +151,75 @@ Regex utilizadas:
 - `doc_key`: `var docKey\s*=\s*'([^']+)';`
 - `form_action`: `<FORM[^>]*action=([^ >]+)`
 
-### 3.6. POST de Búsqueda por Línea y Tipo de Operación
+### 3.6. POST de Búsqueda por Línea (Sin Filtros Restrictivos)
 - **URL**: `http://iris.tmoviles.com.ar{form_action}&C=undefined&U={epoch_ms}`
 - **Método**: `POST`
 - **Payload Fuego Engine**:
   ```json
   {
-    "_xo": "11",
-    "_xov": "_att",
-    "_xovv": "_att,_att,,",
-    "_xovvv": "<doc_key>",
-    "_xovvvv": "0",
-    "_xovvvvv": "rscript",
-    "_att": "1123456789",
-    "_att_2": "4",
-    "C": "undefined"
+    "xo$Action": "11",
+    "xo$AttName": "att$button6",
+    "xo$ChangedAtts": "att$nroLinea,",
+    "xo$DocSessKey": "<doc_key>",
+    "xo$ScreenSessKey": "0",
+    "xo$executionType": "rscript",
+    "att$nroLinea": "1123456789",
+    "": "undefined"
   }
   ```
   > [!NOTE]
-  > El parámetro `_att_2 = 4` fuerza el filtrado estricto de **Port Out**, descartando transacciones no relevantes en la tabla de operaciones. `_att` corresponde al evento del botón Consultar.
+  > Se omite intencionalmente cualquier parámetro de filtro (`att$combo3 = 4`) para capturar el historial íntegro de la línea en Movistar IRIS (incluyendo Altas, Cambios de plan, Port In y Port Out). `att$button6` corresponde al evento del botón Consultar.
 
 - **Extracción de `finishUrl`**:
   La respuesta entrega una directiva de navegación interna:
   ```html
-  <script>window.location.replace(url='/fuego/process/workspace/showResults?...');</script>
+  <DIV id="fobject$finishUrl" url="/workspace/servlet/executor?..."/>
   ```
   Se realiza un `GET` a dicha `finishUrl` para acceder a la grilla de resultados.
 
-### 3.7. Detección de Registros Port Out y Clic en la Lupa
-1. Si la tabla no contiene `"port out"` ni `"portout"`, se determina inmediatamente `StatusScraping.SIN_COINCIDENCIA` sin incurrir en peticiones adicionales.
-2. Si existe la fila, se extrae el identificador de la lupa correspondiente:
-   ```python
-   lupa_match = re.search(r'id=[\'](grp\\\$[0-9]+)[\']', r_table.text)
-   ```
-3. Se obtienen los nuevos valores de `docKey` y `form_action` actualizados en la tabla de resultados.
-4. Se despacha el POST de apertura del detalle:
-   - **URL**: `http://iris.tmoviles.com.ar{new_action}&C=undefined&U={epoch_ms}`
-   - **Payload**:
-     ```json
-     {
-       "_xo": "11",
-       "_xov": "grp",
-       "_xovv": "",
-       "_xovvv": "<new_doc_key>",
-       "_xovvvv": "0",
-       "_xovvvvv": "rscript"
-     }
-     ```
-5. La respuesta proporciona el `detail_finishUrl`, a la cual se le efectúa un `GET` final para obtener el documento HTML íntegro de la pantalla *Consulta de operación Detalle*.
+### 3.7. Detección de Operaciones Múltiples y Navegación Bidireccional
+1. **Detección de Resultados**: Si la tabla contiene `0 - 0/ 0` o carece de elementos `grp$array1$detalle$*`, se determina inmediatamente `StatusScraping.SIN_COINCIDENCIA` sin incurrir en peticiones adicionales.
+2. **Extracción de Todas las Filas**: Si existen operaciones, se recorre cada fila de la grilla extrayendo sus columnas base:
+   - `canal`: Canal o Agente comercial.
+   - `operacion`: Tipo de trámite (`Altas`, `Cambios`, `Port Out`, etc.).
+   - `producto`: Plan (`Control`, `Full`, etc.).
+   - `formulario`: Código de formulario BPM (`PR - Alta de Linea T3`, `CH - Cambios T3`, `PS - Solicitud PortOut`).
+   - `nro_tramite`: Identificador numérico del formulario en Fuego BPM.
+   - `fecha_alta`: Fecha de inicio del trámite.
+   - `estado`: Estado actual (`Controlado - Autorizado`, `Aprobación del ABD`, etc.).
+3. **Apertura de Detalle por Fila**: Para cada fila identificada con su lupa (`grp$array1$detalle$<idx>`):
+   - Se despacha el POST de apertura del detalle:
+     - **URL**: `http://iris.tmoviles.com.ar{current_action}&C=undefined&U={epoch_ms}`
+     - **Payload**:
+       ```json
+       {
+         "xo$Action": "11",
+         "xo$AttName": "grp$array1$detalle$<idx>",
+         "xo$ChangedAtts": "",
+         "xo$DocSessKey": "<current_doc_key>",
+         "xo$ScreenSessKey": "0",
+         "xo$executionType": "rscript"
+       }
+       ```
+   - Se obtiene el `detail_finishUrl` y se realiza `GET` al HTML del detalle, enriqueciendo la fila con los datos de suscriptor (DNI, Titular, fechas, operador donante/receptor).
+4. **Retorno a la Grilla con Botón Volver (`att$button0`)**:
+   - Salvo para la última fila, el bot despacha un POST con `att$button0` (Volver) hacia el action del detalle para restaurar la vista de lista y actualizar `current_doc_key` y `current_action` para la siguiente fila.
+5. **Consolidación**: Se devuelve un diccionario con la lista exhaustiva `registros: [...]`, consolidando en la raíz los datos del registro principal (priorizando Port Out o la operación con DNI/Titular).
 
 ---
 
-## 4. Estrategia de Connection Pooling y Resiliencia
+## 4. Estrategia de Connection Pooling, Resiliencia y Fijación de IP
 
-El método [`start()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
+### 4.1. Fijación de Resolución DNS a IP Estable (10.167.27.185)
+El dominio corporativo `iris.tmoviles.com.ar` resolvía intermitentemente por round-robin a dos IPs internas:
+- `10.167.46.191`: Servidor secundario Microsoft-IIS/10.0 caído que devuelve HTTP `404 Not Found`.
+- `10.167.27.185`: Servidor corporativo WebLogic / Fuego BPM activo que devuelve HTTP `200 OK`.
+
+[`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py) aplica monkey-patching sobre `urllib3.util.connection.create_connection` en su método `start()`, enrutando todas las conexiones socket de `iris.tmoviles.com.ar` hacia la IP `10.167.27.185` preservando intactas las cabeceras HTTP `Host`, eliminando al 100% las fallas 404.
+
+### 4.2. Connection Pooling y Resiliencia
+
+El método [`start()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
 
 ```python
 retries = Retry(
@@ -219,17 +234,17 @@ self.session.mount("http://", adapter)
 
 ### Mecanismo de Auto-Sanación (*Self-Healing*) de Sesión
 
-Si durante cualquier petición intermedia el servidor WebLogic/IRIS invalida la sesión por inactividad, timeout de vista JSF, desincronización de `app_link_id` o bloqueo por diálogo activo en el servidor, [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L368) detecta los patrones de fallo y recupera la sesión automáticamente:
+Si durante cualquier petición intermedia el servidor WebLogic/IRIS invalida la sesión por inactividad, timeout de vista JSF, desincronización de `app_link_id` o bloqueo por diálogo activo en el servidor, [`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L368) detecta los patrones de fallo y recupera la sesión automáticamente:
 
 1. **Destrucción Preventiva de Sesión y Cookies Obsoletas**:
-   Al invocar [`login()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141), la instancia anterior de `requests.Session` es destruida y re-creada para asegurar que WebLogic no mantenga asociadas las cookies `JSESSIONID` colgadas en el estado previo.
+   Al invocar [`login()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141), la instancia anterior de `requests.Session` es destruida y re-creada para asegurar que WebLogic no mantenga asociadas las cookies `JSESSIONID` colgadas en el estado previo.
 2. **Cierre Activo de Diálogos JSF (`close_execution_dialog`)**:
-   En [`close_execution_dialog()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L72-L88) y en la cláusula `finally` de cada consulta, se emite la petición AJAX de aborto de diálogo al listener de JSF para liberar el proceso en el backend del servidor WebLogic antes de cada nueva iteración.
+   En [`close_execution_dialog()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L72-L88) y en la cláusula `finally` de cada consulta, se emite la petición AJAX de aborto de diálogo al listener de JSF para liberar el proceso en el backend del servidor WebLogic antes de cada nueva iteración.
 3. **Intercepción de Respuestas Vacías (`len: 0`)**:
-   Si el callback AJAX no retorna la directiva `executeDialogApplications(...)` o devuelve una respuesta XML vacía de 0 bytes (causante previo del error *"No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX"*), el bot invalida el estado (`self.logged_in = False`), ejecuta [`login()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141) con reseteo de sesión y reintenta la solicitud de apertura inmediatamente.
+   Si el callback AJAX no retorna la directiva `executeDialogApplications(...)` o devuelve una respuesta XML vacía de 0 bytes (causante previo del error *"No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX"*), el bot invalida el estado (`self.logged_in = False`), ejecuta [`login()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141) con reseteo de sesión y reintenta la solicitud de apertura inmediatamente.
 4. **Reseteo del Estado del Worker**:
    Si ocurre cualquier excepción no controlada en la consulta de una línea, el bot fuerza `self.logged_in = False`, garantizando que la siguiente iteración del worker inicie una re-autenticación limpia en lugar de encadenar errores en bucle.
 5. **Verificación de Salud**:
-   Implementa el método [`check_health()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L142-L144) en el motor HTTP para ser consumido directamente por [`verificar_salud()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L134-L138) en el adaptador hexagonal.
+   Implementa el método [`check_health()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L142-L144) en el motor HTTP para ser consumido directamente por [`verificar_salud()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L134-L138) en el adaptador hexagonal.
 
 

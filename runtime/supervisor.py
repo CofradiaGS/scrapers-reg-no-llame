@@ -24,7 +24,9 @@ from pathlib import Path
 import config
 from core.domain.schedule import PoliticaHorarioComercial
 from core.use_cases.cleanup_orphans_use_case import LiberarHuerfanosUseCase
+from core.ports.queue_port import IColaRepositorioPort
 from adapters.queue.mysql_vps_adapter import MySQLQueueAdapter
+from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
 from runtime.worker_process import worker_lifecycle_process
 
 logger = logging.getLogger("SupervisorIndustrial")
@@ -45,9 +47,15 @@ class SupervisorIndustrial:
         verificar_vpn: bool = True,
         minutos_inactividad_huerfanos: int = 15,
         forzar_horario: bool = False,
-        solo_sin_coincidencia: bool = False
+        solo_sin_coincidencia: bool = False,
+        queue_type: str = "registro_no_llame",
+        auto_id: str = "iris_scraper",
+        pc_id: Optional[str] = None
     ):
         self.scraper_name = scraper_name
+        self.queue_type = (queue_type or getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
+        self.auto_id = auto_id or getattr(config, "COLA_AUTO_ID", "iris_scraper")
+        self.pc_id = pc_id or getattr(config, "WORKER_PC_ID", None)
         self.workers_count = workers
         self.batch_size = batch_size
         self.max_queries_worker = max_queries_worker
@@ -83,7 +91,8 @@ class SupervisorIndustrial:
         # Canales de comunicación IPC (Despachador centralizado de base de datos)
         self.db_request_queue = Queue()
         self.slot_response_queues: Dict[int, Queue] = {}
-        self.db_adapter: Optional[MySQLQueueAdapter] = None
+        self.db_adapter: Optional[IColaRepositorioPort] = None
+        self._dispatcher_stop = threading.Event()
 
     def _set_pause(self, razon: str):
         """Activa una causa de pausa de forma atómica y segura entre hilos."""
@@ -189,7 +198,7 @@ class SupervisorIndustrial:
         disp_logger = logging.getLogger("DBDispatcher")
         disp_logger.info("📡 [DB DISPATCHER] Hilo despachador IPC iniciado (1 sola conexión MySQL activa para toda la PC).")
 
-        while not self.stop_event.is_set():
+        while not self._dispatcher_stop.is_set():
             try:
                 msg = self.db_request_queue.get(timeout=1.0)
             except Exception:
@@ -367,7 +376,9 @@ class SupervisorIndustrial:
         print("🛡️  INICIANDO SUPERVISOR INDUSTRIAL 24/7 (ARQUITECTURA HEXAGONAL)")
         print(f"  • Scraper asignado:       {self.scraper_name.upper()}")
         print(f"  • Base de datos VPS:      {config.VPS_DBHOST}:{config.VPS_DBPORT}/{config.VPS_DBNAME}")
-        print(f"  • Tabla destino:          {config.VPS_DB_TABLE}")
+        tabla_str = f"cola_automatizacion (auto_id: {self.auto_id})" if self.queue_type == "cola_automatizacion" else config.VPS_DB_TABLE
+        print(f"  • Origen de Cola:         {self.queue_type.upper()}")
+        print(f"  • Tabla destino:          {tabla_str}")
         print(f"  • Slots concurrentes:     {self.workers_count} workers")
         print(f"  • Rotación preventiva:    Cada {self.max_queries_worker} consultas por worker")
         print(f"  • Horario Comercial:      {desc_hc}")
@@ -377,9 +388,17 @@ class SupervisorIndustrial:
 
         # 1. Chequeo e inicialización del adaptador único de base de datos para toda la máquina
         try:
-            self.db_adapter = MySQLQueueAdapter(pool_size=1, pool_name=f"sup_pc_{os.getpid()}")
+            if self.queue_type == "cola_automatizacion":
+                self.db_adapter = ColaAutomatizacionAdapter(
+                    pool_size=1,
+                    pool_name=f"sup_pc_{os.getpid()}",
+                    auto_id=self.auto_id,
+                    pc_id=self.pc_id
+                )
+            else:
+                self.db_adapter = MySQLQueueAdapter(pool_size=1, pool_name=f"sup_pc_{os.getpid()}")
             stats = self.db_adapter.obtener_estadisticas()
-            pendientes = stats.get(f"{self.scraper_name}_pendiente", stats.get("pendiente", 0))
+            pendientes = stats.get("pendiente", stats.get(f"{self.scraper_name}_pendiente", 0))
             print(f"Conexión con VPS confirmada (1 socket permanente). Registros pendientes para '{self.scraper_name}': {pendientes:,}\n")
         except Exception as e:
             logger.critical(f"Error conectando con la base de datos central VPS: {e}")
@@ -485,6 +504,11 @@ class SupervisorIndustrial:
                 if proc.is_alive():
                     logger.warning(f"Slot {s_id} no respondió en 15s. Forzando terminación...")
                     proc.terminate()
+
+        # Detener hilo despachador de base de datos tras la conclusión de los workers
+        time.sleep(0.5)
+        self._dispatcher_stop.set()
+        disp_thread.join(timeout=5.0)
 
         if tor_daemon is not None:
             logger.info("🧅 Deteniendo demonio Tor compartido...")

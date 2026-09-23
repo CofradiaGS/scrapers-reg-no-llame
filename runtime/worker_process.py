@@ -69,10 +69,18 @@ def worker_lifecycle_process(
             )
             w_log.info(f"[{worker_tag}] Conectado a Supervisor mediante IPC (0 sockets remotos directos a BD).")
         else:
-            cola_repo = MySQLQueueAdapter(
-                pool_size=1,
-                pool_name=f"pool_{worker_slot}_{generation}_{os.getpid()}"
-            )
+            q_type = str(getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
+            if q_type == "cola_automatizacion":
+                from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
+                cola_repo = ColaAutomatizacionAdapter(
+                    pool_size=1,
+                    pool_name=f"pool_{worker_slot}_{generation}_{os.getpid()}"
+                )
+            else:
+                cola_repo = MySQLQueueAdapter(
+                    pool_size=1,
+                    pool_name=f"pool_{worker_slot}_{generation}_{os.getpid()}"
+                )
 
         # 2. Adaptador de Motor de Scraping dinámico vía Registry
         kwargs = dict(scraper_kwargs or {})
