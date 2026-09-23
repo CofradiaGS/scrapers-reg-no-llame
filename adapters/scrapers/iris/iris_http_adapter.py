@@ -71,8 +71,8 @@ class IrisHttpAdapter(IScraperEnginePort):
                 ani=linea.ani,
                 status=StatusScraping.SIN_COINCIDENCIA,
                 fuente_scraper=self.nombre,
-                descripcion="Sin registros en IRIS / No posee Port Out",
-                detalles={"mensaje": "Sin registros en IRIS / No posee Port Out"}
+                descripcion="Sin registros en IRIS",
+                detalles={"mensaje": "Sin registros en IRIS"}
             )
 
         titular = Titular(
@@ -100,6 +100,7 @@ class IrisHttpAdapter(IScraperEnginePort):
             "fvc_aprobada": datos.get("fecha_ventana_cambio_aprobada", "")
         }
 
+        registros = datos.get("registros", [])
         detalles = {
             "nro_tramite_abd": datos.get("nro_tramite_abd", ""),
             "id_tramite_spn": datos.get("id_tramite_spn", ""),
@@ -111,11 +112,17 @@ class IrisHttpAdapter(IScraperEnginePort):
             "observaciones": datos.get("observaciones", ""),
             "cantidad_lineas_portadas": datos.get("cantidad_lineas_portadas", ""),
             "cantidad_lineas_revertidas": datos.get("cantidad_lineas_revertidas", ""),
-            "estado_reversion": datos.get("estado_reversion", "")
+            "estado_reversion": datos.get("estado_reversion", ""),
+            "total_operaciones": len(registros),
+            "registros": registros
         }
 
         nom_tit = f"{titular.nombre} {titular.apellido}".strip()
-        desc = f"Port Out - Titular: {nom_tit} | Doc: {titular.nro_documento}"[:195]
+        ops_nombres = ", ".join(list(dict.fromkeys(r.get("operacion", "") for r in registros if r.get("operacion"))))
+        if nom_tit or titular.nro_documento:
+            desc = f"IRIS ({len(registros)} ops: {ops_nombres}) - Titular: {nom_tit} | Doc: {titular.nro_documento}"[:195]
+        else:
+            desc = f"IRIS ({len(registros)} ops: {ops_nombres}) - Sin datos de titular"[:195]
 
         return ScrapeResult(
             ani=linea.ani,

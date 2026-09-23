@@ -1,6 +1,6 @@
 # Supervisor Inmortal (Auto-Spawn y Monitoreo de Procesos 24/7)
 
-El orquestador maestro del sistema está encapsulado en la clase [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) en [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py) y se inicia mediante el script CLI de producción [`supervisor_vps.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py).
+El orquestador maestro del sistema está encapsulado en la clase [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) en [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py) y se inicia mediante el script CLI de producción [`supervisor_vps.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py).
 
 Su propósito es proporcionar **resiliencia infinita (inmortalidad)**: garantizar que exactamente $N$ workers (predeterminado: 9) se encuentren ejecutando tareas de scraping en paralelo las 24 horas del día, los 7 días de la semana, recuperándose automáticamente de caídas de red, excepciones fatales, terminaciones por fugas de memoria o desautenticaciones.
 
@@ -56,7 +56,7 @@ Al arrancar un clúster de múltiples workers concurrentes (por ejemplo, 9 worke
 - Contención de bloqueos en la base de datos MySQL por saturación inmediata de sockets TCP.
 - Picos de uso de CPU de 100% durante la inicialización de navegadores Chromium.
 
-Para mitigar esto, el supervisor implementa en las líneas 236-243 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L236-L243) un **arranque escalonado** con un retardo de `1.5 segundos` entre slots:
+Para mitigar esto, el supervisor implementa en las líneas 236-243 de [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L236-L243) un **arranque escalonado** con un retardo de `1.5 segundos` entre slots:
 
 ```python
 logger.info(f"Lanzando {self.workers_count} workers iniciales de forma escalonada...")
@@ -68,7 +68,7 @@ for s_id in range(1, self.workers_count + 1):
 ```
 
 ### El Método `_spawn_worker`
-Definido en las líneas 171-193 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L171-L193):
+Definido en las líneas 171-193 de [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L171-L193):
 
 ```python
 def _spawn_worker(self, slot_id: int, generation: int):
@@ -101,7 +101,7 @@ Cada proceso es nombrado de forma explícita (`WorkerSlot-{slot_id}-G{generation
 
 ## 3. Bucle de Supervisión Activa y Auto-Regeneración
 
-Una vez desplegados los workers iniciales, el hilo principal de [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) entra en un bucle de supervisión permanente con un ciclo de chequeo de `2.0 segundos` (líneas 248-268):
+Una vez desplegados los workers iniciales, el hilo principal de [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) entra en un bucle de supervisión permanente con un ciclo de chequeo de `2.0 segundos` (líneas 248-268):
 
 ```python
 while not self.stop_event.is_set():
@@ -139,7 +139,7 @@ while not self.stop_event.is_set():
 El sistema garantiza que la interrupción manual del servicio no corrompa lotes ni deje registros en estado inconsistente.
 
 ### A. Captura de Señales
-En las líneas 218-224 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L218-L224):
+En las líneas 218-224 de [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L218-L224):
 
 ```python
 def handle_shutdown(signum, frame):
@@ -154,14 +154,14 @@ if hasattr(signal, "SIGTERM"):
 ### B. Cascada de Drenado y Terminación
 Al activarse `self.stop_event.set()`:
 1. Todos los workers activos finalizan la consulta actual que estén ejecutando.
-2. Dentro de [`ProcesarLoteUseCase.ejecutar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L57-L60), la verificación `should_stop()` interrumpe el recorrido del lote:
+2. Dentro de [`ProcesarLoteUseCase.ejecutar_lote`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L57-L60), la verificación `should_stop()` interrumpe el recorrido del lote:
    ```python
    if should_stop and should_stop():
        logger.info("Parada solicitada en mitad del lote. Interrumpiendo ciclo...")
        break
    ```
 3. Los registros ya consultados se persisten con sus resultados.
-4. Los registros restantes del lote que no alcanzaron a consultarse son devueltos a estado `'pendiente'` mediante [`revertir_a_pendiente(unprocessed_ids)`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L246-L286).
+4. Los registros restantes del lote que no alcanzaron a consultarse son devueltos a estado `'pendiente'` mediante [`revertir_a_pendiente(unprocessed_ids)`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L246-L286).
 5. El bucle principal del supervisor espera hasta `15.0 segundos` para el `join` de cada proceso:
    ```python
    for s_id, slot_info in self.worker_slots.items():
@@ -178,7 +178,7 @@ Al activarse `self.stop_event.set()`:
 
 ## 5. Centinela de Horario Comercial y Gestión de Pausas Multi-Causa
 
-El supervisor incorpora el hilo centinela `HorarioComercialThread` que evalúa continuamente [`PoliticaHorarioComercial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) cada 10 segundos:
+El supervisor incorpora el hilo centinela `HorarioComercialThread` que evalúa continuamente [`PoliticaHorarioComercial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) cada 10 segundos:
 
 ### Mecánica Multi-Causa Thread-Safe
 Para evitar que la recuperación de red de `CircuitBreaker` despause prematuramente a los workers durante la noche (o que la llegada de las 08:00 despause a los workers si la VPN está caída), el supervisor gestiona las razones de pausa en un conjunto sincronizado `_pause_reasons`:

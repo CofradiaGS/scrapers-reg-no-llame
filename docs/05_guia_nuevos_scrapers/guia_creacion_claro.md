@@ -6,7 +6,7 @@ Este documento detalla el diseño, la especificación de protocolo, la arquitect
 
 ## 1. Ciclo de Vida del Pipeline y Regla de Cortocircuito
 
-El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172):
+El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172):
 
 ```text
 CADENA_DEFAULT: ["iris", "claro", "movistar", "personal"]
@@ -30,7 +30,7 @@ flowchart TD
 ```
 
 ### Regla de Cortocircuito para Claro
-Cuando [`ClaroAdapter.consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) retorna `StatusScraping.COINCIDENCIA`, [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L134) detiene de inmediato la evaluación de los siguientes operadores y salta la línea a `scraper_actual = 'finalizado'` y `estado = 'completado'`.
+Cuando [`ClaroAdapter.consultar_linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) retorna `StatusScraping.COINCIDENCIA`, [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L134) detiene de inmediato la evaluación de los siguientes operadores y salta la línea a `scraper_actual = 'finalizado'` y `estado = 'completado'`.
 
 ---
 
@@ -111,7 +111,7 @@ Por directiva de negocio, **el 100% de los datos retornados por la API de Cobro 
 
 ## 4. Arquitectura Tor Stream Isolation (`IsolateSOCKSAuth`) a Costo $0
 
-Para maximizar la velocidad, eliminar contenciones de sockets en Windows y reducir el consumo de memoria RAM de 800 MB a solo **~45 MB**, el sistema consolida el proxy en una **única instancia de Tor Daemon** gestionada por [`TorController`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/tor_controller.py) y configurada con la directiva `IsolateSOCKSAuth`:
+Para maximizar la velocidad, eliminar contenciones de sockets en Windows y reducir el consumo de memoria RAM de 800 MB a solo **~45 MB**, el sistema consolida el proxy en una **única instancia de Tor Daemon** gestionada por [`TorController`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/tor_controller.py) y configurada con la directiva `IsolateSOCKSAuth`:
 
 ```mermaid
 graph TD
@@ -143,34 +143,34 @@ graph TD
 ```
 
 ### 4.1. Mecanismo de Stream Isolation por Credenciales Dinámicas
-Bajo la directiva `SocksPort 9050 IsolateSOCKSAuth` en [`torrc`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/torrc), Tor garantiza que cada par de usuario/contraseña transmitido en el protocolo SOCKS5 sea mapeado internamente a un **circuito y nodo de salida completamente diferente**.
-* [`ClaroAdapter._generar_proxy_aislado`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) genera una identidad única por worker y rotación: `socks5h://w{slot}_{hash}:tor@127.0.0.1:9050`.
+Bajo la directiva `SocksPort 9050 IsolateSOCKSAuth` en [`torrc`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/torrc), Tor garantiza que cada par de usuario/contraseña transmitido en el protocolo SOCKS5 sea mapeado internamente a un **circuito y nodo de salida completamente diferente**.
+* [`ClaroAdapter._generar_proxy_aislado`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) genera una identidad única por worker y rotación: `socks5h://w{slot}_{hash}:tor@127.0.0.1:9050`.
 * **Rotación Instantánea en 0 ms**: Cambiar de IP pública no requiere reiniciar subprocesos, ni esperar señales `NEWNYM` de stem ni pausar la ejecución con `time.sleep()`. Al regenerar las credenciales en la sesión, la siguiente petición sale automáticamente por un nuevo circuito.
-* **Desacoplamiento Estricto del Ciclo de Vida**: En [`tor_controller.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/tor_controller.py), solo el proceso maestro (`SupervisorIndustrial` o raíz CLI) es propietario del subproceso (`is_owner=True`). Los workers efímeros nunca terminan el demonio `tor.exe` al rotar preventivamente a las 350 consultas, garantizando disponibilidad ininterrumpida.
+* **Desacoplamiento Estricto del Ciclo de Vida**: En [`tor_controller.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/tor_controller.py), solo el proceso maestro (`SupervisorIndustrial` o raíz CLI) es propietario del subproceso (`is_owner=True`). Los workers efímeros nunca terminan el demonio `tor.exe` al rotar preventivamente a las 350 consultas, garantizando disponibilidad ininterrumpida.
 * **Priorización Regional en `torrc`**: Incorpora `ExitNodes {ar},{cl},{uy},{br} StrictNodes 0`, reduciendo drásticamente las denegaciones WAF de Cobro Express al preferir nodos del Cono Sur, manteniendo tolerancia automática si no hay relays disponibles.
 * **Optimización de Latencias**: Configuración de `CircuitBuildTimeout 10`, `KeepalivePeriod 60` y `MaxCircuitDirtiness 300` para reducir los tiempos de respuesta de Tor a 2.5s - 3.5s.
 
 ### 4.2. Supresión de Llamadas HTTP Redundantes
-La pasarela `DeudaFormulario` es *stateless*. En lugar de ejecutar una petición `GET https://pagosce.cobroexpress.com.ar/` antes de cada consulta (lo que duplicaba la latencia por Tor), [`ClaroAdapter.autenticar`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) simplemente valida la sesión activa, enviando directamente el POST y reduciendo el RTT al 50%.
+La pasarela `DeudaFormulario` es *stateless*. En lugar de ejecutar una petición `GET https://pagosce.cobroexpress.com.ar/` antes de cada consulta (lo que duplicaba la latencia por Tor), [`ClaroAdapter.autenticar`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) simplemente valida la sesión activa, enviando directamente el POST y reduciendo el RTT al 50%.
 
 ### 4.3. Jitter Adaptativo Ultrarrápido
-Dado que las peticiones se distribuyen sobre IPs diferentes de forma natural por Stream Isolation, los retardos entre lotes se ajustan de forma segura a `0.2s - 0.6s` (configurados en [`config.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/config.py)), multiplicando el rendimiento por worker de 15 RPM a **60-120 RPM**.
+Dado que las peticiones se distribuyen sobre IPs diferentes de forma natural por Stream Isolation, los retardos entre lotes se ajustan de forma segura a `0.2s - 0.6s` (configurados en [`config.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/config.py)), multiplicando el rendimiento por worker de 15 RPM a **60-120 RPM**.
 
 ### 4.4. Sub-sistema Alternativo de Alta Velocidad: Pool de Proxies Públicos Rotativos
-Como alternativa de ultra-baja latencia (1.0s a 2.5s por consulta) y costo $0, el sistema incorpora [`ProxyPoolManager`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py):
+Como alternativa de ultra-baja latencia (1.0s a 2.5s por consulta) y costo $0, el sistema incorpora [`ProxyPoolManager`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py):
 * **Recolección Racionalizada sin Estampida de Hilos**: Solo el proceso supervisor o el Worker Slot 1 ejecuta el `ProxyPoolFeeder` en segundo plano (`allow_feeder=True`). Los workers secundarios consumen la caché ya validada, erradicando la sobrecarga destructiva de cientos de hilos concurrentes en Windows.
 * **Persistencia Atómica en Disco (`live_proxies.txt`)**: La caché local se persiste mediante archivos temporales con reemplazo atómico (`os.replace`), evitando escrituras concurrentes truncadas entre subprocesos.
-* **Reutilización de Conexiones HTTP y Connection Pooling**: [`ClaroAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) utiliza una sesión persistente con `HTTPAdapter(pool_connections=10, pool_maxsize=10)` eliminando el agotamiento de puertos efímeros en Windows (`TIME_WAIT`).
+* **Reutilización de Conexiones HTTP y Connection Pooling**: [`ClaroAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py) utiliza una sesión persistente con `HTTPAdapter(pool_connections=10, pool_maxsize=10)` eliminando el agotamiento de puertos efímeros en Windows (`TIME_WAIT`).
 * **Mecanismo de Descarte Resiliente ante 429**: Si el pool dispone de pocos proxies (≤8), ante un código HTTP 429 aplica un backoff breve de 1.5s asumiendo colisión temporal de hilos antes de descartar el proxy de forma definitiva.
 
 ---
 
 ## 5. Registro y Factoría Central
 
-El adaptador se registra en [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias:
+El adaptador se registra en [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias:
 - `"claro"`: Nombre canónico utilizado en la cadena del pipeline (modo por defecto según flags o configuración).
 - `"claro_cobro_express"`: Alias explícito del motor de pasarela.
-- `"claro_fast"`: Alias preconfigurado para forzar el modo de alta velocidad con [`ProxyPoolManager`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py).
+- `"claro_fast"`: Alias preconfigurado para forzar el modo de alta velocidad con [`ProxyPoolManager`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py).
 
 ```python
 from adapters.scrapers.claro.claro_adapter import ClaroAdapter

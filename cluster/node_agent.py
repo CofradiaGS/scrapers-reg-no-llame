@@ -168,6 +168,12 @@ class ProcessManager:
                 cmd.append("--solo-sin-coincidencia")
             if forzar_horario:
                 cmd.append("--forzar-horario")
+            queue_type = params.get("queue")
+            if queue_type:
+                cmd.extend(["--queue", str(queue_type)])
+            auto_id = params.get("auto_id")
+            if auto_id:
+                cmd.extend(["--auto-id", str(auto_id)])
 
             try:
                 creationflags = 0

@@ -251,15 +251,25 @@ class ProcesarLoteUseCase:
 
             except Exception as e:
                 lat = round(time.time() - t0, 2)
-                err_str = str(e).replace("\n", " ")[:190]
-                logger.error(f"Error procesando línea {reg.linea.ani}: {err_str}")
+                err_type = type(e).__name__
+                err_msg = str(e).replace("\n", " ").strip()
+                err_code = getattr(e, "code", None) or getattr(e, "status_code", None) or getattr(e, "errno", None)
+                if not err_code and hasattr(e, "response") and getattr(e.response, "status_code", None):
+                    err_code = e.response.status_code
+
+                codigo_fmt = f"[{err_type}:{err_code}]" if err_code else f"[{err_type}]"
+                descripcion_error = f"{codigo_fmt} {err_msg}".strip()
+                logger.error(f"Error procesando línea {reg.linea.ani}: {descripcion_error}")
 
                 item_err = {
                     "id": reg.id,
                     "ani": reg.linea.ani,
                     "scraper_actual": self.scraper.nombre,
                     "estado": "error",
-                    "descripcion": f"Error: {err_str}"[:195],
+                    "descripcion": descripcion_error[:250],
+                    "error_codigo": str(err_code) if err_code else err_type,
+                    "error_tipo": err_type,
+                    "error_detalle": err_msg,
                     "fuente": reg.fuente or f'["{self.scraper.nombre}"]',
                     "datos": datos_previos if datos_previos else reg.datos_existentes,
                     "latencia": lat,
