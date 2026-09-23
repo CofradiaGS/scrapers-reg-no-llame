@@ -5,6 +5,13 @@ color 0B
 
 cd /d "%~dp0"
 
+where git >nul 2>nul
+if errorlevel 1 (
+    for /d %%i in ("%LOCALAPPDATA%\GitHubDesktop\app-*") do (
+        if exist "%%i\resources\app\git\cmd\git.exe" set "PATH=%%i\resources\app\git\cmd;%PATH%"
+    )
+)
+
 set "PY_CMD=python"
 if exist "%~dp0venv\Scripts\python.exe" set "PY_CMD=%~dp0venv\Scripts\python.exe"
 
