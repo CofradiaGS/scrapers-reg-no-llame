@@ -125,7 +125,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
                     # Selección con bloqueo SKIP LOCKED forzando índice idx_scraper_estado
                     select_query = f"""
-                        SELECT id, ani, estado, scraper_actual, fuente, datos_json
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
                         FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
                         WHERE scraper_actual = %s 
                           AND estado = 'pendiente' 
@@ -172,15 +172,18 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                     except Exception:
                         raw_json = {}
 
+                    dni_val = str(r["dni"]).strip() if r.get("dni") else None
+
                     registros.append(RegistroCola(
                         id=r["id"],
-                        linea=Linea(str(r["ani"])),
+                        linea=Linea(str(r["ani"]), dni=dni_val),
                         prioridad=r["prioridad_enum"],
                         prioridad_nombre=r["prioridad_nombre"],
                         estado=EstadoRegistro.PROCESANDO,
                         scraper_actual=scraper_nombre,
                         fuente=r.get("fuente"),
-                        datos_existentes=raw_json
+                        datos_existentes=raw_json,
+                        dni=dni_val
                     ))
 
                 return registros
@@ -225,6 +228,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         descripcion_scraper = %s,
                         fuente = %s,
                         datos_json = %s,
+                        dni = COALESCE(%s, dni),
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s
                 """
@@ -239,6 +243,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         (r.get("descripcion") or "")[:195],
                         r.get("fuente", "[]"),
                         json_str,
+                        r.get("dni"),
                         r["id"]
                     ))
 

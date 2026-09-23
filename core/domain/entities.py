@@ -141,6 +141,14 @@ class RegistroCola:
     scraper_actual: str = "iris"
     fuente: Optional[str] = None
     datos_existentes: Dict[str, Any] = field(default_factory=dict)
+    dni: Optional[str] = None
+
+    def __post_init__(self):
+        if self.dni and self.linea and not self.linea.dni:
+            object.__setattr__(self, "linea", Linea(ani=self.linea.ani, dni=str(self.dni)))
+        elif self.linea and self.linea.dni and not self.dni:
+            self.dni = str(self.linea.dni)
+
 
 
 class ReglaPipeline:

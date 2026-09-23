@@ -63,14 +63,16 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                 except Exception:
                     raw_json = {}
 
+            dni_val = str(r["dni"]) if r.get("dni") else None
             resultado.append(RegistroCola(
                 id=r["id"],
-                linea=Linea(ani=str(r["ani"]), dni=str(r["dni"]) if r.get("dni") else None),
+                linea=Linea(ani=str(r["ani"]), dni=dni_val),
                 prioridad=Prioridad.from_int(r.get("prioridad", 3)),
                 estado=EstadoRegistro.PROCESANDO,
                 scraper_actual=scraper_nombre,
                 fuente=r.get("fuente"),
-                datos_existentes=raw_json
+                datos_existentes=raw_json,
+                dni=dni_val
             ))
 
         return resultado
@@ -84,6 +86,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                 rec["estado"] = res.get("estado", "completado")
                 rec["fuente"] = res.get("fuente")
                 rec["datos_json"] = res.get("datos")
+                if res.get("dni"):
+                    rec["dni"] = res.get("dni")
         return True
 
     def revertir_a_pendiente(self, ids: List[int]) -> bool:

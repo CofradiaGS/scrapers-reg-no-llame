@@ -12,6 +12,7 @@ La tabla `queue_registro_no_llame` actúa como la cola transaccional primaria y 
 CREATE TABLE IF NOT EXISTS `queue_registro_no_llame` (
     `id` BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
     `ani` BIGINT UNSIGNED NOT NULL,
+    `dni` VARCHAR(15) NULL DEFAULT NULL,
     `scraper_actual` VARCHAR(32) NOT NULL DEFAULT 'iris',
     `estado` ENUM('pendiente', 'procesando', 'completado', 'no_coincidencia', 'error') NOT NULL DEFAULT 'pendiente',
     `descripcion_scraper` VARCHAR(255) NULL DEFAULT '',
@@ -21,6 +22,7 @@ CREATE TABLE IF NOT EXISTS `queue_registro_no_llame` (
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
     UNIQUE KEY `uk_ani` (`ani`),
+    KEY `idx_dni` (`dni`),
     KEY `idx_scraper_estado_id` (`scraper_actual`, `estado`, `id`),
     KEY `idx_scraper_estado_ani_id` (`scraper_actual`, `estado`, `ani`, `id`),
     KEY `idx_updated_at_estado` (`updated_at`, `estado`)
@@ -37,6 +39,7 @@ A continuación se detalla cada campo utilizado de forma literal en las consulta
 | :--- | :--- | :--- | :--- | :--- |
 | `id` | `BIGINT UNSIGNED` | No | Auto-incremental | Clave primaria surrogate. Garantiza orden secuencial estricto en la extracción con `ORDER BY id ASC`. |
 | `ani` | `BIGINT UNSIGNED` | No | N/A | Número telefónico normalizado a 10 dígitos (ej. `1123456789`, `2614556677`). La representación como entero de 64 bits permite comparaciones numéricas ultrarrápidas mediante `BETWEEN` en árbol B-Tree. |
+| `dni` | `VARCHAR(15)` | Sí | `NULL` | Número de Documento Nacional de Identidad obtenido del último port out o consulta previa (IRIS, Datuar, CuitOnline). Sirve como fuente primaria relacional para scrapers que requieren DNI (Claro, Datuar, CuitOnline). |
 | `scraper_actual` | `VARCHAR(32)` | No | `'iris'` | Define qué motor del pipeline es responsable del registro en la fase actual. Valores admitidos: `'iris'`, `'claro'`, `'movistar'`, `'personal'`, o `'finalizado'` cuando concluye la cadena. |
 | `estado` | `ENUM(...)` | No | `'pendiente'` | Estado transaccional del registro dentro del ciclo de vida del scraping. |
 | `descripcion_scraper` | `VARCHAR(255)` | Sí | `''` | Resumen humano o diagnóstico inmediato generado por el scraper (ej. `"Port Out - Titular: JUAN PEREZ | Doc: 20123456"` o código de error truncado). |

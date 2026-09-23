@@ -93,9 +93,12 @@ class ProcesarLoteUseCase:
             t0 = time.time()
             try:
                 # 2. Consultar a través del puerto de scraper
-                linea_consulta = reg.linea
-                datos_previos = reg.datos_existentes if isinstance(reg.datos_existentes, dict) else {}
-                if isinstance(reg.datos_existentes, str):
+                linea_consulta = Linea(ani=reg.linea.ani, dni=reg.linea.dni or getattr(reg, 'dni', None))
+
+                # Parsear datos_json previos
+                if isinstance(reg.datos_existentes, dict):
+                    datos_previos = dict(reg.datos_existentes)
+                else:
                     try:
                         datos_previos = json.loads(reg.datos_existentes)
                     except Exception:
@@ -173,6 +176,7 @@ class ProcesarLoteUseCase:
                     item_res = {
                         "id": reg.id,
                         "ani": reg.linea.ani,
+                        "dni": linea_consulta.dni,
                         "scraper_actual": sig_scraper,
                         "estado": sig_estado,
                         "descripcion": f"Salteado: {motivo}"[:195],
@@ -192,15 +196,16 @@ class ProcesarLoteUseCase:
                 resultado = self.scraper.consultar_linea(linea_consulta)
                 lat = round(time.time() - t0, 2)
 
-                # 3. Aplicar Regla de Dominio: Cortocircuito y Siguiente Posta
-                dni_activo = bool(
-                    linea_consulta.dni 
-                    or (resultado.titular and resultado.titular.nro_documento)
-                    or (isinstance(resultado.detalles, dict) and (
-                        resultado.detalles.get("titular", {}).get("nro_documento") 
-                        or resultado.detalles.get("dni")
-                    ))
+                # Extraer DNI resultante para persistencia en columna relacional
+                dni_res = (
+                    linea_consulta.dni
+                    or (resultado.titular.nro_documento if resultado.titular and resultado.titular.nro_documento else None)
+                    or (resultado.detalles.get("dni") if isinstance(resultado.detalles, dict) else None)
+                    or (resultado.detalles.get("titular", {}).get("nro_documento") if isinstance(resultado.detalles, dict) else None)
                 )
+
+                # 3. Aplicar Regla de Dominio: Cortocircuito y Siguiente Posta
+                dni_activo = bool(dni_res)
                 fuentes_previas_list = self.parsear_fuentes_previas(reg.fuente)
 
                 coincidencia_telco_previa = any(
@@ -228,6 +233,7 @@ class ProcesarLoteUseCase:
                 item_res = {
                     "id": reg.id,
                     "ani": reg.linea.ani,
+                    "dni": dni_res,
                     "scraper_actual": sig_scraper,
                     "estado": sig_estado,
                     "descripcion": resultado.descripcion or f"Scrapeado por {self.scraper.nombre}",
