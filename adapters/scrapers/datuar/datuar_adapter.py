@@ -110,7 +110,7 @@ class DatuarAdapter(BaseScraperAdapter):
                 )
             if not self.tor_external_daemon:
                 self.tor_controller.ensure_running(timeout_sec=60)
-            elif not self.tor_controller.is_alive():
+            elif not self.tor_controller.is_running():
                 logger.warning("Tor daemon externo aún no responde. Esperando...")
                 self.tor_controller.ensure_running(timeout_sec=15)
 
@@ -227,56 +227,29 @@ class DatuarAdapter(BaseScraperAdapter):
             municipios = re.findall(r'data-municipio="([^"]+)"', html)
 
             if names:
-                raw_name = names[0].strip()
-                cuil = cdus[0].strip() if cdus else None
-                edad = edades[0].strip() if edades else None
-                genero = generos[0].strip() if generos else None
-                provincia = provincias[0].strip().title() if provincias else None
-                ciudad = ciudades[0].strip().title() if ciudades else None
-                municipio = municipios[0].strip().title() if municipios else None
+                personas = []
+                for i in range(len(names)):
+                    raw_name = names[i].strip()
+                    cuil = cdus[i].strip() if i < len(cdus) else None
+                    edad = edades[i].strip() if i < len(edades) else None
+                    genero = generos[i].strip() if i < len(generos) else None
+                    provincia = provincias[i].strip().title() if i < len(provincias) else None
+                    ciudad = ciudades[i].strip().title() if i < len(ciudades) else None
+                    municipio = municipios[i].strip().title() if i < len(municipios) else None
 
-                parts = [p.strip() for p in raw_name.split(",") if p.strip()]
-                if len(parts) >= 2:
-                    apellidos = parts[0].upper()
-                    nombres = parts[1].title()
-                elif first_names:
-                    nombres = first_names[0].strip().title()
-                    apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
-                else:
-                    apellidos = raw_name.upper()
-                    nombres = ""
+                    parts = [p.strip() for p in raw_name.split(",") if p.strip()]
+                    if len(parts) >= 2:
+                        apellidos = parts[0].upper()
+                        nombres = parts[1].title()
+                    elif i < len(first_names):
+                        nombres = first_names[i].strip().title()
+                        apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
+                    else:
+                        apellidos = raw_name.upper()
+                        nombres = ""
 
-                nombre_completo = f"{apellidos}, {nombres}".strip(", ")
-
-                titular = Titular(
-                    nombre=nombres,
-                    apellido=apellidos,
-                    nro_documento=dni_limpio,
-                    tipo_documento="DNI",
-                    cuil=cuil or "",
-                    edad=edad or "",
-                    genero=genero or "",
-                    provincia=provincia or "",
-                    ciudad=ciudad or "",
-                    municipio=municipio or ""
-                )
-
-                desc_partes = [f"Datuar - {nombre_completo}"]
-                if cuil:
-                    desc_partes.append(f"CUIL: {cuil}")
-                if edad:
-                    desc_partes.append(f"Edad: {edad} años")
-                if ciudad or provincia:
-                    ub = f"{ciudad or ''}, {provincia or ''}".strip(", ")
-                    desc_partes.append(f"Ubicación: {ub}")
-                descripcion_line = " | ".join(desc_partes)
-
-                return ScrapeResult(
-                    ani=linea.ani,
-                    status=StatusScraping.COINCIDENCIA,
-                    fuente_scraper=self.nombre,
-                    titular=titular,
-                    detalles={
+                    nombre_completo = f"{apellidos}, {nombres}".strip(", ")
+                    personas.append({
                         "nombre_completo": nombre_completo,
                         "nombres": nombres,
                         "apellidos": apellidos,
@@ -286,7 +259,53 @@ class DatuarAdapter(BaseScraperAdapter):
                         "genero": genero,
                         "provincia": provincia,
                         "ciudad": ciudad,
-                        "municipio": municipio,
+                        "municipio": municipio
+                    })
+
+                p_primero = personas[0]
+                titular = Titular(
+                    nombre=p_primero["nombres"],
+                    apellido=p_primero["apellidos"],
+                    nro_documento=dni_limpio,
+                    tipo_documento="DNI",
+                    cuil=p_primero["cuil"] or "",
+                    edad=p_primero["edad"] or "",
+                    genero=p_primero["genero"] or "",
+                    provincia=p_primero["provincia"] or "",
+                    ciudad=p_primero["ciudad"] or "",
+                    municipio=p_primero["municipio"] or ""
+                )
+
+                desc_partes = [f"Datuar - {p_primero['nombre_completo']}"]
+                if p_primero["cuil"]:
+                    desc_partes.append(f"CUIL: {p_primero['cuil']}")
+                if p_primero["edad"]:
+                    desc_partes.append(f"Edad: {p_primero['edad']} años")
+                if p_primero["ciudad"] or p_primero["provincia"]:
+                    ub = f"{p_primero['ciudad'] or ''}, {p_primero['provincia'] or ''}".strip(", ")
+                    desc_partes.append(f"Ubicación: {ub}")
+                if len(personas) > 1:
+                    desc_partes.append(f"Total coincidencias: {len(personas)}")
+                descripcion_line = " | ".join(desc_partes)
+
+                return ScrapeResult(
+                    ani=linea.ani,
+                    status=StatusScraping.COINCIDENCIA,
+                    fuente_scraper=self.nombre,
+                    titular=titular,
+                    detalles={
+                        "nombre_completo": p_primero["nombre_completo"],
+                        "nombres": p_primero["nombres"],
+                        "apellidos": p_primero["apellidos"],
+                        "cuil": p_primero["cuil"],
+                        "dni": dni_limpio,
+                        "edad": p_primero["edad"],
+                        "genero": p_primero["genero"],
+                        "provincia": p_primero["provincia"],
+                        "ciudad": p_primero["ciudad"],
+                        "municipio": p_primero["municipio"],
+                        "total_coincidencias": len(personas),
+                        "coincidencias": personas,
                         "origen": "datuar_live"
                     },
                     descripcion=descripcion_line

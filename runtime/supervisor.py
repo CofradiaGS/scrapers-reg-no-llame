@@ -398,7 +398,7 @@ class SupervisorIndustrial:
             else:
                 self.db_adapter = MySQLQueueAdapter(pool_size=1, pool_name=f"sup_pc_{os.getpid()}")
             stats = self.db_adapter.obtener_estadisticas()
-            pendientes = stats.get("pendiente", stats.get(f"{self.scraper_name}_pendiente", 0))
+            pendientes = stats.get(f"{self.scraper_name}_pendiente", stats.get("pendiente", 0))
             print(f"Conexión con VPS confirmada (1 socket permanente). Registros pendientes para '{self.scraper_name}': {pendientes:,}\n")
         except Exception as e:
             logger.critical(f"Error conectando con la base de datos central VPS: {e}")
@@ -425,9 +425,9 @@ class SupervisorIndustrial:
             )
             self._set_pause("horario")
 
-        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar o Personal
+        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal o Datuar
         tor_daemon = None
-        if any(op in self.scraper_name for op in ("claro", "movistar", "personal")):
+        if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar")):
             if self.scraper_kwargs.get("use_proxy_pool", config.PROXY_POOL_ENABLED):
                 from adapters.network.proxy_pool import ProxyPoolManager
                 logger.info("🌐 [SUPERVISOR] Inicializando caché y bootstrap inicial de ProxyPoolManager...")

@@ -84,6 +84,10 @@ class TorController:
         except Exception:
             return False
 
+    def is_alive(self) -> bool:
+        """Alias retrocompatible para is_running()."""
+        return self.is_running()
+
     def get_bootstrap_status(self) -> tuple[bool, str]:
         """Comprueba conectividad con el ControlPort y devuelve (is_ready_100, phase_string)."""
         if not self.is_port_open(self.control_port):
@@ -205,6 +209,9 @@ class TorController:
                     pass
                 logger.info("Conexión al ControlPort establecida. Esperando bootstrap 100%...")
                 while time.time() - t0 < timeout_sec:
+                    if not ctrl.is_alive():
+                        logger.warning("La conexión con el puerto de control de Tor se interrumpió.")
+                        break
                     try:
                         info = ctrl.get_info("status/bootstrap-phase", default="")
                         progress_str = ""
@@ -219,6 +226,8 @@ class TorController:
                             return True
                     except Exception as poll_err:
                         logger.debug(f"Poll error (ignorado): {poll_err}")
+                        if not ctrl.is_alive():
+                            break
                     time.sleep(2.0)
         except Exception as conn_err:
             logger.error(f"No se pudo conectar al ControlPort persistente: {conn_err}")

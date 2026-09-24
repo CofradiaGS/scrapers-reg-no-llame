@@ -145,7 +145,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         break
                     else:
                         if prioridad is None and nivel in self._prio_exhausted_until:
-                            self._prio_exhausted_until[nivel] = time.time() + 45.0
+                            self._prio_exhausted_until[nivel] = time.time() + 3.0
 
                 if not filas:
                     conn.commit()

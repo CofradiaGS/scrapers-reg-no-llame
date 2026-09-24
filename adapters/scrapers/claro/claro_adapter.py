@@ -290,25 +290,33 @@ class ClaroAdapter(BaseScraperAdapter):
                 if resp is None:
                     raise RuntimeError(f"ProxyPool agotó los {max_retries} reintentos para {linea.ani}: {last_err}")
             else:
-                try:
-                    resp = self._session.post(
-                        url_api,
-                        headers=headers,
-                        data=json.dumps(payload_data),
-                        timeout=self.timeout
-                    )
-                except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
-                    if self.use_tor:
-                        logger.warning(f"Timeout/Error de red en circuito Tor ({net_err}). Rotando circuito instantáneamente y reintentando...")
-                        self._rotar_circuito_instantaneo()
+                MAX_TOR_RETRIES = 4
+                last_net_err = None
+                resp = None
+                for tor_attempt in range(1, MAX_TOR_RETRIES + 1):
+                    try:
                         resp = self._session.post(
                             url_api,
                             headers=headers,
                             data=json.dumps(payload_data),
                             timeout=self.timeout
                         )
-                    else:
-                        raise
+                        last_net_err = None
+                        break  # Éxito — salir del loop de reintentos
+                    except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
+                        last_net_err = net_err
+                        if self.use_tor:
+                            logger.warning(
+                                f"Timeout/Error de red en circuito Tor (intento {tor_attempt}/{MAX_TOR_RETRIES}): "
+                                f"{net_err}. Rotando circuito instantáneamente y reintentando..."
+                            )
+                            self._rotar_circuito_instantaneo()
+                        else:
+                            raise
+                if resp is None:
+                    raise RuntimeError(
+                        f"Error de red en ClaroAdapter tras {MAX_TOR_RETRIES} intentos Tor: {last_net_err}"
+                    )
 
             # --- MANEJO DE RESPUESTAS ---
 
