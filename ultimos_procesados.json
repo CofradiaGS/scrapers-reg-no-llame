@@ -1,0 +1,202 @@
+[
+  {
+    "id": 64499598,
+    "ani": "1127106378",
+    "dni": "37370827",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (6 ops: Port In, Altas, Port Out) - Titular: JULIAN ALBERTO PONCE MERIDA | Doc: 37370827",
+    "timestamp": "2026-09-25 13:36:44"
+  },
+  {
+    "id": 64499599,
+    "ani": "1124004326",
+    "dni": "37174783",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (4 ops: Port Out, Port In, Altas) - Titular: DEL CAMPO DANTE RAMON | Doc: 37174783",
+    "timestamp": "2026-09-25 13:36:52"
+  },
+  {
+    "id": 64499600,
+    "ani": "3412004628",
+    "dni": "34301369",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (5 ops: Port Out, Port In, Altas) - Titular: COLOMBO WALTER IVAN | Doc: 34301369",
+    "timestamp": "2026-09-25 13:37:04"
+  },
+  {
+    "id": 64499601,
+    "ani": "1123164021",
+    "dni": "28706559",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (6 ops: Altas, Port In, Port Out) - Titular: AGUSTIN DIEGO MIRANDA | Doc: 28706559",
+    "timestamp": "2026-09-25 13:37:18"
+  },
+  {
+    "id": 64499602,
+    "ani": "1132005385",
+    "dni": "31370383",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (1 ops: Port Out) - Titular: GODOY MERCEDES SOLEDAD | Doc: 31370383",
+    "timestamp": "2026-09-25 13:37:21"
+  },
+  {
+    "id": 64499795,
+    "ani": "1135781535",
+    "dni": "30905615",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (8 ops: Port Out, Port In, Altas) - Titular: SONIA ESTER PANIZZINO | Doc: 30905615",
+    "timestamp": "2026-09-25 13:37:28"
+  },
+  {
+    "id": 64499595,
+    "ani": "1168187463",
+    "dni": "17826173",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (9 ops: Altas, Port In, Port Out) - Titular: SUSANA MARCELA PUIG | Doc: 17826173",
+    "timestamp": "2026-09-25 13:37:28"
+  },
+  {
+    "id": 64499603,
+    "ani": "3416694137",
+    "dni": "44021415",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (8 ops: Port Out, Port In, Altas) - Titular: MARTIN VIOLETA SOFIA | Doc: 44021415",
+    "timestamp": "2026-09-25 13:37:41"
+  },
+  {
+    "id": 64499596,
+    "ani": "1154964951",
+    "dni": "26691453",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (2 ops: Port Out, Cambios) - Titular: CELENTANO ACEVEDO SILVESTRE MARTIN | Doc: 26691453",
+    "timestamp": "2026-09-25 13:37:44"
+  },
+  {
+    "id": 64499597,
+    "ani": "3415100120",
+    "dni": "14684580",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (5 ops: Cambio de Titularidad, Port Out, Altas, Port In) - Sin datos de titular",
+    "timestamp": "2026-09-25 13:37:47"
+  },
+  {
+    "id": 64499688,
+    "ani": "1141976477",
+    "dni": "18657994",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (15 ops: Cambios, Port In, Altas, Port Out) - Titular: CLARA SILVIN MONZON | Doc: 18657994",
+    "timestamp": "2026-09-25 13:37:55"
+  },
+  {
+    "id": 64499604,
+    "ani": "1158409371",
+    "dni": "34079235",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (9 ops: Port Out, Port In, Altas) - Titular: FERNANDEZ NICOLAS MATIAS | Doc: 34079235",
+    "timestamp": "2026-09-25 13:38:03"
+  },
+  {
+    "id": 64499644,
+    "ani": "1168260236",
+    "dni": "17861954",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (11 ops: Port In, Altas, Port Out) - Titular: ARMANDO ANTONIO VERNA | Doc: 17861954",
+    "timestamp": "2026-09-25 13:38:15"
+  },
+  {
+    "id": 64499645,
+    "ani": "1141779309",
+    "dni": "30677790977",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (1 ops: Port Out) - Titular: RECONSTRUCCION CAÑOS S A | Doc: 30677790977",
+    "timestamp": "2026-09-25 13:38:29"
+  },
+  {
+    "id": 64499598,
+    "ani": "1127106378",
+    "dni": "37370827",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (6 ops: Port In, Altas, Port Out) - Titular: JULIAN ALBERTO PONCE MERIDA | Doc: 37370827",
+    "timestamp": "2026-09-25 13:38:36"
+  },
+  {
+    "id": 64499605,
+    "ani": "1122968424",
+    "dni": "16823957",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (13 ops: Port Out, Port In, Altas) - Titular: ROBERTO ARIEL LOPEZ | Doc: 16823957",
+    "timestamp": "2026-09-25 13:38:41"
+  },
+  {
+    "id": 64499646,
+    "ani": "1150971390",
+    "dni": "32847704",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (1 ops: Port Out) - Titular: DUARTE ANGEL DAVID | Doc: 32847704",
+    "timestamp": "2026-09-25 13:38:42"
+  },
+  {
+    "id": 64499647,
+    "ani": "1159430386",
+    "dni": "41705367",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (1 ops: Port Out) - Titular: PEREYRA GUSTAVO ENRIQUE JESUS | Doc: 41705367",
+    "timestamp": "2026-09-25 13:38:52"
+  },
+  {
+    "id": 64499606,
+    "ani": "1150541844",
+    "dni": "31453688",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (5 ops: Port Out, Altas, Port In) - Titular: BARRAL LAURA KARINA | Doc: 31453688",
+    "timestamp": "2026-09-25 13:38:52"
+  },
+  {
+    "id": 64499689,
+    "ani": "1156996333",
+    "dni": "25148456",
+    "scraper": "claro",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (7 ops: Port In, Altas, Port Out) - Titular: LILIANA KARINA LEONARDIS | Doc: 25148456",
+    "timestamp": "2026-09-25 13:39:02"
+  }
+]

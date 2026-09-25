@@ -86,6 +86,16 @@ class ProcesarLoteUseCase:
 
         resultados = []
         unprocessed_ids = [r.id for r in lote]
+        is_ipc_streaming = getattr(self.cola, "is_ipc", False)
+
+        def registrar_resultado(item: Dict[str, Any]):
+            resultados.append(item)
+            if item["id"] in unprocessed_ids:
+                unprocessed_ids.remove(item["id"])
+            if on_item_procesado:
+                on_item_procesado(item)
+            if is_ipc_streaming:
+                self.cola.persistir_resultados([item])
 
         for reg in lote:
             if should_stop and should_stop():
@@ -191,12 +201,7 @@ class ProcesarLoteUseCase:
                         "latencia": lat,
                         "status": "salteado"
                     }
-                    resultados.append(item_res)
-                    if reg.id in unprocessed_ids:
-                        unprocessed_ids.remove(reg.id)
-
-                    if on_item_procesado:
-                        on_item_procesado(item_res)
+                    registrar_resultado(item_res)
                     continue
 
                 resultado = self.scraper.consultar_linea(linea_consulta)
@@ -248,12 +253,7 @@ class ProcesarLoteUseCase:
                     "latencia": lat,
                     "status": resultado.status.value
                 }
-                resultados.append(item_res)
-                if reg.id in unprocessed_ids:
-                    unprocessed_ids.remove(reg.id)
-
-                if on_item_procesado:
-                    on_item_procesado(item_res)
+                registrar_resultado(item_res)
 
             except FueraDeHorarioComercialException as e_hc:
                 logger.warning(
@@ -290,15 +290,10 @@ class ProcesarLoteUseCase:
                     "latencia": lat,
                     "status": "error"
                 }
-                resultados.append(item_err)
-                if reg.id in unprocessed_ids:
-                    unprocessed_ids.remove(reg.id)
+                registrar_resultado(item_err)
 
-                if on_item_procesado:
-                    on_item_procesado(item_err)
-
-        # 4. Persistir lote completado a través del puerto de cola
-        if resultados:
+        # 4. Persistir lote completado a través del puerto de cola (solo si no se transmitió por streaming IPC)
+        if resultados and not is_ipc_streaming:
             self.cola.persistir_resultados(resultados)
 
         # 5. Si quedaron registros sin procesar por interrupción, devolverlos a pendiente

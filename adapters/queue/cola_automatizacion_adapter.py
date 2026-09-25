@@ -58,16 +58,27 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
     def _get_connection(self, max_retries: int = 4, retry_delay: float = 2.0):
         for attempt in range(1, max_retries + 1):
+            conn = None
             try:
                 conn = self.pool.get_connection()
+                if hasattr(conn, "unread_result") and conn.unread_result:
+                    try:
+                        conn.consume_results()
+                    except Exception:
+                        pass
                 conn.ping(reconnect=True, attempts=3, delay=1)
                 return conn
             except Exception as e:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
                 logger.warning(f"Reintento {attempt}/{max_retries} conexión cola_automatizacion: {e}")
                 if attempt == max_retries:
                     raise
                 import time
-                time.sleep(retry_delay)
+                time.sleep(retry_delay * (1.5 ** (attempt - 1)))
 
     def reservar_lote(
         self,
@@ -100,7 +111,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         try:
             conn = self._get_connection()
             conn.start_transaction()
-            cursor = conn.cursor(dictionary=True)
+            cursor = conn.cursor(dictionary=True, buffered=True)
 
             cursor.execute(query_find, (self.auto_id, self.pc_id, batch_size))
             filas = cursor.fetchall()
@@ -390,7 +401,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
 
             valores_lote = []
             delta_enriquecidos = 0
@@ -482,7 +493,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         cursor = None
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             query = """
                 INSERT INTO worker_heartbeats (pc_id, auto_id, last_seen, status)
                 VALUES (%s, %s, NOW(), 'online')
@@ -521,7 +532,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         cursor = None
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             identificador = f"{self.pc_id}_{self.auto_id}"
 
             query = """
@@ -571,7 +582,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         cursor = None
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             placeholders = ", ".join(["%s"] * len(ids))
             query = f"""
                 UPDATE {self.table}
@@ -611,7 +622,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         lock_adquirido = False
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
 
             # Mutex distribuido MySQL: GET_LOCK con timeout 0s (no-wait)
             # Solo 1 nodo entre todas las máquinas concurrentes ejecutará el barrido
@@ -647,6 +658,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
             if lock_adquirido and cursor:
                 try:
                     cursor.execute("SELECT RELEASE_LOCK('watchdog_sweeper_cola_auto_mutex')")
+                    cursor.fetchall()
                 except Exception:
                     pass
             if cursor:
@@ -669,7 +681,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         stats: Dict[str, int] = {}
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             query = f"""
                 SELECT estado, COUNT(*)
                 FROM {self.table}

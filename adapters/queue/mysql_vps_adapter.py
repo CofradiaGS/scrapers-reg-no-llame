@@ -371,6 +371,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             if lock_adquirido and cursor:
                 try:
                     cursor.execute("SELECT RELEASE_LOCK('watchdog_sweeper_mutex')")
+                    cursor.fetchall()
                 except Exception:
                     pass
             if cursor:

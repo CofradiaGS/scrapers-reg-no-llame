@@ -158,5 +158,33 @@ class TestPreflightEligibility(unittest.TestCase):
         self.assertEqual(cola.records[401]["estado"], "pendiente")
         self.assertEqual(cola.records[402]["estado"], "pendiente")
 
+    def test_ipc_streaming_persistence(self):
+        """
+        Si la cola tiene is_ipc=True, el caso de uso debe persistir cada ítem
+        inmediatamente en streaming a la cola en RAM para no retener datos en el worker.
+        """
+        class MockIPCQueue(MemoryQueueAdapter):
+            is_ipc = True
+            def __init__(self, records):
+                super().__init__(records)
+                self.calls_persist = []
+
+            def persistir_resultados(self, resultados):
+                self.calls_persist.append(resultados)
+                return super().persistir_resultados(resultados)
+
+        cola = MockIPCQueue([
+            {"id": 501, "ani": "1123456789", "scraper_actual": "iris", "estado": "pendiente"},
+            {"id": 502, "ani": "1198765432", "scraper_actual": "iris", "estado": "pendiente"}
+        ])
+        use_case = ProcesarLoteUseCase(cola_repo=cola, scraper_engine=DummyScraper(nombre="iris"))
+        proc, sin_proc = use_case.ejecutar_lote(batch_size=10)
+
+        self.assertEqual(proc, 2)
+        # Debe haberse llamado persistir_resultados 2 veces (1 por ítem), NO 1 vez al final
+        self.assertEqual(len(cola.calls_persist), 2)
+        self.assertEqual(len(cola.calls_persist[0]), 1)
+        self.assertEqual(len(cola.calls_persist[1]), 1)
+
 if __name__ == "__main__":
     unittest.main()

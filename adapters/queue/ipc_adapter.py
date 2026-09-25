@@ -30,6 +30,7 @@ class IPCWorkerQueueAdapter(IColaRepositorioPort):
     Adaptador de cola para subprocesos Worker.
     Delega las operaciones de persistencia y reclamo al Supervisor mediante canales IPC.
     """
+    is_ipc: bool = True
 
     def __init__(
         self,

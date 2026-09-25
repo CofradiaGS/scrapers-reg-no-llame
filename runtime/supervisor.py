@@ -12,14 +12,18 @@ Gestiona el ciclo de vida de un pool de workers concurrentes bajo arquitectura h
 import os
 import sys
 import time
+import json
 import signal
 import urllib.request
 import logging
 from logging.handlers import RotatingFileHandler
 import threading
 from typing import Dict, Any, Optional
+from collections import deque
 from multiprocessing import Process, Queue, Event
 from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 import config
 from core.domain.schedule import PoliticaHorarioComercial
@@ -131,6 +135,9 @@ class SupervisorIndustrial:
         self._last_heartbeat_time: float = 0.0
         self._last_stats_flush_time: float = time.time()
         self._pending_stats: Dict[str, int] = {"procesados": 0, "enriquecidos": 0, "fallidos": 0}
+        self._recent_items: deque = deque(maxlen=20)
+        self._last_recent_file_write: float = 0.0
+        self._recent_file_path = PROJECT_ROOT / "ultimos_procesados.json"
 
         # Centinela Explorador (Scout Probe) y Backoff Progresivo para cola vacía
         self.empty_queue_pause_max_sec: float = max(
@@ -142,6 +149,21 @@ class SupervisorIndustrial:
         self._empty_backoff_level: int = 0
         self._scout_prefetched_lote: List[Any] = []
         self._scout_lock = threading.Lock()
+
+    def _save_recent_items_local(self, force: bool = False):
+        """Escribe una ventana deslizante de las últimas consultas en un archivo local sin tocar el VPS."""
+        now = time.time()
+        if not force and (now - self._last_recent_file_write < 2.0):
+            return
+        try:
+            self._last_recent_file_write = now
+            data = list(self._recent_items)
+            temp_path = self._recent_file_path.with_suffix(".tmp")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+            temp_path.replace(self._recent_file_path)
+        except Exception as e:
+            logger.debug(f"Aviso guardando ultimos_procesados.json: {e}")
 
     def _get_current_empty_backoff_delay(self) -> float:
         """Calcula el retardo actual de la escalera de backoff progresivo para cola vacía."""
@@ -467,6 +489,19 @@ class SupervisorIndustrial:
                                     if st == "coincidencia":
                                         self._pending_stats["enriquecidos"] += 1
 
+                                self._recent_items.append({
+                                    "id": r.get("id"),
+                                    "ani": r.get("ani"),
+                                    "dni": r.get("dni"),
+                                    "scraper": r.get("scraper_actual"),
+                                    "estado": r.get("estado"),
+                                    "status": r.get("status"),
+                                    "descripcion": str(r.get("descripcion", ""))[:120],
+                                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")
+                                })
+
+                            self._save_recent_items_local()
+
                             # Responder de inmediato al worker para desacoplar su ciclo de scraping
                             if resp_q:
                                 resp_q.put(True)
@@ -506,6 +541,7 @@ class SupervisorIndustrial:
                         resp_q.put({"error": str(e)})
 
         finally:
+            self._save_recent_items_local(force=True)
             # Al detenerse el despachador, vaciado atómico garantizado de cualquier remanente en RAM
             if self._write_buffer:
                 disp_logger.info(f"💾 Vaciando buffer final de {len(self._write_buffer)} registros remanentes...")
