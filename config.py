@@ -26,6 +26,14 @@ VPS_DBNAME = os.getenv("VPS_DBNAME", "bases")
 VPS_DB_TABLE = os.getenv("VPS_DB_TABLE", "queue_registro_no_llame")
 VPS_DB_USE_PURE = os.getenv("VPS_DB_USE_PURE", "True").strip().lower() in ("true", "1", "yes")
 
+# Optimización de I/O y Reducción Masiva de Binlog (Staging Buffer en RAM)
+BUFFER_FLUSH_SIZE = int(os.getenv("BUFFER_FLUSH_SIZE", "500"))
+BUFFER_MAX_DELAY = float(os.getenv("BUFFER_MAX_DELAY", "300.0"))
+HEARTBEAT_INTERVAL_SEC = float(os.getenv("HEARTBEAT_INTERVAL_SEC", "180.0"))
+STATS_FLUSH_INTERVAL_SEC = float(os.getenv("STATS_FLUSH_INTERVAL_SEC", "600.0"))
+WATCHDOG_SWEEP_INTERVAL_SEC = float(os.getenv("WATCHDOG_SWEEP_INTERVAL_SEC", "600.0"))
+EMPTY_QUEUE_PAUSE_MAX_SEC = float(os.getenv("EMPTY_QUEUE_PAUSE_MAX_SEC", "900.0"))
+
 # Configuración Modular de Cola (registro_no_llame / cola_automatizacion)
 import socket
 QUEUE_TYPE = os.getenv("QUEUE_TYPE", "registro_no_llame").strip().lower()

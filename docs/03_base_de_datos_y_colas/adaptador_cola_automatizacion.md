@@ -1,17 +1,17 @@
 # Adaptador de Cola: Cola Automatización (VPS Central)
 
 > **Capa 03: Base de Datos y Colas** | Módulo de Extensión Hexagonal  
-> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
-> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
+> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
+> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
 
 ---
 
 ## 1. Propósito y Visión General
 
-El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
+El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
 
 Este adaptador desacopla por completo la fuente de datos del dominio de la aplicación:
-* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
+* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
 * **Compatibilidad Retrospectiva**: Formatea la columna `resultado` (tipo `JSON`) respetando la estructura que esperan los consumidores y dashboards legados del proyecto `worker_package`.
 * **Enriquecimiento sin Pérdidas**: Conserva en el JSON todas las capas de datos extendidos que extraen los motores modernos (`tramite`, `fechas`, `detalles_extendidos`, `raw`), evitando pérdida de precisión técnica.
 * **Telemetría e Integración**: Emite latidos de vida en `worker_heartbeats` y deltas de producción en `stats_historial`.
@@ -302,7 +302,34 @@ ORDER BY fecha_fin DESC;
 
 ---
 
-## 5. Variables de Entorno y Configuración
+## 5. Optimización de Persistencia Masiva, Buffer en RAM y Throttling
+
+Para mitigar el crecimiento explosivo del log binario (**binlog**) de MySQL y evitar la saturación de memoria RAM (Buffer Pool) en servidores VPS restringidos, este adaptador implementa una política estricta de **agrupamiento y desacoplamiento de escritura**:
+
+```mermaid
+flowchart TD
+    W[Workers Concurrentes] -->|Entrega resultados de scraping| BUF[Buffer en RAM en Despachador IPC]
+    BUF -->|Umbral 500 registros o máx 300s| FLUSH[cursor.executemany + COMMIT único]
+    FLUSH --> T_Cola[(cola_automatizacion)]
+    SUP[Supervisor Industrial] -->|Latido Throttled cada 180s| T_HB[(worker_heartbeats)]
+    SUP -->|Deltas acumulados cada 10m sin COUNT| T_Stats[(stats_historial)]
+    WD[Watchdog Sweeper Centinela] -->|Mutex distribuido GET_LOCK cada 10m| T_Cola
+```
+
+### 5.1 Reglas de Mitigación de Escritura
+
+| Componente | Comportamiento Anterior | Comportamiento Optimizado | Impacto Operativo |
+| :--- | :--- | :--- | :--- |
+| **Tamaño de Lote (`batch_size`)** | 12 registros | **50 registros** | Reducción del ~70% en frecuencia de transacciones de reclamo en MySQL. |
+| **Persistencia de Tareas** | Bucle fila por fila con `cursor.execute()` | **`cursor.executemany()` atómico** | 1 sola transacción en disco y binlog por bloque de persistencia. |
+| **Buffer en RAM (Despachador IPC)** | Escritura inmediata por lote de worker | **Agrupación en memoria (500 reg o 300s)** | Reducción de miles de micro-commits a 1 sola transacción consolidada cada 5 minutos. |
+| **Telemetría `worker_heartbeats`** | 1 `INSERT/UPDATE` por micro-lote (60s) | **Throttling espaciado a 180s (3m)** | Elimina el 66% de escrituras secundarias continuas en el binlog. |
+| **Métricas `stats_historial`** | `JSON_SET` por lote + `SELECT COUNT(*)` | **Acumulación en RAM y flush cada 10m** | Elimina escaneos de tabla completa y amortiza el binlog en una sola mutación diaria. |
+| **Centinela de Huérfanos** | Update concurrente desordenado | **Mutex `GET_LOCK('watchdog_sweeper_cola_auto_mutex', 0)`** | Solo 1 nodo del cluster ejecuta el barrido, evitando colisiones entre PCs. |
+
+---
+
+## 6. Variables de Entorno y Configuración
 
 | Variable | Tipo | Default | Descripción |
 | :--- | :--- | :--- | :--- |
@@ -310,15 +337,21 @@ ORDER BY fecha_fin DESC;
 | `COLA_AUTO_ID` | `str` | `iris_scraper` | Identificador del tipo de automatización a consumir. |
 | `WORKER_PC_ID` | `str` | `socket.gethostname()` | Nombre de nodo para `target_pc` y telemetría de latidos. |
 | `VPS_DB_USE_PURE` | `bool` | `True` | Fuerza implementación pura Python en `mysql.connector` (vital en Python 3.13 Windows). |
+| `BUFFER_FLUSH_SIZE` | `int` | `500` | Cantidad de registros en RAM antes de forzar flush atómico masivo a MySQL. |
+| `BUFFER_MAX_DELAY` | `float` | `300.0` | Ventana máxima en segundos (5 min) en RAM antes de vaciar resultados a MySQL. |
+| `HEARTBEAT_INTERVAL_SEC` | `float` | `180.0` | Frecuencia en segundos de pulso de vida en `worker_heartbeats`. |
+| `STATS_FLUSH_INTERVAL_SEC` | `float` | `600.0` | Intervalo en segundos (10 min) para persistir métricas consolidadas en `stats_historial`. |
+| `WATCHDOG_SWEEP_INTERVAL_SEC` | `float` | `600.0` | Frecuencia en segundos (10 min) del barrido centinela de tareas huérfanas. |
 
 ---
 
-## 6. Verificación y Pruebas
+## 7. Verificación y Pruebas
 
 El adaptador cuenta con una suite de pruebas unitarias y de integración en:
-* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
+* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
 
 Para ejecutar la verificación:
 ```powershell
-.\venv\Scripts\python.exe tests/test_cola_automatizacion_adapter.py
+python tests/test_cola_automatizacion_adapter.py
 ```
+

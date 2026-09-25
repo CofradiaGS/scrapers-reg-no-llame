@@ -71,32 +71,32 @@ graph TD
 ### 2.1. Núcleo: Dominio Puro (`core/domain/`)
 Contiene los tipos inmutables, Value Objects, entidades y reglas de negocio puras.
 - **Sin librerías de terceros:** Solo librerías estándar de Python (`dataclasses`, `enum`, `typing`).
-- **Value Objects:** [`Linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L10-L38), [`Titular`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L39-L62), [`Servicio`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L64-L77).
-- **Entidades:** [`ScrapeResult`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L79-L111), [`RegistroCola`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L113-L124).
-- **Regla de Negocio:** [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172), responsable de evaluar el cortocircuito y calcular el siguiente salto del pipeline.
+- **Value Objects:** [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L10-L38), [`Titular`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L39-L62), [`Servicio`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L64-L77).
+- **Entidades:** [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L79-L111), [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L113-L124).
+- **Regla de Negocio:** [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172), responsable de evaluar el cortocircuito y calcular el siguiente salto del pipeline.
 
 ### 2.2. Capa de Casos de Uso / Aplicación (`core/use_cases/`)
 Coordina las operaciones del sistema para cumplir los casos de uso específicos:
-- [`ProcesarLoteUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L19-L133):
+- [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L19-L133):
   1. Reclama un lote mediante el puerto de cola.
   2. Itera sobre las líneas y consulta el puerto de scraper.
   3. Ejecuta la regla de dominio para resolver la siguiente posta.
   4. Agrega los datos acumulativamente en namespaces.
   5. Persiste el lote en la base de datos.
-- [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9-L16):
+- [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9-L16):
   1. Ordena al puerto de cola revertir a `pendiente` los registros abandonados en `procesando`.
 
 ### 2.3. Capa de Puertos (`core/ports/`)
 Define los contratos abstractos (Driven / Secondary Ports). Son clases abstractas de Python (`abc.ABC`) que declaran las firmas que la infraestructura debe proveer:
-- [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py#L11-L57)
-- [`IScraperEnginePort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py#L10-L49)
+- [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py#L11-L57)
+- [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py#L10-L49)
 
 ### 2.4. Capa de Adaptadores (`adapters/`) y Runtime (`runtime/`)
 La capa más externa que se comunica con el mundo exterior:
-- **Adaptadores de Persistencia:** [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36-L358) (conversión de y hacia SQL, gestión de pool de conexiones, sentencias con transacciones) y [`MemoryQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/memory_adapter.py#L11-L80).
-- **Adaptadores de Extracción:** [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L12-L112), [`IrisBrowserAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L12-L111), [`TemplateScraperAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/template_scraper.py#L14-L58).
-- **Factoría:** [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py#L14-L39).
-- **Runtime:** [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31-L282) y [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L181).
+- **Adaptadores de Persistencia:** [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36-L358) (conversión de y hacia SQL, gestión de pool de conexiones, sentencias con transacciones) y [`MemoryQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/memory_adapter.py#L11-L80).
+- **Adaptadores de Extracción:** [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L12-L112), [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L12-L111), [`TemplateScraperAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/template_scraper.py#L14-L58).
+- **Factoría:** [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py#L14-L39).
+- **Runtime:** [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31-L282) y [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L181).
 
 ---
 
@@ -104,7 +104,7 @@ La capa más externa que se comunica con el mundo exterior:
 
 ### 3.1. Contrato `IColaRepositorioPort`
 
-El puerto [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py#L11-L57) define las operaciones necesarias para gobernar la cola de registros:
+El puerto [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py#L11-L57) define las operaciones necesarias para gobernar la cola de registros:
 
 ```python
 from abc import ABC, abstractmethod
@@ -161,7 +161,7 @@ class IColaRepositorioPort(ABC):
 
 ### 3.2. Contrato `IScraperEnginePort`
 
-El puerto [`IScraperEnginePort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py#L10-L49) define el ciclo de vida y la interacción con cualquier portal o servicio de consulta externa:
+El puerto [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py#L10-L49) define el ciclo de vida y la interacción con cualquier portal o servicio de consulta externa:
 
 ```python
 from abc import ABC, abstractmethod
@@ -238,7 +238,7 @@ graph LR
     Scraper -.->|Inyectado como scraper_engine| UseCase
 ```
 
-El código de ensamblado en [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L57-L88) ilustra con precisión este cableado limpio:
+El código de ensamblado en [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L57-L88) ilustra con precisión este cableado limpio:
 
 ```python
 # 1. Adaptador de Cola con Pool de conexiones dedicado por subproceso (PID)
@@ -268,22 +268,22 @@ use_case = ProcesarLoteUseCase(
 ## 5. Beneficios Tangibles de la Arquitectura en Producción
 
 1. **Testabilidad Absoluta sin Infraestructura Externa:**
-   Gracias a [`MemoryQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/memory_adapter.py#L11-L80), cualquier programador puede probar el caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L19-L133) y la regla [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172) en milisegundos sin levantar un contenedor Docker ni conectarse al VPS, utilizando simplemente el flag `--dry-run`:
+   Gracias a [`MemoryQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/memory_adapter.py#L11-L80), cualquier programador puede probar el caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L19-L133) y la regla [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172) en milisegundos sin levantar un contenedor Docker ni conectarse al VPS, utilizando simplemente el flag `--dry-run`:
    ```bash
    python main.py test-batch --scraper iris_http --batch-size 3 --dry-run
    ```
 
 2. **Intercambiabilidad de Motores de Scraping sin Efectos Colaterales:**
-   Cambiar de un motor basado en navegador Chromium Playwright ([`IrisBrowserAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py)) a un motor HTTP directo ([`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py)) requiere únicamente modificar el argumento `--engine http` en la línea de comando. Los casos de uso y la base de datos se mantienen completamente intactos.
+   Cambiar de un motor basado en navegador Chromium Playwright ([`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py)) a un motor HTTP directo ([`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py)) requiere únicamente modificar el argumento `--engine http` en la línea de comando. Los casos de uso y la base de datos se mantienen completamente intactos.
 
 3. **Independencia de Frameworks y Bibliotecas Externas:**
-   Si la biblioteca `mysql-connector-python` se reemplaza en el futuro por `SQLAlchemy`, `asyncpg` o `redis-py`, el núcleo [`core/`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core) no sufre ninguna modificación. Solo se implementa un nuevo archivo en [`adapters/queue/`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue).
+   Si la biblioteca `mysql-connector-python` se reemplaza en el futuro por `SQLAlchemy`, `asyncpg` o `redis-py`, el núcleo [`core/`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core) no sufre ninguna modificación. Solo se implementa un nuevo archivo en [`adapters/queue/`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue).
 
 ---
 
 ## 6. Referencias Cruzadas
-- [Visión General del Sistema](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/vision_general.md)
-- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Visión General del Sistema](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/vision_general.md)
+- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
 - [Guía para Nuevos Scrapers](../05_guia_nuevos_scrapers/guia_creacion_claro.md)

@@ -20,6 +20,7 @@ if sys.stderr.encoding != 'utf-8':
 PROJECT_ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
+import config
 from core.domain.entities import Linea
 from core.domain.exceptions import FueraDeHorarioComercialException
 from core.use_cases.process_batch_use_case import ProcesarLoteUseCase
@@ -207,7 +208,10 @@ def cmd_supervise(args):
         delay_max=args.delay_max,
         scraper_kwargs=scraper_kwargs,
         forzar_horario=args.forzar_horario,
-        solo_sin_coincidencia=args.solo_sin_coincidencia
+        solo_sin_coincidencia=args.solo_sin_coincidencia,
+        buffer_flush_size=getattr(args, "buffer_size", None),
+        buffer_max_delay=getattr(args, "buffer_timeout", None),
+        empty_queue_pause_max_sec=getattr(args, "empty_queue_pause", None)
     )
     supervisor.ejecutar()
 
@@ -251,7 +255,10 @@ def main():
     p_sup = subparsers.add_parser("supervise", help="Iniciar supervisor 24/7")
     p_sup.add_argument("--scraper", type=str, default="iris_http", help="Scraper a ejecutar")
     p_sup.add_argument("--workers", type=int, default=9, help="Cantidad de workers concurrentes")
-    p_sup.add_argument("--batch-size", type=int, default=12, help="Lote por worker")
+    p_sup.add_argument("--batch-size", type=int, default=50, help="Lote por worker (default: 50)")
+    p_sup.add_argument("--buffer-size", type=int, default=getattr(config, "BUFFER_FLUSH_SIZE", 500), help="Registros en RAM antes de flush a MySQL (default: 500)")
+    p_sup.add_argument("--buffer-timeout", type=float, default=getattr(config, "BUFFER_MAX_DELAY", 300.0), help="Tiempo máx en segundos en RAM antes de flush a MySQL (default: 300.0s = 5min)")
+    p_sup.add_argument("--empty-queue-pause", type=float, default=getattr(config, "EMPTY_QUEUE_PAUSE_MAX_SEC", 900.0), help="Pausa máxima en segundos del Centinela cuando la cola está vacía (default: 900.0s = 15min)")
     p_sup.add_argument("--max-queries-worker", type=int, default=350, help="Rotación anti-leak")
     p_sup.add_argument("--prioridad", choices=["auto", "1", "2", "3"], default="auto", help="Estrategia de prioridad")
     p_sup.add_argument("--delay-min", type=float, default=1.5, help="Pausa mínima entre lotes")

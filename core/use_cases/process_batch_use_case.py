@@ -16,6 +16,7 @@ from core.ports.scraper_port import IScraperEnginePort
 from core.ports.operator_lookup_port import IOperatorLookupPort
 from core.domain.entities import ReglaPipeline, Linea, ScrapeResult
 from core.domain.enums import StatusScraping
+from core.domain.exceptions import FueraDeHorarioComercialException
 
 logger = logging.getLogger("ProcesarLoteUseCase")
 
@@ -61,10 +62,11 @@ class ProcesarLoteUseCase:
 
     def ejecutar_lote(
         self,
-        batch_size: int = 12,
+        batch_size: int = 20,
         prioridad: Optional[int] = None,
         on_item_procesado: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        should_pause: Optional[Callable[[], bool]] = None,
         solo_sin_coincidencia: bool = False
     ) -> tuple[int, List[int]]:
         """
@@ -88,6 +90,10 @@ class ProcesarLoteUseCase:
         for reg in lote:
             if should_stop and should_stop():
                 logger.info("Parada solicitada en mitad del lote. Interrumpiendo ciclo...")
+                break
+
+            if should_pause and should_pause():
+                logger.info("Pausa operativa activa en mitad del lote (ej: horario comercial/VPN). Interrumpiendo ciclo y liberando registros...")
                 break
 
             t0 = time.time()
@@ -248,6 +254,15 @@ class ProcesarLoteUseCase:
 
                 if on_item_procesado:
                     on_item_procesado(item_res)
+
+            except FueraDeHorarioComercialException as e_hc:
+                logger.warning(
+                    f"⏸️ Horario comercial cerrado durante el procesamiento (Línea {reg.linea.ani}). "
+                    f"Interrumpiendo lote de inmediato. {len(unprocessed_ids)} registros restantes "
+                    f"serán liberados intactos a estado 'pendiente'."
+                )
+                # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
+                break
 
             except Exception as e:
                 lat = round(time.time() - t0, 2)

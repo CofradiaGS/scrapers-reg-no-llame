@@ -328,25 +328,15 @@ class ReglaPipeline:
             return True, "Apto para Claro"
 
         if nombre == "personal":
-            # Personal entra si:
-            # (a) IRIS pasó y no trajo coincidencia (sin importar si hay DNI o no), O
-            # (b) Claro pasó en los últimos 7 días y no trajo coincidencia
-            iris_data = datos.get("iris", {})
-            iris_ok = (
-                isinstance(iris_data, dict)
-                and iris_data.get("status")
-                and iris_data.get("status") != StatusScraping.COINCIDENCIA.value
-            )
-            claro_data = datos.get("claro", {})
-            claro_ok = (
-                isinstance(claro_data, dict)
-                and claro_data.get("status")
-                and claro_data.get("status") != StatusScraping.COINCIDENCIA.value
-                and cls.es_reciente(claro_data.get("ultima_modificacion"), max_dias=dias_validez)
-            )
-            if iris_ok or claro_ok:
-                return True, "Apto para Personal"
-            return False, "Personal requiere que IRIS haya pasado sin coincidencia, o Claro haya pasado en los últimos 7 días sin coincidencia"
+            # Si la línea NO tiene DNI, entra libre directo sin esperar a Claro (Claro exige DNI)
+            if not dni_activo:
+                return True, "Apto para Personal (línea sin DNI, entra libre directo)"
+            # Si la línea TIENE DNI, exige haber pasado por Claro en los últimos 7 días
+            c_data = datos.get("claro", {})
+            c_ts = c_data.get("ultima_modificacion") if isinstance(c_data, dict) else None
+            if not cls.es_reciente(c_ts, max_dias=dias_validez):
+                return False, "Personal con DNI exige haber pasado por Claro en los últimos 7 días"
+            return True, "Apto para Personal"
 
         if nombre == "movistar":
             # Movistar solo necesita ANI ("de nadie", no requiere DNI), pero exige haber pasado por Personal en últimos 7 días
@@ -411,7 +401,15 @@ class ReglaPipeline:
             return ("finalizado", EstadoRegistro.ERROR.value)
 
         pipeline = list(cadena or cls.CADENA_DEFAULT)
-        datos = datos_previos if isinstance(datos_previos, dict) else {}
+        datos = dict(datos_previos) if isinstance(datos_previos, dict) else {}
+        datos.update(resultado.to_namespace_dict())
+        sc_canonico = scraper_actual.lower()
+        if "iris" in sc_canonico:
+            sc_canonico = "iris"
+        datos[sc_canonico] = {
+            "status": resultado.status.value,
+            "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
 
         # Determinar si hay DNI activo
         tiene_dni = bool(
@@ -440,9 +438,10 @@ class ReglaPipeline:
         # Historial de scrapers visitados
         pasados = set(fuentes_previas or [])
         pasados.add(scraper_actual)
+        pasados.add(sc_canonico)
 
         def paso_reciente(sc_name: str) -> bool:
-            if sc_name == scraper_actual:
+            if sc_name == scraper_actual or sc_name == sc_canonico:
                 return True
             if sc_name not in pasados:
                 return False
@@ -455,6 +454,8 @@ class ReglaPipeline:
 
         # Buscar la siguiente posta válida en la cadena
         idx = pipeline.index(scraper_actual) if scraper_actual in pipeline else -1
+        if idx == -1 and sc_canonico in pipeline:
+            idx = pipeline.index(sc_canonico)
 
         for candidato in pipeline[idx + 1:]:
             # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante
@@ -472,24 +473,10 @@ class ReglaPipeline:
                     continue
 
             # Precedencias temporales de 7 días (exclusivas para compañías: Claro, Personal, Movistar):
-            # 1. Personal: entra si IRIS pasó sin coincidencia, o si Claro pasó recientemente sin coincidencia.
-            #    Ya no bloquea Personal por tener DNI sin Claro previo — IRIS sin coincidencia es suficiente.
-            if candidato == "personal":
-                iris_info = datos.get("iris", {})
-                iris_sin_coinc = (
-                    isinstance(iris_info, dict)
-                    and iris_info.get("status")
-                    and iris_info.get("status") != StatusScraping.COINCIDENCIA.value
-                )
-                claro_info = datos.get("claro", {})
-                claro_reciente_sin_coinc = (
-                    isinstance(claro_info, dict)
-                    and claro_info.get("status")
-                    and claro_info.get("status") != StatusScraping.COINCIDENCIA.value
-                    and cls.es_reciente(claro_info.get("ultima_modificacion"), max_dias=dias_validez)
-                )
-                if not iris_sin_coinc and not claro_reciente_sin_coinc:
-                    continue
+            # 1. Personal con DNI requiere haber pasado por Claro en los últimos 7 días (si Claro forma parte de la cadena).
+            #    Si la línea no tiene DNI, Claro no aplica y Personal entra libre directo.
+            if candidato == "personal" and tiene_dni and "claro" in pipeline and not paso_reciente("claro"):
+                continue
 
             # 2. Movistar ('de nadie', solo ANI) requiere haber pasado por Personal en los últimos 7 días
             if candidato == "movistar" and not paso_reciente("personal"):

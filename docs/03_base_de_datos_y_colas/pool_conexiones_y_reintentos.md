@@ -10,7 +10,7 @@ En entornos multiprocessing (especialmente en sistemas UNIX mediante `fork()` o 
 * Dos procesos leyendo o escribiendo paquetes simultáneamente en el mismo socket TCP producen excepciones del tipo `mysql.connector.errors.InternalError: Packet sequence number wrong` o cierres abruptos por `Lost connection to MySQL server`.
 
 ### Solución Arquitectónica: Pool Dedicado por PID
-Para garantizar aislamiento físico absoluto, [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L39-L55) instancia un pool propio dentro de la memoria de cada subproceso worker instanciado en [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L58-L61):
+Para garantizar aislamiento físico absoluto, [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L39-L55) instancia un pool propio dentro de la memoria de cada subproceso worker instanciado en [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L58-L61):
 
 ```python
 # runtime/worker_process.py
@@ -45,7 +45,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
 ## 2. Protocolo de Obtención de Conexión, Ping Activo y Reintentos Exponenciales
 
-El método interno [`_get_connection`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L56-L67) implementa un algoritmo resiliente de 4 intentos con retroceso exponencial (`exponential backoff`):
+El método interno [`_get_connection`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L56-L67) implementa un algoritmo resiliente de 4 intentos con retroceso exponencial (`exponential backoff`):
 
 ```mermaid
 sequenceDiagram
@@ -104,7 +104,7 @@ def _get_connection(self, max_retries: int = 4, retry_delay: float = 2.0):
 
 ## 3. Persistencia en Lote Atómica con `executemany`
 
-En [`MySQLQueueAdapter.persistir_resultados`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L186-L244), los datos acumulados se guardan utilizando un único viaje de red (`round-trip`) mediante `executemany`:
+En [`MySQLQueueAdapter.persistir_resultados`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L186-L244), los datos acumulados se guardan utilizando un único viaje de red (`round-trip`) mediante `executemany`:
 
 ```python
 query = f"""
@@ -133,7 +133,7 @@ Si ocurre un error durante el `executemany` (por ejemplo, timeout en la mitad de
 
 Si un subproceso worker sufre una falla catastrófica del sistema operativo (`kill -9`, corte de energía o crash del proceso antes de invocar `revertir_a_pendiente`), los registros que estaban siendo procesados permanecerían indefinidamente en `estado = 'procesando'`.
 
-Para resolver esto, el hilo centinela [`SupervisorIndustrial._watchdog_sweeper_loop`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) ejecuta periódicamente (cada 5 minutos) el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py):
+Para resolver esto, el hilo centinela [`SupervisorIndustrial._watchdog_sweeper_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) ejecuta periódicamente (cada 5 minutos) el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py):
 
 ```sql
 UPDATE `queue_registro_no_llame`
@@ -181,7 +181,7 @@ sequenceDiagram
 ```
 
 ### Componentes de la Arquitectura IPC:
-1. **[`IPCWorkerQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/ipc_adapter.py)**: Adaptador secundario que implementa [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py). Los workers no importan conectores de red ni abren sockets TCP; se comunican a través de colas de memoria compartida ([`multiprocessing.Queue`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Queue)) con latencia de transferencia en RAM menor a `0.1 ms`.
-2. **Hilo Despachador Central (`_db_dispatcher_loop`)**: Ubicado en [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py), mantiene la única conexión caliente y persistente a MySQL de la máquina física, serializando las reservas y persistencias en bloques de 20 ms.
+1. **[`IPCWorkerQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/ipc_adapter.py)**: Adaptador secundario que implementa [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py). Los workers no importan conectores de red ni abren sockets TCP; se comunican a través de colas de memoria compartida ([`multiprocessing.Queue`](https://docs.python.org/3/library/multiprocessing.html#multiprocessing.Queue)) con latencia de transferencia en RAM menor a `0.1 ms`.
+2. **Hilo Despachador Central (`_db_dispatcher_loop`)**: Ubicado en [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py), mantiene la única conexión caliente y persistente a MySQL de la máquina física, serializando las reservas y persistencias en bloques de 20 ms.
 3. **Escalabilidad Multi-PC**: 10 computadoras ejecutando 7 a 9 workers consumen exactamente **10 conexiones totales en el servidor central MySQL**, dejando más de 140 conexiones libres para administración y monitoreo.
 

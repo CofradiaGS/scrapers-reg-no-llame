@@ -1,6 +1,6 @@
 # Supervisor de Producción 24/7 (`supervisor_vps.py` / `runtime/supervisor.py`)
 
-El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
+El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
 
 ---
 
@@ -51,7 +51,7 @@ graph TD
 
 ## 2. Parámetros y Flags de Línea de Comandos
 
-La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
+La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
 
 | Flag / Opción | Tipo | Valor por Defecto | Opciones Válidas | Descripción Técnica |
 | :--- | :---: | :---: | :---: | :--- |
@@ -59,7 +59,10 @@ La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/automatizacion.c
 | `--engine` | `str` | `"browser"` | `browser`, `http` | Motor de scraping para IRIS. `http`: cliente requests ultrarrápido (4-8s/linea, 35MB RAM). `browser`: Playwright Chromium (15s/linea, 1.2GB RAM). |
 | `--prioridad` | `str` | `"auto"` | `auto`, `1`, `2`, `3` | Estrategia de partición geográfica B-Tree. `auto` aplica cascada P1 -> P2 -> P3. `1` solo AMBA/Mendoza, `2` solo Patagonia, `3` resto del país. |
 | `--workers` | `int` | `9` | Entero positivo | Cantidad de subprocesos workers independientes ejecutándose simultáneamente. |
-| `--batch-size` | `int` | `12` | Entero positivo | Cantidad de registros reclamados atómicamente por worker en cada transacción mediante `FOR UPDATE SKIP LOCKED`. |
+| `--batch-size` | `int` | `50` | Entero positivo | Cantidad de registros reclamados atómicamente por worker en cada transacción mediante `FOR UPDATE SKIP LOCKED`. |
+| `--buffer-size` | `int` | `500` | Entero positivo | Cantidad de registros acumulados en RAM por el despachador IPC antes de forzar un flush atómico masivo a MySQL. |
+| `--buffer-timeout` | `float` | `300.0` | Segundos (float) | Tiempo máximo de retención en RAM (5 minutos) antes de volcar resultados a MySQL en una única transacción. |
+| `--empty-queue-pause` | `float` | `900.0` | Segundos (float) | Tiempo máximo de espera del Centinela ante cola vacía (15 minutos). Regula la escalera de backoff progresivo (60s -> 180s -> 300s -> 600s -> 900s). |
 | `--max-queries-worker` | `int` | `350` | Entero positivo | Cuota de consultas por ciclo de vida de worker. Al alcanzar este límite, el worker concluye y el supervisor genera una nueva generación (*anti-leak de memoria*). |
 | `--delay-min` | `float` | `1.5` | Segundos (float) | Pausa mínima aleatoria (jitter) entre lotes sucesivos de un worker. |
 | `--delay-max` | `float` | `2.5` | Segundos (float) | Pausa máxima aleatoria (jitter) entre lotes sucesivos de un worker. |
@@ -95,7 +98,7 @@ El hilo `_circuit_breaker_loop` realiza cada 25 segundos una petición HTTP de s
 * Cuando el sondeo detecta un código HTTP 200, se ejecuta `self.pause_event.clear()` y los workers reanudan de inmediato el procesamiento.
 
 ### 3.4. Watchdog Sweeper de Huérfanos
-El hilo centinela `_watchdog_sweeper_loop` despierta cada 300 segundos (5 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py):
+El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
 ```sql
 UPDATE `queue_registro_no_llame`
 SET estado = 'pendiente',
@@ -105,12 +108,21 @@ WHERE estado = 'procesando'
 ```
 Esto garantiza que si una máquina se reinicia abruptamente o un worker muere por `SIGKILL`, ningún registro quede bloqueado permanentemente en estado `procesando`.
 
-### 3.5. Tablero de Control y Métricas en Tiempo Real (IPC Drainer)
+### 3.5. Buffer de Persistencia en RAM y Reducción Masiva de Binlog (Micro-Batching)
+Para erradicar la saturación de espacio en disco por crecimiento desmedido del **binlog** en MySQL 8:
+1. Los workers no persisten de forma aislada a la base de datos; envían sus resultados en memoria hacia el hilo despachador del Supervisor vía IPC.
+2. El Supervisor acumula los registros en `self._write_buffer` (RAM).
+3. El volcado atómico (`cursor.executemany` con un solo `COMMIT`) ocurre únicamente cuando:
+   - Se alcanza el umbral de volumen configurado (`--buffer-size`, por defecto 500 registros).
+   - O expira la ventana temporal máxima (`--buffer-timeout`, por defecto 300 segundos = 5 minutos).
+4. Ante detenciones ordenadas o caídas, el bloque `finally` garantiza el vaciado completo de cualquier remanente antes del apagado.
+
+### 3.6. Tablero de Control y Métricas en Tiempo Real (IPC Drainer)
 El hilo `_metrics_dashboard_loop` consume la cola multiproceso `stats_queue` e imprime cada 25 segundos el estado operacional consolidado:
 
 ```text
 ========================================================================
-📊 TABLERO 24/7 SUPERVISOR INDUSTRIAL | 2026-09-18 21:45:00
+📊 TABLERO 24/7 SUPERVISOR INDUSTRIAL | 2026-09-24 16:30:00
   • Scraper Activo:           IRIS_HTTP (Auto (P1->P2->P3))
   • Estado Red / Conectividad:VERDE (Operativo)
   • Workers en paralelo:      9 slots activos
@@ -120,8 +132,17 @@ El hilo `_metrics_dashboard_loop` consume la cola multiproceso `stats_queue` e i
   • Errores controlados:      15
   • Rotaciones preventivas:   24 relevos anti-leak
   • Latencia promedio:        4.82s por consulta
+  • Buffer en RAM (Binlog):   142/500 en espera (flush cada 300s / hace 48s)
 ========================================================================
 ```
+
+### 3.7. Centinela Explorador de Cola Vacía y Pausa Coordinada (Scout Probe)
+Para erradicar el bombardeo continuo a MySQL cuando la cola se queda sin registros (*Busy Waiting / Spinlock*):
+1. **Pausa Coordinada Instantánea**: Cuando una reserva retorna `0` registros, el despachador IPC marca `'cola_vacia'` y activa `pause_event`.
+2. **Drenado Limpio en Vuelo**: Los demás workers terminan sus consultas activas, persisten resultados al buffer en RAM, y al pedir un nuevo lote reciben `[]` de inmediato sin consultar MySQL.
+3. **Reposo Pasivo Silencioso**: Todos los workers duermen en memoria en intervalos de 5 segundos con **cero conexiones y cero uso de CPU**.
+4. **Escalera de Backoff Progresivo**: El centinela sondea en intervalos crecientes: `60s` (1m) -> `180s` (3m) -> `300s` (5m) -> `600s` (10m) -> `900s` (15m).
+5. **Pre-fetch Handover**: Únicamente el hilo centinela ejecuta el sondeo a MySQL. Si detecta nuevos registros, los reserva en memoria, despierta a los workers y le traspasa el lote directamente al primer worker sin repetir la consulta SQL.
 
 ---
 
@@ -170,7 +191,7 @@ Una vez finalizada la pasada inicial de auditoría, se puede **desactivar la ban
 
 ## 5. Rotación de Logs en Disco
 
-El supervisor implementa un manejador [`RotatingFileHandler`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L47) que escribe en `supervisor_247.log`:
+El supervisor implementa un manejador [`RotatingFileHandler`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L47) que escribe en `supervisor_247.log`:
 * **Tamaño máximo por archivo:** 20 MB (`maxBytes = 20 * 1024 * 1024`).
 * **Copias de respaldo (*backups*):** 5 archivos rotativos (`supervisor_247.log.1`, etc.).
 * **Límite total en disco:** 100 MB máximo garantizado.

@@ -74,7 +74,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
     def reservar_lote(
         self, 
-        batch_size: int = 15, 
+        batch_size: int = 20, 
         prioridad: Optional[int] = None, 
         scraper_nombre: str = "iris",
         max_intentos: int = 3,
@@ -416,3 +416,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                 except Exception:
                     pass
         return stats
+
+    def enviar_heartbeat(self) -> bool:
+        """Compatibilidad polimórfica con supervisor (no-op para tabla queue_registro_no_llame)."""
+        return True
+
+    def guardar_session_stats(self, delta_p: int, delta_e: int, delta_f: int) -> bool:
+        """Compatibilidad polimórfica con supervisor (no-op para tabla queue_registro_no_llame)."""
+        return True

@@ -49,15 +49,15 @@ flowchart TD
 ### Componentes de la Arquitectura
 
 1. **PC Madre (Master)**:
-   - Archivo ejecutable: [`cluster/master_control.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/cluster/master_control.py).
-   - Acceso rápido: [`run_master.bat`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/run_master.bat).
-   - Registro de nodos: [`cluster/nodes.json`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/cluster/nodes.json).
+   - Archivo ejecutable: [`cluster/master_control.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/master_control.py).
+   - Acceso rápido: [`run_master.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_master.bat).
+   - Registro de nodos: [`cluster/nodes.json`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/nodes.json).
    - Funciones: Emite comandos broadcast (`push-and-update`, `start-all`, `stop-all`), monitorea métricas en tiempo real y hospeda el Dashboard Web local.
 
 2. **PCs Hijas (Workers / Nodos)**:
-   - Archivo ejecutable: [`cluster/node_agent.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/cluster/node_agent.py).
-   - Acceso rápido: [`run_node.bat`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/run_node.bat).
-   - Proceso supervisado: [`supervisor_vps.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py).
+   - Archivo ejecutable: [`cluster/node_agent.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/node_agent.py).
+   - Acceso rápido: [`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_node.bat).
+   - Proceso supervisado: [`supervisor_vps.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py).
    - Funciones: Servidor HTTP multihilo escuchando en el puerto `5555`, encargado del ciclo de vida del proceso de scraping local y la sincronización con Git.
 
 ---
@@ -128,12 +128,12 @@ New-NetFirewallRule -DisplayName "Scraper Node Agent LAN" -Direction Inbound -Lo
 
 ### Paso 3: Configurar el Centinela Watchdog (Tarea Programada cada 10 minutos)
 Para garantizar alta disponibilidad 24/7 y que el agente se levante solo ante reinicios o cierres imprevistos:
-Hacer doble clic en **[`crear_tarea_programada.bat`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/crear_tarea_programada.bat)**.
+Hacer doble clic en **[`crear_tarea_programada.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/crear_tarea_programada.bat)**.
 
 #### Triple Capa de Protección contra Procesos Duplicados:
 1. **Windows Task Scheduler (`MultipleInstances = IgnoreNew`)**: Si la tarea previa se encuentra en curso, Windows rechaza la creación de una segunda tarea paralela.
-2. **Pre-Flight Check en [`scripts/watchdog_node_agent.ps1`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/watchdog_node_agent.ps1)**: Comprueba si el puerto TCP 5555 está activo o si el endpoint `/health` responde 200 OK. Si está vivo, termina en <200ms sin hacer nada.
-3. **Lockfile Singleton a Nivel de Kernel en [`cluster/node_agent.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/cluster/node_agent.py)**: Utiliza `msvcrt.locking` exclusivo sobre `node_agent.lock`. Si cualquier usuario o proceso intenta levantar una segunda instancia, el kernel de Windows bloquea la solicitud y el nuevo proceso se auto-termina inmediatamente.
+2. **Pre-Flight Check en [`scripts/watchdog_node_agent.ps1`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/watchdog_node_agent.ps1)**: Comprueba si el puerto TCP 5555 está activo o si el endpoint `/health` responde 200 OK. Si está vivo, termina en <200ms sin hacer nada.
+3. **Lockfile Singleton a Nivel de Kernel en [`cluster/node_agent.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/cluster/node_agent.py)**: Utiliza `msvcrt.locking` exclusivo sobre `node_agent.lock`. Si cualquier usuario o proceso intenta levantar una segunda instancia, el kernel de Windows bloquea la solicitud y el nuevo proceso se auto-termina inmediatamente.
 
 ### Paso 4: Registrar la PC en la PC Madre
 En la PC Madre, ejecutar:
@@ -151,7 +151,7 @@ python cluster/master_control.py add-node --name "PC-Oficina-2" --ip "192.168.1.
 
 ### Nodo Marcado como OFFLINE en el Dashboard
 1. Verificar que la PC Hija esté encendida y conectada a la misma red WiFi/Ethernet.
-2. Comprobar que [`run_node.bat`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/run_node.bat) esté en ejecución en la PC Hija.
+2. Comprobar que [`run_node.bat`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_node.bat) esté en ejecución en la PC Hija.
 3. Probar conectividad desde la PC Madre con `Test-NetConnection -ComputerName <IP> -Port 5555`.
 
 ### Conflicto de Git durante la Actualización

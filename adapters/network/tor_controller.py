@@ -19,6 +19,15 @@ import config
 
 logger = logging.getLogger("TorController")
 
+# Silenciar logging verboso y excepciones de sockets en cierre de Stem en Windows (WinError 10038)
+try:
+    import stem.util.log
+    _stem_log = stem.util.log.get_logger()
+    _stem_log.setLevel(logging.CRITICAL)
+    _stem_log.propagate = False
+except Exception:
+    pass
+
 
 class TorController:
     """
