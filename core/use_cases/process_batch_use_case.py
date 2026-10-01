@@ -16,7 +16,7 @@ from core.ports.scraper_port import IScraperEnginePort
 from core.ports.operator_lookup_port import IOperatorLookupPort
 from core.domain.entities import ReglaPipeline, Linea, ScrapeResult
 from core.domain.enums import StatusScraping
-from core.domain.exceptions import FueraDeHorarioComercialException
+from core.domain.exceptions import FueraDeHorarioComercialException, ScraperTransientError
 
 logger = logging.getLogger("ProcesarLoteUseCase")
 
@@ -245,6 +245,8 @@ class ProcesarLoteUseCase:
                     "id": reg.id,
                     "ani": reg.linea.ani,
                     "dni": dni_res,
+                    "operador": resultado.operador or resultado.fuente_scraper,
+                    "fuente_scraper": resultado.fuente_scraper,
                     "scraper_actual": sig_scraper,
                     "estado": sig_estado,
                     "descripcion": resultado.descripcion or f"Scrapeado por {self.scraper.nombre}",
@@ -264,6 +266,15 @@ class ProcesarLoteUseCase:
                 # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
                 break
 
+            except ScraperTransientError as e_trans:
+                logger.warning(
+                    f"⚠️ Fallo transitorio de red / bloqueo IP en scraper (Línea {reg.linea.ani}): {e_trans}. "
+                    f"Interrumpiendo lote para permitir rotación/recuperación. {len(unprocessed_ids)} registros "
+                    f"restantes serán liberados intactos a estado 'pendiente'."
+                )
+                # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
+                break
+
             except Exception as e:
                 lat = round(time.time() - t0, 2)
                 err_type = type(e).__name__
@@ -271,6 +282,14 @@ class ProcesarLoteUseCase:
                 err_code = getattr(e, "code", None) or getattr(e, "status_code", None) or getattr(e, "errno", None)
                 if not err_code and hasattr(e, "response") and getattr(e.response, "status_code", None):
                     err_code = e.response.status_code
+
+                # Protección adicional: si es una excepción de red no tipada, revertir a pendiente
+                if any(net_kw in err_type for net_kw in ("Connection", "Timeout", "Proxy", "MaxRetry", "SSLError")):
+                    logger.warning(
+                        f"⚠️ Error de red transitorio [{err_type}] en línea {reg.linea.ani}: {err_msg}. "
+                        f"Liberando {len(unprocessed_ids)} registros restantes a estado 'pendiente' para reintento automático."
+                    )
+                    break
 
                 codigo_fmt = f"[{err_type}:{err_code}]" if err_code else f"[{err_type}]"
                 descripcion_error = f"{codigo_fmt} {err_msg}".strip()

@@ -5,5 +5,15 @@ Adaptadores de Base de Datos y Repositorios de Cola.
 from adapters.db.mysql_vps_adapter import MySQLQueueAdapter
 from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
 from adapters.db.memory_adapter import MemoryQueueAdapter
+from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+from adapters.queue.vps_sync_adapter import VPSSyncAdapter
 
-__all__ = ["MySQLQueueAdapter", "ColaAutomatizacionAdapter", "MemoryQueueAdapter"]
+__all__ = [
+    "MySQLQueueAdapter",
+    "ColaAutomatizacionAdapter",
+    "MemoryQueueAdapter",
+    "SQLiteStagingAdapter",
+    "VPSSyncAdapter"
+]
+
+

@@ -15,6 +15,7 @@ from adapters.scrapers.movistar.movistar_adapter import MovistarAdapter
 from adapters.scrapers.personal.personal_adapter import PersonalAdapter
 from adapters.scrapers.datuar.datuar_adapter import DatuarAdapter
 from adapters.scrapers.cuitonline.cuitonline_adapter import CuitOnlineAdapter
+from adapters.scrapers.telcos.telco_cascade_adapter import TelcoCascadeAdapter
 
 class ScraperRegistry:
     _registry: Dict[str, Type[IScraperEnginePort]] = {
@@ -33,6 +34,9 @@ class ScraperRegistry:
         "personal": PersonalAdapter,
         "personal_cobro_express": PersonalAdapter,
         "personal_fast": PersonalAdapter,
+        "telcos": TelcoCascadeAdapter,
+        "telco_cascade": TelcoCascadeAdapter,
+        "claro_personal_movistar": TelcoCascadeAdapter,
     }
 
     @classmethod

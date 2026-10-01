@@ -175,20 +175,23 @@ class TorController:
                     if config.TOR_GEOIPV6_PATH and os.path.exists(config.TOR_GEOIPV6_PATH):
                         f.write(f"GeoIPv6File {config.TOR_GEOIPV6_PATH}\n")
                     f.write(f"SocksPort {self.socks_port} IsolateSOCKSAuth\n")
-                    f.write(f"ControlPort {self.control_port}\n")
+                    f.write("ControlPort " + str(self.control_port) + "\n")
                     f.write("CookieAuthentication 0\n")
                     f.write("DormantCanceledByStartup 1\n")
-                    f.write("ExitNodes {ar},{cl},{uy},{br}\n")
-                    f.write("StrictNodes 0\n")
-                    f.write("CircuitBuildTimeout 10\n")
+                    # No restringir ExitNodes a {ar},{cl},{uy},{br}: la pasarela no aplica geo-bloqueo
+                    # y el pool sudamericano (<15 nodos) colapsa por congestión bajo 20 workers paralelos.
+                    f.write("CircuitBuildTimeout 15\n")
                     f.write("KeepalivePeriod 60\n")
                     f.write("MaxCircuitDirtiness 300\n")
+                    f.write("NumEntryGuards 8\n")
 
                 cmd = [self.tor_path, "-f", runtime_torrc]
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
                 self._process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags
                 )
             except Exception as e:
                 logger.error(f"Error al iniciar subproceso Tor: {e}")

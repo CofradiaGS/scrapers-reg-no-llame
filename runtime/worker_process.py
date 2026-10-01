@@ -133,10 +133,12 @@ def worker_lifecycle_process(
         except Exception as e_enacom:
             w_log.warning(f"[{worker_tag}] No se pudo inicializar EnacomBlockAdapter: {e_enacom}")
 
+        cadena_worker = [scraper_name] if scraper_name == "telcos" else None
         use_case = ProcesarLoteUseCase(
             cola_repo=cola_repo,
             scraper_engine=scraper_engine,
-            operator_lookup=enacom_adapter
+            operator_lookup=enacom_adapter,
+            cadena_pipeline=cadena_worker
         )
 
         # 5. Callback de reporte de progreso por ítem procesado
@@ -152,15 +154,18 @@ def worker_lifecycle_process(
             sig_estado = item.get("estado")
             desc = item.get("descripcion", "")[:70]
 
+            operador = str(item.get("operador") or item.get("fuente_scraper") or "").strip()
             stats_queue.put({
                 "tipo": tipo_stat,
                 "slot": worker_slot,
                 "scraper": scraper_name,
+                "operador": operador,
                 "latency": lat
             })
 
             if status == "coincidencia":
-                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> 🎯 COINCIDENCIA ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
+                op_tag = f" [{operador.upper()}]" if operador and operador.lower() not in ("desconocido", "telcos") else ""
+                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> 🎯 COINCIDENCIA{op_tag} ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
             elif status == "sin_coincidencia":
                 w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> ℹ️ SIN COINCIDENCIA ({lat}s) ➔ [{sig_scraper}:{sig_estado}]")
             elif status == "salteado":

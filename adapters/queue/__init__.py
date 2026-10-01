@@ -6,5 +6,16 @@ from adapters.queue.mysql_vps_adapter import MySQLQueueAdapter
 from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
 from adapters.queue.memory_adapter import MemoryQueueAdapter
 from adapters.queue.ipc_adapter import IPCWorkerQueueAdapter
+from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+from adapters.queue.vps_sync_adapter import VPSSyncAdapter
 
-__all__ = ["MySQLQueueAdapter", "ColaAutomatizacionAdapter", "MemoryQueueAdapter", "IPCWorkerQueueAdapter"]
+__all__ = [
+    "MySQLQueueAdapter",
+    "ColaAutomatizacionAdapter",
+    "MemoryQueueAdapter",
+    "IPCWorkerQueueAdapter",
+    "SQLiteStagingAdapter",
+    "VPSSyncAdapter"
+]
+
+

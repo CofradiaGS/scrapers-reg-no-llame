@@ -26,6 +26,10 @@ VPS_DBNAME = os.getenv("VPS_DBNAME", "bases")
 VPS_DB_TABLE = os.getenv("VPS_DB_TABLE", "queue_registro_no_llame")
 VPS_DB_USE_PURE = os.getenv("VPS_DB_USE_PURE", "True").strip().lower() in ("true", "1", "yes")
 
+# Credenciales específicas para cola_automatizacion (Power CRM)
+COLA_AUTO_DBUSER = os.getenv("COLA_AUTO_DBUSER", os.getenv("DBUSER", "automatizaciones"))
+COLA_AUTO_DBPASS = os.getenv("COLA_AUTO_DBPASS", os.getenv("DBPASS", "Mg1ZOGk3mE!2_q1Q"))
+
 # Optimización de I/O y Reducción Masiva de Binlog (Staging Buffer en RAM)
 BUFFER_FLUSH_SIZE = int(os.getenv("BUFFER_FLUSH_SIZE", "500"))
 BUFFER_MAX_DELAY = float(os.getenv("BUFFER_MAX_DELAY", "300.0"))
@@ -122,5 +126,17 @@ PROXY_POOL_MAX_RETRIES = int(os.getenv("PROXY_POOL_MAX_RETRIES", "3"))
 PROXY_POOL_VALIDATION_WORKERS = int(os.getenv("PROXY_POOL_VALIDATION_WORKERS", "35"))
 PROXY_POOL_CACHE_FILE = os.getenv("PROXY_POOL_CACHE_FILE", os.path.join(os.getcwd(), "tor_data", "live_proxies.txt"))
 PROXY_POOL_REFRESH_INTERVAL = int(os.getenv("PROXY_POOL_REFRESH_INTERVAL", "600"))  # 10 min
+
+# Staging Local Offline-First (SQLite WAL) y Push Nocturno Masivo (20:00 hs)
+LOCAL_STAGING_ENABLED = os.getenv("LOCAL_STAGING_ENABLED", "True").strip().lower() in ("true", "1", "yes")
+LOCAL_STAGING_DB_PATH = os.getenv("LOCAL_STAGING_DB_PATH", os.path.join(os.path.dirname(__file__), "data", "staging_local.db"))
+PULL_CHUNK_SIZE = int(os.getenv("PULL_CHUNK_SIZE", "5000"))
+LOW_WATERMARK_THRESHOLD = int(os.getenv("LOW_WATERMARK_THRESHOLD", "2000"))
+PULL_DAILY_LIMIT = int(os.getenv("PULL_DAILY_LIMIT", "50000"))
+SYNC_PUSH_HOUR = int(os.getenv("SYNC_PUSH_HOUR", "20"))
+SYNC_CHUNK_SIZE = int(os.getenv("SYNC_CHUNK_SIZE", "5000"))
+SYNC_SWEEP_WAIT_SEC = float(os.getenv("SYNC_SWEEP_WAIT_SEC", "10.0"))
+SYNC_RETENTION_DAYS = int(os.getenv("SYNC_RETENTION_DAYS", "7"))
+
 
 

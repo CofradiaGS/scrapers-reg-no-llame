@@ -194,5 +194,78 @@ class TestReglaPipeline(unittest.TestCase):
         # Debe saltar cuitonline y pasar a personal
         self.assertEqual(sig_sc, "personal", "Debió saltar cuitonline porque no se pasó por datuar")
 
+    def test_07_telcos_elegibilidad_sin_iris_ni_dni(self):
+        """Líneas sin pasar por IRIS y sin DNI deben ser perfectamente elegibles para Telcos."""
+        apto, msg = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="telcos",
+            ani="1159641306",
+            dni=None,
+            datos_json={}
+        )
+        self.assertTrue(apto, f"Telcos debe ser apto sin IRIS ni DNI: {msg}")
+
+    def test_08_telcos_elegibilidad_exclusividad_si_hubo_coincidencia_reciente(self):
+        """Si Claro dio coincidencia reciente, Telcos no debe re-consultar (exclusividad)."""
+        from datetime import datetime
+        ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        datos = {
+            "claro": {
+                "status": "coincidencia",
+                "ultima_modificacion": ahora_str
+            }
+        }
+        apto, msg = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="telcos",
+            ani="1159641306",
+            dni="30111222",
+            datos_json=datos
+        )
+        self.assertFalse(apto, "Telcos no debe ser apto si una operadora ya dio coincidencia reciente")
+        self.assertIn("Exclusividad telco", msg)
+
+    def test_09_telcos_resolver_siguiente_etapa_coincidencia_finaliza_completado(self):
+        """Si Telcos dio coincidencia, la siguiente etapa debe ser finalizado/completado."""
+        res_telcos_match = ScrapeResult(
+            ani="1159641306",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="telcos",
+            operador="Claro"
+        )
+        sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos",
+            resultado=res_telcos_match,
+            cadena=["telcos"]
+        )
+        self.assertEqual(sig_sc, "finalizado")
+        self.assertEqual(sig_st, EstadoRegistro.COMPLETADO.value)
+
+    def test_10_telcos_resolver_siguiente_etapa_sin_coincidencia_no_va_a_iris(self):
+        """Si Telcos dio sin coincidencia, JAMÁS debe retroceder a IRIS ni a otra telco."""
+        res_telcos_sin = ScrapeResult(
+            ani="1159641306",
+            status=StatusScraping.SIN_COINCIDENCIA,
+            fuente_scraper="telcos"
+        )
+        # 1. Con cadena default (CADENA_DEFAULT sin DNI)
+        sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos",
+            resultado=res_telcos_sin,
+            cadena=None,
+            dni_disponible=False
+        )
+        self.assertNotEqual(sig_sc, "iris", "Telcos NUNCA debe retroceder a IRIS")
+        self.assertNotIn(sig_sc, ReglaPipeline.TELCOS, "Telcos no debe derivar a otra telco")
+        self.assertEqual(sig_sc, "finalizado")
+        self.assertEqual(sig_st, EstadoRegistro.NO_COINCIDENCIA.value)
+
+        # 2. Con cadena explícita ['telcos'] (como en cola_automatizacion)
+        sig_sc2, sig_st2 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos",
+            resultado=res_telcos_sin,
+            cadena=["telcos"]
+        )
+        self.assertEqual(sig_sc2, "finalizado")
+        self.assertEqual(sig_st2, EstadoRegistro.NO_COINCIDENCIA.value)
+
 if __name__ == "__main__":
     unittest.main()

@@ -6,7 +6,7 @@ Este documento detalla el diseño, la especificación de protocolo, la arquitect
 
 ## 1. Ciclo de Vida del Pipeline y Regla de Cortocircuito
 
-El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172):
+El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L126-L172):
 
 ```text
 CADENA_DEFAULT: ["iris", "claro", "movistar", "personal"]
@@ -30,7 +30,7 @@ flowchart TD
 ```
 
 ### Regla de Cortocircuito para Movistar
-Cuando [`MovistarAdapter.consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) retorna `StatusScraping.COINCIDENCIA`, [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L134) detiene de inmediato la evaluación de los siguientes operadores y salta la línea a `scraper_actual = 'finalizado'` y `estado = 'completado'`. Si retorna `StatusScraping.SIN_COINCIDENCIA`, avanza a la siguiente posta: `scraper_actual = 'personal'` y `estado = 'pendiente'`.
+Cuando [`MovistarAdapter.consultar_linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) retorna `StatusScraping.COINCIDENCIA`, [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L134) detiene de inmediato la evaluación de los siguientes operadores y salta la línea a `scraper_actual = 'finalizado'` y `estado = 'completado'`. Si retorna `StatusScraping.SIN_COINCIDENCIA`, avanza a la siguiente posta: `scraper_actual = 'personal'` y `estado = 'pendiente'`.
 
 Para más detalles sobre la regla en cascada, consultar:
 - [Pipeline en Cascada y Cortocircuito](../01_arquitectura/pipeline_cascada.md)
@@ -48,7 +48,7 @@ Para consultar a Movistar, el ANI telefónico de 10 dígitos (ej. `1167322906`, 
 - `C12` (**Característica telefónica**): Longitud variable de 2 a 4 dígitos (ej. `11`, `260`, `387`, `2966`).
 - `C13` (**Número local**): Los 6 a 8 dígitos restantes que completan el número nacional.
 
-Esta resolución la realiza [`caracteristicas_argentina.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/caracteristicas_argentina.py) mediante `identificar_caracteristica(ani)`:
+Esta resolución la realiza [`caracteristicas_argentina.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/caracteristicas_argentina.py) mediante `identificar_caracteristica(ani)`:
 
 ```python
 from caracteristicas_argentina import identificar_caracteristica
@@ -118,7 +118,7 @@ Por directiva de negocio, **el 100% de los datos retornados por la API de Cobro 
 
 ## 4. Arquitectura de Red: Tor Stream Isolation y Proxy Pool
 
-[`MovistarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) implementa los mismos mecanismos de alto rendimiento y costo $0 desarrollados para Claro:
+[`MovistarAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) implementa los mismos mecanismos de alto rendimiento y costo $0 desarrollados para Claro:
 
 ```mermaid
 graph TD
@@ -148,7 +148,7 @@ graph TD
 ### 4.1. Tor Stream Isolation (`IsolateSOCKSAuth`)
 - **Aislamiento por Worker**: Cada worker o hilo genera credenciales únicas en `socks5h://w{slot}_{hash}:tor@127.0.0.1:9050` mapeadas a circuitos independientes dentro del demonio central Tor.
 - **Desacoplamiento de Ciclo de Vida**: Los workers consumen la instancia Tor sin terminar el proceso maestro al rotar cada 350 consultas (`is_owner=False`).
-- **Priorización Cono Sur**: Configurada en [`torrc`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/torrc) (`ExitNodes {ar},{cl},{uy},{br} StrictNodes 0`).
+- **Priorización Cono Sur**: Configurada en [`torrc`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/torrc) (`ExitNodes {ar},{cl},{uy},{br} StrictNodes 0`).
 
 ### 4.2. Pool de Proxies Públicos Rotativos (`movistar_fast`)
 - **Latencia Ultrabaja**: 1.0s a 2.5s por consulta.
@@ -158,10 +158,10 @@ graph TD
 
 ## 5. Registro y Factoría Central
 
-El adaptador se registra en [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias:
+El adaptador se registra en [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias:
 - `"movistar"`: Nombre canónico utilizado en la cadena del pipeline (modo por defecto según flags o configuración).
 - `"movistar_cobro_express"`: Alias explícito del motor de pasarela.
-- `"movistar_fast"`: Alias preconfigurado para forzar el modo de alta velocidad con [`ProxyPoolManager`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py).
+- `"movistar_fast"`: Alias preconfigurado para forzar el modo de alta velocidad con [`ProxyPoolManager`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py).
 
 ```python
 from adapters.scrapers.movistar.movistar_adapter import MovistarAdapter

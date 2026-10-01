@@ -82,8 +82,46 @@ def main():
     parser.add_argument("--queue", choices=["registro_no_llame", "cola_automatizacion"], default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Origen de cola: 'registro_no_llame' o 'cola_automatizacion' (default: según config/env)")
     parser.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "iris_scraper"), help="Identificador auto_id para 'cola_automatizacion' (default: iris_scraper)")
     parser.add_argument("--pc-id", type=str, default=getattr(config, "WORKER_PC_ID", "PC-00"), help="Identificador del nodo worker para 'cola_automatizacion' (default: PC-00)")
+    parser.add_argument("--sync-now", action="store_true", help="Fuerza subida masiva nocturna inmediata (Push en chunks de a 5.000) de tareas terminadas al VPS y finaliza")
+    parser.add_argument("--pull-now", action="store_true", help="Fuerza descarga masiva inmediata (Pull de 10.000 tareas) desde el VPS a SQLite local y finaliza")
+    parser.add_argument("--local-staging", dest="local_staging", action="store_true", default=None, help="Habilita persistencia local desacoplada SQLite WAL (default según config.LOCAL_STAGING_ENABLED)")
+    parser.add_argument("--no-local-staging", dest="local_staging", action="store_false", help="Deshabilita persistencia local y conecta directo al VPS")
 
     args = parser.parse_args()
+
+    # Comandos operativos directos de sincronización (CLI)
+    if args.sync_now:
+        print("🌙 [CLI SYNC-NOW] Iniciando subida forzada inmediata a MySQL VPS...")
+        from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+        from adapters.queue.vps_sync_adapter import VPSSyncAdapter
+        from core.use_cases.sync_push_use_case import SincronizarPushNocturnoUseCase
+
+        local_repo = SQLiteStagingAdapter(tipo_cola=args.queue, auto_id=args.auto_id, pc_id=args.pc_id)
+        remote_repo = VPSSyncAdapter(pool_size=1)
+        use_case = SincronizarPushNocturnoUseCase(remote_repo=remote_repo, local_repo=local_repo)
+        res = use_case.ejecutar(tipo_cola=args.queue, chunk_size=getattr(config, "SYNC_CHUNK_SIZE", 5000))
+        print(f"📊 Resumen de sincronización: {res}")
+        return
+
+    if args.pull_now:
+        print("💧 [CLI PULL-NOW] Iniciando recarga forzada de 10.000 tareas desde MySQL VPS...")
+        from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+        from adapters.queue.vps_sync_adapter import VPSSyncAdapter
+        from core.use_cases.sync_pull_use_case import SincronizarPullMatutinoUseCase
+
+        local_repo = SQLiteStagingAdapter(tipo_cola=args.queue, auto_id=args.auto_id, pc_id=args.pc_id)
+        remote_repo = VPSSyncAdapter(pool_size=1)
+        use_case = SincronizarPullMatutinoUseCase(remote_repo=remote_repo, local_repo=local_repo)
+        res = use_case.ejecutar(
+            tipo_cola=args.queue,
+            limit=getattr(config, "PULL_CHUNK_SIZE", 10000),
+            forzar=True,
+            auto_id=args.auto_id,
+            pc_id=args.pc_id,
+            scraper_actual=args.scraper or ("telcos" if args.queue == "cola_automatizacion" else "iris")
+        )
+        print(f"📊 Resumen de recarga: {res}")
+        return
 
     # Determinar el alias de scraper según los argumentos
     if args.scraper:
@@ -117,7 +155,8 @@ def main():
         pc_id=args.pc_id,
         buffer_flush_size=args.buffer_size,
         buffer_max_delay=args.buffer_timeout,
-        empty_queue_pause_max_sec=args.empty_queue_pause
+        empty_queue_pause_max_sec=args.empty_queue_pause,
+        use_local_staging=args.local_staging
     )
 
     supervisor.ejecutar()

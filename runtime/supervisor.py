@@ -60,7 +60,8 @@ class SupervisorIndustrial:
         heartbeat_interval: Optional[float] = None,
         stats_flush_interval: Optional[float] = None,
         watchdog_sweep_interval: Optional[float] = None,
-        empty_queue_pause_max_sec: Optional[float] = None
+        empty_queue_pause_max_sec: Optional[float] = None,
+        use_local_staging: Optional[bool] = None
     ):
         self.scraper_name = scraper_name
         self.queue_type = (queue_type or getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
@@ -77,6 +78,12 @@ class SupervisorIndustrial:
         self.minutos_inactividad_huerfanos = minutos_inactividad_huerfanos
         self.forzar_horario = forzar_horario
         self.solo_sin_coincidencia = solo_sin_coincidencia
+        self.use_local_staging = (
+            use_local_staging
+            if use_local_staging is not None
+            else getattr(config, "LOCAL_STAGING_ENABLED", True)
+        )
+        self.sync_scheduler: Optional[Any] = None
 
         # Asegurar que el flag forzar_horario se propague al motor del scraper
         if "forzar_horario" not in self.scraper_kwargs:
@@ -183,6 +190,15 @@ class SupervisorIndustrial:
             self._pause_reasons.discard(razon)
             if not self._pause_reasons:
                 self.pause_event.clear()
+
+    def _on_sync_pull_success(self, count: int):
+        """Callback ejecutado por SyncSchedulerThread al recargar tareas en SQLite local."""
+        if count > 0 and "cola_vacia" in self._pause_reasons:
+            self._empty_backoff_level = 0
+            self._clear_pause("cola_vacia")
+            logging.getLogger("DBDispatcher").info(
+                f"💧 [SYNC PULL] Recargados {count:,} nuevos registros en staging local. Pausa de cola vacía liberada."
+            )
 
     def _obtener_estado_pausa(self) -> str:
         """Devuelve un resumen legible del estado operativo para el dashboard."""
@@ -657,6 +673,11 @@ class SupervisorIndustrial:
             "errores": 0,
             "reciclados": 0,
             "latencias": [],
+            "por_operador": {
+                "claro": 0,
+                "personal": 0,
+                "movistar": 0
+            },
             "t0": time.time()
         }
         last_print = time.time()
@@ -665,9 +686,16 @@ class SupervisorIndustrial:
             try:
                 msg = self.stats_queue.get(timeout=1.0)
                 tipo = msg.get("tipo")
+                operador = str(msg.get("operador", "")).lower().strip()
                 if tipo == "completado":
                     stats["completados"] += 1
                     stats["latencias"].append(msg.get("latency", 0))
+                    if "claro" in operador:
+                        stats["por_operador"]["claro"] += 1
+                    elif "personal" in operador:
+                        stats["por_operador"]["personal"] += 1
+                    elif "movistar" in operador:
+                        stats["por_operador"]["movistar"] += 1
                 elif tipo == "no_coincidencia":
                     stats["no_coincidencias"] += 1
                     stats["latencias"].append(msg.get("latency", 0))
@@ -697,7 +725,16 @@ class SupervisorIndustrial:
                 print(f"  • Estado Operativo:         {status_operativo}")
                 print(f"  • Workers en paralelo:      {self.workers_count} slots activos")
                 print(f"  • Total procesados:         {total_proc:,} registros | Ritmo: {rpm} reg/min")
-                print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+                if "telco" in self.scraper_name.lower():
+                    c_claro = stats["por_operador"]["claro"]
+                    c_pers = stats["por_operador"]["personal"]
+                    c_mov = stats["por_operador"]["movistar"]
+                    print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+                    print(f"      - Claro:                {c_claro:,}")
+                    print(f"      - Personal:             {c_pers:,}")
+                    print(f"      - Movistar:             {c_mov:,}")
+                else:
+                    print(f"  • Coincidencias positivas:  {stats['completados']:,}")
                 print(f"  • Sin coincidencias:        {stats['no_coincidencias']:,}")
                 print(f"  • Errores controlados:      {stats['errores']:,}")
                 print(f"  • Rotaciones preventivas:   {stats['reciclados']:,} relevos anti-leak")
@@ -747,8 +784,8 @@ class SupervisorIndustrial:
         print(f"  • Scraper asignado:       {self.scraper_name.upper()}")
         print(f"  • Base de datos VPS:      {config.VPS_DBHOST}:{config.VPS_DBPORT}/{config.VPS_DBNAME}")
         tabla_str = f"cola_automatizacion (auto_id: {self.auto_id})" if self.queue_type == "cola_automatizacion" else config.VPS_DB_TABLE
-        print(f"  • Origen de Cola:         {self.queue_type.upper()}")
-        print(f"  • Tabla destino:          {tabla_str}")
+        persistencia_str = "STAGING LOCAL (SQLite WAL - Push Nocturno 20:00 hs)" if self.use_local_staging else "DIRECTO (MySQL VPS Central)"
+        print(f"  • Persistencia:           {persistencia_str}")
         print(f"  • Slots concurrentes:     {self.workers_count} workers")
         print(f"  • Rotación preventiva:    Cada {self.max_queries_worker} consultas por worker")
         print(f"  • Buffer de Persistencia: {self.buffer_flush_size} registros / máx {int(self.buffer_max_delay)}s (1 commit masivo)")
@@ -762,21 +799,50 @@ class SupervisorIndustrial:
 
         # 1. Chequeo e inicialización del adaptador único de base de datos para toda la máquina
         try:
-            if self.queue_type == "cola_automatizacion":
-                self.db_adapter = ColaAutomatizacionAdapter(
-                    pool_size=1,
-                    pool_name=f"sup_pc_{os.getpid()}",
+            if self.use_local_staging:
+                from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+                from adapters.queue.vps_sync_adapter import VPSSyncAdapter
+                from runtime.sync_scheduler import SyncSchedulerThread
+
+                self.db_adapter = SQLiteStagingAdapter(
+                    db_path=config.LOCAL_STAGING_DB_PATH,
+                    tipo_cola=self.queue_type,
                     auto_id=self.auto_id,
                     pc_id=self.pc_id
                 )
+                vps_remote_sync = VPSSyncAdapter(pool_size=1)
+                self.sync_scheduler = SyncSchedulerThread(
+                    local_repo=self.db_adapter,
+                    remote_repo=vps_remote_sync,
+                    tipo_cola=self.queue_type,
+                    auto_id=self.auto_id,
+                    pc_id=self.pc_id,
+                    scraper_actual=self.scraper_name,
+                    stop_event=self.stop_event,
+                    on_pull_success=self._on_sync_pull_success
+                )
+                self.sync_scheduler.start()
+
+                stats = self.db_adapter.obtener_estadisticas()
+                pendientes_locales = stats.get("pendiente", 0)
+                listos_push = stats.get("listo_para_subir", 0)
+                print(f"💾 Staging Local Activo ({config.LOCAL_STAGING_DB_PATH}). Tareas pendientes locales: {pendientes_locales:,} | Esperando push: {listos_push:,}\n")
             else:
-                self.db_adapter = MySQLQueueAdapter(pool_size=1, pool_name=f"sup_pc_{os.getpid()}")
-            stats = self.db_adapter.obtener_estadisticas()
-            pendientes = stats.get(f"{self.scraper_name}_pendiente", 0)
-            total_global = stats.get("pendiente", 0)
-            print(f"Conexión con VPS confirmada (1 socket permanente). Registros pendientes para '{self.scraper_name}': {pendientes:,} (Total global en cola: {total_global:,})\n")
+                if self.queue_type == "cola_automatizacion":
+                    self.db_adapter = ColaAutomatizacionAdapter(
+                        pool_size=1,
+                        pool_name=f"sup_pc_{os.getpid()}",
+                        auto_id=self.auto_id,
+                        pc_id=self.pc_id
+                    )
+                else:
+                    self.db_adapter = MySQLQueueAdapter(pool_size=1, pool_name=f"sup_pc_{os.getpid()}")
+                stats = self.db_adapter.obtener_estadisticas()
+                pendientes = stats.get(f"{self.scraper_name}_pendiente", 0)
+                total_global = stats.get("pendiente", 0)
+                print(f"Conexión con VPS confirmada (1 socket permanente). Registros pendientes para '{self.scraper_name}': {pendientes:,} (Total global en cola: {total_global:,})\n")
         except Exception as e:
-            logger.critical(f"Error conectando con la base de datos central VPS: {e}")
+            logger.critical(f"Error conectando o inicializando base de datos: {e}")
             return
 
         # Iniciar hilo despachador IPC centralizado (1 sola conexión activa para todos los workers)
@@ -800,9 +866,9 @@ class SupervisorIndustrial:
             )
             self._set_pause("horario")
 
-        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal o Datuar
+        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal, Datuar o Telcos
         tor_daemon = None
-        if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar")):
+        if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar", "telcos")):
             if self.scraper_kwargs.get("use_proxy_pool", config.PROXY_POOL_ENABLED):
                 from adapters.network.proxy_pool import ProxyPoolManager
                 logger.info("🌐 [SUPERVISOR] Inicializando caché y bootstrap inicial de ProxyPoolManager...")
@@ -882,6 +948,11 @@ class SupervisorIndustrial:
                 if proc.is_alive():
                     logger.warning(f"Slot {s_id} no respondió en 15s. Forzando terminación...")
                     proc.terminate()
+
+        # Detener centinela de sincronización si está activo
+        if self.sync_scheduler is not None:
+            logger.info("⏰ Deteniendo centinela de sincronización (SyncSchedulerThread)...")
+            self.sync_scheduler.join(timeout=5.0)
 
         # Detener hilo despachador de base de datos tras la conclusión de los workers
         time.sleep(0.5)

@@ -1,6 +1,6 @@
 # Ciclo de Vida del Worker (Aislamiento por Subproceso)
 
-El runtime de este sistema implementa un modelo de concurrencia basado en el módulo estándar [`multiprocessing`](https://docs.python.org/3/library/multiprocessing.html) de Python. Cada unidad de trabajo se orquesta como un proceso del sistema operativo completamente independiente y aislado mediante la función de punto de entrada [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L181) alojada en [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py).
+El runtime de este sistema implementa un modelo de concurrencia basado en el módulo estándar [`multiprocessing`](https://docs.python.org/3/library/multiprocessing.html) de Python. Cada unidad de trabajo se orquesta como un proceso del sistema operativo completamente independiente y aislado mediante la función de punto de entrada [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L181) alojada en [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py).
 
 Este diseño responde a la necesidad crítica de eludir el *Global Interpreter Lock* (GIL) de CPython, evitar la corrupción del estado global en bibliotecas C/C++ subyacentes (como los conectores de MySQL o el motor Chromium/Playwright) y garantizar que la fuga de memoria acumulativa o el fallo fatal de un scraper jamás arrastre al proceso supervisor ni a otros workers paralelos.
 
@@ -39,7 +39,7 @@ Cada worker se ejecuta en su propio espacio de memoria virtual con su propio Ide
 
 ## 2. Firma y Desglose de Parámetros del Worker
 
-La función [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L36) recibe sus parámetros por valor serializados mediante `pickle`:
+La función [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L23-L36) recibe sus parámetros por valor serializados mediante `pickle`:
 
 ```python
 def worker_lifecycle_process(
@@ -111,14 +111,14 @@ sequenceDiagram
 ```
 
 ### A. Supresión de SIGINT en el Worker
-En la línea 43 de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L43):
+En la línea 43 de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L43):
 ```python
 signal.signal(signal.SIGINT, signal.SIG_IGN)
 ```
 **Razón de ingeniería:** En entornos de consola interactiva (como PowerShell en Windows), pulsar `Ctrl+C` emite `SIGINT` a todo el árbol de procesos en la sesión de terminal. Si los workers capturan `SIGINT`, podrían interrumpirse violentamente en mitad de una sentencia `UPDATE` o durante el volcado de JSON, dejando registros huérfanos o transacciones abiertas en el VPS. Al forzar `signal.SIG_IGN`, el worker delega la orden de detención exclusivamente al `SupervisorIndustrial`, el cual señaliza el `stop_event` de manera coordinada.
 
 ### B. Aislamiento Estricto del Pool de Conexiones
-En la línea 58 de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L58-L61):
+En la línea 58 de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L58-L61):
 ```python
 cola_repo = MySQLQueueAdapter(
     pool_size=3,
@@ -128,7 +128,7 @@ cola_repo = MySQLQueueAdapter(
 El conector `mysql.connector.pooling.MySQLConnectionPool` requiere nombres de pool completamente unívocos para evitar colisiones internas. Nombrar el pool incorporando el slot, la generación y el PID (`f"pool_{worker_slot}_{generation}_{os.getpid()}"`) garantiza que cada proceso gestione de forma hermética sus 3 descriptores TCP hacia el VPS (`config.VPS_DBHOST`).
 
 ### C. Inyección Dinámica y Autenticación del Scraper
-En las líneas 65-70 de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L65-L70):
+En las líneas 65-70 de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L65-L70):
 ```python
 kwargs = scraper_kwargs or {}
 scraper_engine = ScraperRegistry.obtener(scraper_name, **kwargs)
@@ -137,7 +137,7 @@ scraper_engine.iniciar()
 if not scraper_engine.autenticar():
     # Emite error_login al supervisor y termina ejecución
 ```
-El worker utiliza el [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) para resolver la clase concreta (`IrisHttpAdapter`, `IrisBrowserAdapter`, etc.) cumpliendo el puerto [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py). Si la autenticación falla (ej. credenciales inválidas o bloqueo de cuenta), el worker no inicia ningún ciclo de consumo, reporta el evento por IPC y sale limpiamente.
+El worker utiliza el [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) para resolver la clase concreta (`IrisHttpAdapter`, `IrisBrowserAdapter`, etc.) cumpliendo el puerto [`IScraperEnginePort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py). Si la autenticación falla (ej. credenciales inválidas o bloqueo de cuenta), el worker no inicia ningún ciclo de consumo, reporta el evento por IPC y sale limpiamente.
 
 ---
 
@@ -186,7 +186,7 @@ El indicador booleano `recycled` informa al supervisor si la terminación fue pr
 
 ## 5. Salida Limpia y Cierre de Recursos (`finally`)
 
-Garantizar la liberación de puertos de red y descriptores de archivos es crítico para la supervivencia 24/7. En el bloque `finally` (líneas 164-181) de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L164-L181):
+Garantizar la liberación de puertos de red y descriptores de archivos es crítico para la supervivencia 24/7. En el bloque `finally` (líneas 164-181) de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L164-L181):
 
 ```python
 finally:

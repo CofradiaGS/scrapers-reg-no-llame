@@ -127,7 +127,12 @@ class ScrapeResult:
             "raw": self.raw,
             "ultima_modificacion": self.ultima_modificacion or ahora_str
         }
-        return {self.fuente_scraper: payload}
+        res = {self.fuente_scraper: payload}
+        if "datos_acumulados" in self.detalles and isinstance(self.detalles["datos_acumulados"], dict):
+            for k, v in self.detalles["datos_acumulados"].items():
+                if k not in res:
+                    res[k] = v
+        return res
 
 
 @dataclass
@@ -272,6 +277,8 @@ class ReglaPipeline:
             nombre = "cuitonline"
         elif "datuar" in nombre:
             nombre = "datuar"
+        elif "telco" in nombre:
+            nombre = "telcos"
 
         # 0. Validación de formato de ANI (debe ser numérico de exactamente 10 dígitos)
         clean_ani = "".join(filter(str.isdigit, str(ani or ""))).strip()
@@ -284,7 +291,7 @@ class ReglaPipeline:
         # Bandera de auditoría inicial: Si solo_sin_coincidencia está activa en telcos,
         # exige que NINGUNA de las 3 compañías (Claro, Personal, Movistar) posea coincidencia previa,
         # independientemente de la fecha o ventana de días, incluyendo el status raíz legado.
-        if solo_sin_coincidencia and nombre in cls.TELCOS:
+        if solo_sin_coincidencia and (nombre in cls.TELCOS or nombre == "telcos"):
             for t in cls.TELCOS:
                 t_data = datos.get(t, {})
                 if isinstance(t_data, dict) and t_data.get("status") == StatusScraping.COINCIDENCIA.value:
@@ -294,7 +301,7 @@ class ReglaPipeline:
 
         # Para motores que NO son de compañía (iris, datuar, cuitonline):
         # NO aplica regla de 7 días. Solo nutrir registros que aún NO tengan datos del motor.
-        if nombre not in cls.TELCOS:
+        if nombre not in cls.TELCOS and nombre != "telcos":
             sc_data = datos.get(nombre, {})
             if isinstance(sc_data, dict) and sc_data.get("status"):
                 return False, f"{nombre} ya posee datos enriquecidos previamente (no requiere re-consulta)"
@@ -319,6 +326,27 @@ class ReglaPipeline:
                         return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
 
         # Reglas específicas por motor
+        if nombre == "telcos":
+            # Exclusividad Telco: Si Claro, Personal o Movistar dieron coincidencia en los últimos 7 días
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if isinstance(t_data, dict) and t_data.get("status") == StatusScraping.COINCIDENCIA.value:
+                    t_ts = t_data.get("ultima_modificacion")
+                    if cls.es_reciente(t_ts, max_dias=dias_validez):
+                        return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
+
+            # Si las 3 telcos ya fueron consultadas recientemente sin coincidencia
+            todas_consultadas = True
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if not (isinstance(t_data, dict) and t_data.get("status") and cls.es_reciente(t_data.get("ultima_modificacion"), max_dias=dias_validez)):
+                    todas_consultadas = False
+                    break
+            if todas_consultadas:
+                return False, f"Las 3 telcos ya fueron ejecutadas recientemente sin coincidencia dentro de la ventana de {dias_validez} días"
+
+            return True, "Apto para Telcos en cascada"
+
         if nombre == "iris":
             return True, "Apto para IRIS"
 
@@ -406,6 +434,8 @@ class ReglaPipeline:
         sc_canonico = scraper_actual.lower()
         if "iris" in sc_canonico:
             sc_canonico = "iris"
+        elif "telco" in sc_canonico:
+            sc_canonico = "telcos"
         datos[sc_canonico] = {
             "status": resultado.status.value,
             "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -425,7 +455,7 @@ class ReglaPipeline:
         # Determinar si ya hubo coincidencia en alguna telco en los últimos 7 días
         telco_coincidio = (
             coincidencia_telco_previa 
-            or (resultado.status == StatusScraping.COINCIDENCIA and scraper_actual in cls.TELCOS)
+            or (resultado.status == StatusScraping.COINCIDENCIA and (scraper_actual in cls.TELCOS or scraper_actual == "telcos" or sc_canonico == "telcos"))
         )
         if not telco_coincidio and datos:
             for t in cls.TELCOS:
@@ -439,6 +469,9 @@ class ReglaPipeline:
         pasados = set(fuentes_previas or [])
         pasados.add(scraper_actual)
         pasados.add(sc_canonico)
+        if scraper_actual == "telcos" or sc_canonico == "telcos":
+            pasados.update(cls.TELCOS)
+            pasados.add("telcos")
 
         def paso_reciente(sc_name: str) -> bool:
             if sc_name == scraper_actual or sc_name == sc_canonico:
@@ -456,8 +489,19 @@ class ReglaPipeline:
         idx = pipeline.index(scraper_actual) if scraper_actual in pipeline else -1
         if idx == -1 and sc_canonico in pipeline:
             idx = pipeline.index(sc_canonico)
+        if idx == -1 and (scraper_actual == "telcos" or sc_canonico == "telcos"):
+            if "movistar" in pipeline:
+                idx = pipeline.index("movistar")
+            elif "telcos" in pipeline:
+                idx = pipeline.index("telcos")
+            else:
+                idx = len(pipeline)
 
         for candidato in pipeline[idx + 1:]:
+            # Si el candidato es una telco y ya corrió telcos, saltearlo
+            if (scraper_actual == "telcos" or sc_canonico == "telcos") and candidato in cls.TELCOS:
+                continue
+
             # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante
             if telco_coincidio and candidato in cls.TELCOS:
                 continue

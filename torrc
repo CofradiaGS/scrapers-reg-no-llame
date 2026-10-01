@@ -8,11 +8,8 @@ ControlPort 9051
 CookieAuthentication 0
 DormantCanceledByStartup 1
 
-# Priorización regional Cono Sur para Cobro Express (StrictNodes 0 permite fallback si escasean nodos)
-ExitNodes {ar},{cl},{uy},{br}
-StrictNodes 0
-
-# Optimización de latencias y timeouts de circuitos
-CircuitBuildTimeout 10
+# Optimización de latencias y timeouts de circuitos (sin restricción estricta de ExitNodes para evitar congestión bajo 20 workers)
+CircuitBuildTimeout 15
 KeepalivePeriod 60
 MaxCircuitDirtiness 300
+NumEntryGuards 8

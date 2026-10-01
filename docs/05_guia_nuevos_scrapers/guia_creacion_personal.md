@@ -6,7 +6,7 @@ Este documento detalla el diseño, la especificación de protocolo, la arquitect
 
 ## 1. Ciclo de Vida del Pipeline y Regla de Cortocircuito
 
-El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L132):
+El pipeline opera bajo el patrón de **Cadena de Responsabilidad con Cortocircuito** formalizado en [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L132):
 
 ```text
 CADENA_DEFAULT: ["iris", "datuar", "claro", "movistar", "personal"]
@@ -27,8 +27,8 @@ flowchart TD
 ```
 
 ### Regla de Cortocircuito para Personal
-1. **Derivación**: Cuando [`MovistarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) no encuentra coincidencia (`StatusScraping.SIN_COINCIDENCIA`), [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L140) deriva la línea hacia `scraper_actual = 'personal'` con `estado = 'pendiente'`.
-2. **Cortocircuito**: Cuando [`PersonalAdapter.consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) detecta coincidencia confirmada (`StatusScraping.COINCIDENCIA`), se activa el cortocircuito finalizando la línea en `scraper_actual = 'finalizado'` y `estado = 'completado'`.
+1. **Derivación**: Cuando [`MovistarAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) no encuentra coincidencia (`StatusScraping.SIN_COINCIDENCIA`), [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L140) deriva la línea hacia `scraper_actual = 'personal'` con `estado = 'pendiente'`.
+2. **Cortocircuito**: Cuando [`PersonalAdapter.consultar_linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) detecta coincidencia confirmada (`StatusScraping.COINCIDENCIA`), se activa el cortocircuito finalizando la línea en `scraper_actual = 'finalizado'` y `estado = 'completado'`.
 3. **Fin de Posta**: Si la línea tampoco posee registro en Personal (`StatusScraping.SIN_COINCIDENCIA`), al ser el último operador celular de la cadena, pasa directamente a `scraper_actual = 'finalizado'` y `estado = 'no_coincidencia'`.
 
 Para más detalles sobre la orquestación en cascada, consultar:
@@ -104,7 +104,7 @@ Por directiva técnica de negocio, **el 100% de los datos retornados por la pasa
 
 ## 4. Arquitectura de Red y Anonimato
 
-[`PersonalAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) adopta el esquema de conectividad de alta disponibilidad común a los adaptadores telco:
+[`PersonalAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) adopta el esquema de conectividad de alta disponibilidad común a los adaptadores telco:
 
 ```mermaid
 graph TD
@@ -134,17 +134,17 @@ graph TD
 ### 4.1. Tor Stream Isolation (`IsolateSOCKSAuth`)
 - **Credenciales Únicas por Slot**: Cada worker utiliza un socket autenticado con credenciales efímeras (`socks5h://w{slot}_{hash}:tor@127.0.0.1:9050`), forzando circuitos independientes y salida balanceada.
 - **Rotación Proactiva y Reactiva**: Rota instantáneamente de circuito en 0 ms si ocurre un error HTTP 429 o tras `TOR_ROTATE_EVERY` consultas consecutivas.
-- **Nodo de Salida**: Enrutamiento optimizado mediante nodos de Sudamérica configurados en [`torrc`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/torrc).
+- **Nodo de Salida**: Enrutamiento optimizado mediante nodos de Sudamérica configurados en [`torrc`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/torrc).
 
 ### 4.2. Pool de Proxies Públicos Rotativos (`personal_fast`)
-- Para entornos que requieren mayor velocidad (latencia entre 1.0s y 2.5s por consulta), el alias `personal_fast` delega las peticiones en [`ProxyPoolManager`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py) con descarte inmediato de proxies bloqueados.
+- Para entornos que requieren mayor velocidad (latencia entre 1.0s y 2.5s por consulta), el alias `personal_fast` delega las peticiones en [`ProxyPoolManager`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/network/proxy_pool.py) con descarte inmediato de proxies bloqueados.
 
 ---
 
 ## 5. Registro y Factoría Central
 
-El adaptador se encuentra expuesto en [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias unificados:
-- `"personal"`: Nombre canónico utilizado por [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L132).
+El adaptador se encuentra expuesto en [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo tres alias unificados:
+- `"personal"`: Nombre canónico utilizado por [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L132).
 - `"personal_cobro_express"`: Identificador explícito de pasarela.
 - `"personal_fast"`: Instanciador optimizado con `use_proxy_pool=True` y `use_tor=False`.
 

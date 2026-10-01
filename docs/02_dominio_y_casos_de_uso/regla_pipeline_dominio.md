@@ -1,6 +1,6 @@
 # Regla de Dominio del Pipeline: Lógica Condicional, Ventana Temporal de 7 Días y Cortocircuito
 
-La clase [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
+La clase [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
 
 Al residir en el núcleo de dominio, esta lógica no depende de procedimientos almacenados (*stored procedures*), disparadores (*triggers*) de SQL ni condicionales dispersos en los controladores de la interfaz o en los hilos del supervisor.
 
@@ -172,6 +172,27 @@ class ReglaPipeline:
                         return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
 
         # Reglas específicas por motor
+        if nombre == "telcos":
+            # Exclusividad Telco: Si Claro, Personal o Movistar dieron coincidencia en los últimos 7 días
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if isinstance(t_data, dict) and t_data.get("status") == StatusScraping.COINCIDENCIA.value:
+                    t_ts = t_data.get("ultima_modificacion")
+                    if cls.es_reciente(t_ts, max_dias=dias_validez):
+                        return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
+
+            # Si las 3 telcos ya fueron consultadas recientemente sin coincidencia
+            todas_consultadas = True
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if not (isinstance(t_data, dict) and t_data.get("status") and cls.es_reciente(t_data.get("ultima_modificacion"), max_dias=dias_validez)):
+                    todas_consultadas = False
+                    break
+            if todas_consultadas:
+                return False, f"Las 3 telcos ya fueron ejecutadas recientemente sin coincidencia dentro de la ventana de {dias_validez} días"
+
+            return True, "Apto para Telcos en cascada"
+
         if nombre == "iris":
             return True, "Apto para IRIS"
 
@@ -455,9 +476,9 @@ Esto permite escenarios operativos avanzados, tales como:
 ---
 
 ## 5. Referencias Cruzadas
-- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Guía Scraper CuitOnline](../05_guia_nuevos_scrapers/guia_creacion_cuitonline.md)
 - [Guía Scraper Datuar](../05_guia_nuevos_scrapers/guia_creacion_datuar.md)
 - [Guía Scraper Claro](../05_guia_nuevos_scrapers/guia_creacion_claro.md)

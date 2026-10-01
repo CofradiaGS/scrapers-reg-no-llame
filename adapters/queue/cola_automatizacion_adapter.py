@@ -43,13 +43,16 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
         p_name = pool_name or f"pool_cola_auto_{os.getpid()}_{random_suffix}"
 
+        user = getattr(config, "COLA_AUTO_DBUSER", "automatizaciones")
+        password = getattr(config, "COLA_AUTO_DBPASS", "Mg1ZOGk3mE!2_q1Q")
+
         self.pool = MySQLConnectionPool(
             pool_name=p_name,
             pool_size=pool_size,
             host=config.VPS_DBHOST,
             port=config.VPS_DBPORT,
-            user=config.VPS_DBUSER,
-            password=config.VPS_DBPASS,
+            user=user,
+            password=password,
             database=config.VPS_DBNAME,
             use_pure=getattr(config, "VPS_DB_USE_PURE", True),
             autocommit=False,
@@ -338,20 +341,20 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         if es_coincidencia:
             if registros_hist:
                 iris_dict = self._agrupar_operaciones_iris(registros_hist)
+                iris_dict["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_dict
             elif datos_iris:
                 iris_dict = dict(datos_iris)
-            else:
-                iris_dict = {}
-            iris_dict["ultima_modificacion"] = ahora_str
-            resultado_final["iris"] = iris_dict
-        else:
+                iris_dict["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_dict
+        elif datos_iris or registros_hist:
             resultado_final["linea"] = ani_actual
             resultado_final["iris"] = {
                 "message": item.get("descripcion", "Sin registros en IRIS"),
                 "ultima_modificacion": ahora_str
             }
 
-        # 4. Cualquier otra fuente acumulada futura
+        # 4. Cualquier otra fuente acumulada (claro, personal, movistar, etc.)
         for k, v in datos_totales.items():
             if k not in ("enacom", "iris", "iris_v2"):
                 resultado_final[k] = v

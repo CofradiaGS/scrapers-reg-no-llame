@@ -22,6 +22,7 @@ import config
 from core.ports.scraper_port import IScraperEnginePort
 from core.domain.entities import Linea, ScrapeResult, Titular, Servicio
 from core.domain.enums import StatusScraping
+from core.domain.exceptions import ScraperTransientError
 from adapters.scrapers.base_scraper import BaseScraperAdapter
 from adapters.network.tor_controller import TorController
 from adapters.network.proxy_pool import ProxyPoolManager
@@ -260,8 +261,8 @@ class PersonalAdapter(BaseScraperAdapter):
                             proxies=proxies_dict,
                             timeout=config.PROXY_POOL_TIMEOUT
                         )
-                        if resp.status_code == 429:
-                            logger.warning(f"⚠️ Cobro Express Rate Limit (HTTP 429) en proxy {current_proxy}. Rotando...")
+                        if resp.status_code in (403, 429):
+                            logger.warning(f"⚠️ Cobro Express Rate Limit / Bloqueo (HTTP {resp.status_code}) en proxy {current_proxy}. Rotando...")
                             if self.proxy_pool.size() <= 8:
                                 logger.info(f"Pool reducido ({self.proxy_pool.size()} proxies). Backoff breve de 1.5s antes de rotar.")
                                 time.sleep(1.5)
@@ -277,27 +278,37 @@ class PersonalAdapter(BaseScraperAdapter):
                         logger.debug(f"Falla proxy {current_proxy} (intento {attempt+1}/{max_retries}): {e}")
 
                 if resp is None:
-                    raise RuntimeError(f"ProxyPool agotó los {max_retries} reintentos para {linea.ani}: {last_err}")
+                    raise ScraperTransientError(f"ProxyPool agotó los {max_retries} reintentos para {linea.ani}: {last_err}")
             else:
-                try:
-                    resp = self._session.post(
-                        url_api,
-                        headers=headers,
-                        data=json.dumps(payload_data),
-                        timeout=self.timeout
-                    )
-                except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
-                    if self.use_tor:
-                        logger.warning(f"Timeout/Error de red en circuito Tor ({net_err}). Rotando circuito instantáneamente y reintentando...")
-                        self._rotar_circuito_instantaneo()
+                MAX_TOR_RETRIES = 2 if self.use_tor else 1
+                req_timeout = (15.0, 20.0) if self.use_tor else self.timeout
+                last_net_err = None
+                resp = None
+                for tor_attempt in range(1, MAX_TOR_RETRIES + 1):
+                    try:
                         resp = self._session.post(
                             url_api,
                             headers=headers,
                             data=json.dumps(payload_data),
-                            timeout=self.timeout
+                            timeout=req_timeout
                         )
-                    else:
-                        raise
+                        last_net_err = None
+                        break  # Éxito — salir del loop de reintentos
+                    except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
+                        last_net_err = net_err
+                        if self.use_tor:
+                            logger.warning(
+                                f"Timeout/Error de red en circuito Tor (intento {tor_attempt}/{MAX_TOR_RETRIES}): "
+                                f"{net_err}. Rotando circuito instantáneamente y reintentando..."
+                            )
+                            self._rotar_circuito_instantaneo()
+                            time.sleep(0.5)
+                        else:
+                            raise ScraperTransientError(f"Error de red directo en PersonalAdapter: {net_err}")
+                if resp is None:
+                    raise ScraperTransientError(
+                        f"Timeout/Error de red persistente en PersonalAdapter tras {MAX_TOR_RETRIES} intentos Tor: {last_net_err}"
+                    )
 
             # --- MANEJO DE RESPUESTAS ---
 
@@ -325,26 +336,27 @@ class PersonalAdapter(BaseScraperAdapter):
                     raw=err_json
                 )
 
-            # Caso 2: Error 429 (Too Many Requests -> Rotación reactiva instantánea)
-            if resp.status_code == 429:
-                logger.warning(f"⚠️ Cobro Express Rate Limit (HTTP 429) detectado para línea {linea.ani}.")
+            # Caso 2: Error 403 o 429 (Forbidden / Too Many Requests -> Rotación reactiva instantánea)
+            if resp.status_code in (403, 429):
+                logger.warning(f"⚠️ Cobro Express Bloqueo/Rate Limit (HTTP {resp.status_code}) detectado para línea {linea.ani}.")
                 if self.use_tor:
-                    logger.info("Renovando circuito Tor reactivamente y reintentando consulta...")
+                    logger.info(f"Renovando circuito Tor reactivamente ante HTTP {resp.status_code} y reintentando consulta...")
                     self._rotar_circuito_instantaneo()
+                    time.sleep(1.0)
                     resp = self._session.post(
                         url_api,
                         headers=headers,
                         data=json.dumps(payload_data),
                         timeout=self.timeout
                     )
-                if resp.status_code == 429:
-                    raise RuntimeError(
-                        f"Cobro Express Rate Limit persistente (HTTP 429 Too Many Requests): {resp.text[:150]}"
+                if resp.status_code in (403, 429):
+                    raise ScraperTransientError(
+                        f"Cobro Express Bloqueo/Rate Limit persistente (HTTP {resp.status_code}): {resp.text[:150]}"
                     )
 
             # Caso 3: Otros errores HTTP (5xx, etc.)
             if resp.status_code != 200:
-                raise RuntimeError(
+                raise ScraperTransientError(
                     f"Cobro Express respondió HTTP {resp.status_code}: {resp.text[:150]}"
                 )
 
@@ -441,11 +453,13 @@ class PersonalAdapter(BaseScraperAdapter):
                 descripcion=desc
             )
 
+        except ScraperTransientError:
+            raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error de red al consultar Personal en Cobro Express para {linea.ani}: {e}")
-            raise RuntimeError(f"Error de red en PersonalAdapter: {e}")
+            logger.warning(f"Error de red al consultar Personal en Cobro Express para {linea.ani}: {e}")
+            raise ScraperTransientError(f"Error de red en PersonalAdapter: {e}")
         except Exception as e:
-            if isinstance(e, RuntimeError):
+            if isinstance(e, (RuntimeError, ScraperTransientError)):
                 raise
             logger.error(f"Excepción no controlada en PersonalAdapter para {linea.ani}: {e}", exc_info=True)
             raise RuntimeError(f"Fallo inesperado en PersonalAdapter: {e}")
