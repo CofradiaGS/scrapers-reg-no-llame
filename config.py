@@ -137,6 +137,11 @@ SYNC_PUSH_HOUR = int(os.getenv("SYNC_PUSH_HOUR", "20"))
 SYNC_CHUNK_SIZE = int(os.getenv("SYNC_CHUNK_SIZE", "5000"))
 SYNC_SWEEP_WAIT_SEC = float(os.getenv("SYNC_SWEEP_WAIT_SEC", "10.0"))
 SYNC_RETENTION_DAYS = int(os.getenv("SYNC_RETENTION_DAYS", "7"))
+# Semáforo Distribuido para Push Nocturno (Round-Robin cooperativo entre PCs en red)
+SYNC_PUSH_SEMAPHORE_ENABLED = os.getenv("SYNC_PUSH_SEMAPHORE_ENABLED", "True").strip().lower() in ("true", "1", "yes")
+SYNC_PUSH_LOCK_NAME = os.getenv("SYNC_PUSH_LOCK_NAME", "vps_push_nocturno_semaphore")
+SYNC_PUSH_LOCK_TIMEOUT = int(os.getenv("SYNC_PUSH_LOCK_TIMEOUT", "600"))
+SYNC_PUSH_ROUNDROBIN_PAUSE_SEC = float(os.getenv("SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", "2.0"))
 
 
 

@@ -33,7 +33,8 @@ class SincronizarPushNocturnoUseCase:
         tipo_cola: str = "cola_automatizacion",
         chunk_size: int = 5000,
         sweep_wait_sec: float = 10.0,
-        dias_retencion: int = 7
+        dias_retencion: int = 7,
+        roundrobin_pause_sec: Optional[float] = None
     ) -> Dict[str, Any]:
         """
         Ejecuta el push masivo al VPS.
@@ -45,9 +46,17 @@ class SincronizarPushNocturnoUseCase:
         :return: Resumen de sincronización.
         """
         t0 = time.time()
+        try:
+            import config
+            default_pause = getattr(config, "SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", 2.0)
+        except Exception:
+            default_pause = 2.0
+
+        roundrobin_pause = default_pause if roundrobin_pause_sec is None else roundrobin_pause_sec
+
         logger.info(
             f"🚀 [PUSH NOCTURNO] Iniciando subida masiva a VPS ({tipo_cola}). "
-            f"Chunk size: {chunk_size:,} | Retención local: {dias_retencion} días."
+            f"Chunk size: {chunk_size:,} | Retención local: {dias_retencion} días | Pausa Round-Robin: {roundrobin_pause}s."
         )
 
         total_subidos = 0
@@ -76,6 +85,13 @@ class SincronizarPushNocturnoUseCase:
                     f"✅ [PUSH LOTE {lote_num - 1} OK] {cantidad:,} registros comprometidos en VPS "
                     f"y marcados como 'sincronizado' en SQLite local."
                 )
+
+                # Pausa cooperativa Round-Robin: ceder turno a otras PCs en la red
+                if roundrobin_pause > 0:
+                    logger.info(
+                        f"⏸️ [ROUND-ROBIN] Pausa cooperativa de {roundrobin_pause}s para ceder turno a otras PCs en red..."
+                    )
+                    time.sleep(roundrobin_pause)
 
             except Exception as e:
                 logger.error(f"❌ [PUSH LOTE {lote_num} ERROR] Falló subida al VPS: {e}", exc_info=True)

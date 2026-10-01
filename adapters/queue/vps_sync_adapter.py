@@ -342,6 +342,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
         """
         Sube un chunk (máximo 5.000 filas) a MySQL VPS en una sola transacción atómica
         utilizando cursor.executemany().
+        Protegido por semáforo distribuido MySQL (GET_LOCK) para evitar saturación concurrente
+        entre múltiples PCs en la red.
         """
         if not lote:
             return 0
@@ -349,10 +351,37 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
         tipo_cola_clean = (tipo_cola or "cola_automatizacion").lower().strip()
         conn = None
         cursor = None
+        lock_adquirido = False
+        use_semaphore = getattr(config, "SYNC_PUSH_SEMAPHORE_ENABLED", True)
+        lock_name = getattr(config, "SYNC_PUSH_LOCK_NAME", "vps_push_nocturno_semaphore")
+        lock_timeout = getattr(config, "SYNC_PUSH_LOCK_TIMEOUT", 600)
+
         try:
             conn = self._get_connection(tipo_cola=tipo_cola_clean)
-            conn.start_transaction()
             cursor = conn.cursor(buffered=True)
+
+            if use_semaphore:
+                logger.info(
+                    f"⏳ [SEMAFORO VPS] Solicitando turno exclusivo '{lock_name}' "
+                    f"(esperando hasta {lock_timeout}s en cola si otra PC está subiendo)..."
+                )
+                t_lock_start = time.time()
+                cursor.execute("SELECT GET_LOCK(%s, %s)", (lock_name, lock_timeout))
+                lock_row = cursor.fetchone()
+                lock_res = lock_row[0] if lock_row else None
+                if lock_res != 1:
+                    raise TimeoutError(
+                        f"No se pudo adquirir el semáforo '{lock_name}' tras {lock_timeout}s de espera en cola. "
+                        f"Resultado MySQL: {lock_res}"
+                    )
+                lock_adquirido = True
+                wait_time = round(time.time() - t_lock_start, 2)
+                logger.info(
+                    f"🟢 [SEMAFORO VPS] Turno adquirido para chunk de {len(lote):,} registros "
+                    f"(tiempo de espera en cola: {wait_time}s)."
+                )
+
+            conn.start_transaction()
 
             if tipo_cola_clean == "cola_automatizacion":
                 query_push = """
@@ -468,6 +497,13 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             logger.error(f"❌ Error en push masivo a VPS ({tipo_cola}): {e}")
             raise
         finally:
+            if lock_adquirido and cursor:
+                try:
+                    cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+                    cursor.fetchone()
+                    logger.info(f"⚪ [SEMAFORO VPS] Turno liberado exitosamente (turno disponible para otra PC).")
+                except Exception as e_rel:
+                    logger.warning(f"Aviso al liberar semáforo VPS: {e_rel}")
             if cursor:
                 try:
                     cursor.close()
