@@ -1,4 +1,4 @@
-# -*- coding: utf-8 -*-
+﻿# -*- coding: utf-8 -*-
 """
 Adaptador Secundario (Driven Adapter): Sincronizador Remoto VPS MySQL
 Arquitectura Hexagonal - Implementa ISyncRemoteRepoPort
@@ -14,6 +14,7 @@ import time
 import json
 import random
 import logging
+import re
 import threading
 from typing import List, Dict, Any, Optional
 import mysql.connector
@@ -224,6 +225,115 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 except Exception:
                     pass
 
+
+    # -------------------------------------------------------------------------
+    # Helpers: formateo canónico para cola_automatizacion (IRIS)
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _to_snake_iris(text: str) -> str:
+        """Normaliza el nombre de operación IRIS a snake_case."""
+        t = str(text or "").strip().lower().replace("ñ", "n")
+        t = re.sub(r"[^a-z0-9\s_]", "", t)
+        t = re.sub(r"\s+", "_", t)
+        return t.strip("_")
+
+    @staticmethod
+    def _agrupar_operaciones_iris(registros: list) -> dict:
+        """
+        Agrupa los registros históricos de IRIS por tipo de operación.
+        Replica exactamente la lógica de ColaAutomatizacionAdapter._agrupar_operaciones_iris().
+
+        Entrada : [{"operacion": "Altas", ...}, {"operacion": "Port Out", ...}]
+        Salida  : {"altas": {"altas": {...}}, "port_out": {"port_out": {...}}}
+                  o, si hay > 1 del mismo tipo:
+                  {"altas": {"altas_1": {...}, "altas_2": {...}}}
+        """
+        from collections import defaultdict
+        grupos: dict = defaultdict(list)
+        for reg in registros:
+            key = VPSSyncAdapter._to_snake_iris(reg.get("operacion", "desconocido"))
+            grupos[key].append(reg)
+
+        resultado = {}
+        for clave, ops in grupos.items():
+            if len(ops) == 1:
+                resultado[clave] = {clave: ops[0]}
+            else:
+                resultado[clave] = {f"{clave}_{i + 1}": op for i, op in enumerate(ops)}
+        return resultado
+
+    def _formatear_iris_cola_auto(self, datos_totales: dict) -> dict:
+        """
+        Transforma el JSON acumulado de staging al formato canónico de
+        cola_automatizacion.resultado para scrapers IRIS.
+
+        Replica la lógica de ColaAutomatizacionAdapter._formatear_resultado()
+        para que el Push nocturno produzca exactamente el mismo resultado que
+        el path directo (sin staging).
+
+        Estructura de entrada (datos_totales del SQLite local):
+            {
+              "enacom": {...},
+              "iris": {
+                "status": "coincidencia",
+                "detalles": {"registros": [...], "total_operaciones": N},
+                ...
+              }
+            }
+
+        Estructura de salida (para columna `resultado` en VPS):
+            {
+              "enacom": {...},
+              "iris": {
+                "altas": {"altas_1": {...}},
+                "port_out": {"port_out": {...}},
+                "ultima_modificacion": "YYYY-MM-DD HH:MM:SS"
+              }
+            }
+        """
+        from datetime import datetime
+        ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        resultado_final: dict = {}
+
+        # Bloque ENACOM (pass-through)
+        bloque_enacom = datos_totales.get("enacom")
+        if isinstance(bloque_enacom, dict) and bloque_enacom:
+            resultado_final["enacom"] = bloque_enacom
+
+        # Bloque IRIS → agrupar operaciones
+        datos_iris = datos_totales.get("iris") or {}
+        if isinstance(datos_iris, dict):
+            detalles = datos_iris.get("detalles") or {}
+            raw_block = datos_iris.get("raw") or {}
+
+            registros_hist = []
+            if isinstance(detalles, dict) and "registros" in detalles:
+                registros_hist = detalles["registros"]
+            elif isinstance(raw_block, dict) and "registros" in raw_block:
+                registros_hist = raw_block["registros"]
+
+            es_coincidencia = str(datos_iris.get("status", "")).lower() in (
+                "coincidencia", "completado", "success"
+            )
+
+            if es_coincidencia and registros_hist:
+                iris_dict = self._agrupar_operaciones_iris(registros_hist)
+                iris_dict["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_dict
+            elif datos_iris:
+                # Sin registros: guardar datos base sin blobs pesados
+                iris_clean = {k: v for k, v in datos_iris.items() if k not in ("detalles", "raw")}
+                iris_clean["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_clean
+
+        # Cualquier otra fuente acumulada (claro, personal, movistar, datuar, etc.)
+        for k, v in datos_totales.items():
+            if k not in ("enacom", "iris", "iris_v2"):
+                resultado_final[k] = v
+
+        return resultado_final
     def subir_lote_vps(
         self,
         tipo_cola: str,
@@ -260,11 +370,21 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 for item in lote:
                     st_local = str(item.get("estado_local", "")).lower()
                     estado_vps = "fallido" if st_local == "fallido" else "completado"
-                    res_json = item.get("resultado_json")
-                    if isinstance(res_json, (dict, list)):
-                        res_str = json.dumps(res_json, ensure_ascii=False)
+                    res_raw = item.get("resultado_json")
+                    # SQLite almacena JSON como TEXT; parsear si viene como string
+                    if isinstance(res_raw, str):
+                        try:
+                            res_dict = json.loads(res_raw)
+                        except Exception:
+                            res_dict = {}
+                    elif isinstance(res_raw, dict):
+                        res_dict = res_raw
                     else:
-                        res_str = str(res_json or "{}")
+                        res_dict = {}
+                    # Para IRIS: aplicar agrupamiento canónico de operaciones
+                    if isinstance(res_dict, dict) and "iris" in res_dict:
+                        res_dict = self._formatear_iris_cola_auto(res_dict)
+                    res_str = json.dumps(res_dict, ensure_ascii=False) if res_dict else "{}"
 
                     err = item.get("error_msg")
                     scrapers = item.get("scrapers_intentados") or item.get("scraper_actual") or "telcos"
@@ -358,3 +478,5 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     conn.close()
                 except Exception:
                     pass
+
+
