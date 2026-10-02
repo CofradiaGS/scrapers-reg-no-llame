@@ -6,8 +6,14 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# Credenciales de Acceso IRIS (Movistar BPM)
 IRIS_USER = os.getenv("IRIS_USER", "enorozco")
 IRIS_PASS = os.getenv("IRIS_PASS", "TucaChorron2026.")
+# Credenciales específicas por cola
+IRIS_REG_NO_LLAME_USER = os.getenv("IRIS_REG_NO_LLAME_USER", "enorozco")
+IRIS_REG_NO_LLAME_PASS = os.getenv("IRIS_REG_NO_LLAME_PASS", "TucaChorron2026.")
+IRIS_COLA_AUTO_USER = os.getenv("IRIS_COLA_AUTO_USER", "emartina")
+IRIS_COLA_AUTO_PASS = os.getenv("IRIS_COLA_AUTO_PASS", "Inicio-2026")
 IRIS_LOGIN_URL = os.getenv("IRIS_LOGIN_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/security/login.xhtml")
 IRIS_LOGOUT_URL = os.getenv("IRIS_LOGOUT_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/security/logout.xhtml")
 IRIS_WORKSPACE_URL = os.getenv("IRIS_WORKSPACE_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/workspace/workspace.xhtml")

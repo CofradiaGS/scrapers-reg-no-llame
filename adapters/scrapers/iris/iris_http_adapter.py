@@ -17,6 +17,8 @@ class IrisHttpAdapter(IScraperEnginePort):
 
     def __init__(self, forzar_horario: bool = False, **kwargs):
         self._bot: Optional[IrisHttpBot] = None
+        self.user = kwargs.get("user")
+        self.password = kwargs.get("password")
         self._forzar_horario = forzar_horario
         self.worker_slot = kwargs.get("worker_slot")
         self._politica_horario = PoliticaHorarioComercial(
@@ -41,7 +43,7 @@ class IrisHttpAdapter(IScraperEnginePort):
         return "iris"
 
     def iniciar(self) -> None:
-        self._bot = IrisHttpBot()
+        self._bot = IrisHttpBot(user=self.user, password=self.password)
         self._bot.start()
 
     def autenticar(self) -> bool:

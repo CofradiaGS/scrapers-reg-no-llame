@@ -29,7 +29,9 @@ logger = logging.getLogger("IrisHttpBot")
 
 
 class IrisHttpBot:
-    def __init__(self, **kwargs):
+    def __init__(self, user: Optional[str] = None, password: Optional[str] = None, **kwargs):
+        self.user = user or config.IRIS_USER
+        self.password = password or config.IRIS_PASS
         """Inicializa la sesión HTTP con pooling de conexiones y reintentos."""
         self.session: Optional[requests.Session] = None
         self.url_ws = "http://iris.tmoviles.com.ar/workspace/faces/jsf/workspace/workspace.xhtml"
@@ -168,8 +170,8 @@ class IrisHttpBot:
 
             # 2. POST de autenticación
             payload = {
-                "loginForm:workspace_login_user_name": config.IRIS_USER,
-                "loginForm:workspace_login_password": config.IRIS_PASS,
+                "loginForm:workspace_login_user_name": self.user,
+                "loginForm:workspace_login_password": self.password,
                 "loginForm:fix_enter_4_ie": "",
                 "loginForm:submitbutton": "Login",
                 "loginForm": "loginForm"

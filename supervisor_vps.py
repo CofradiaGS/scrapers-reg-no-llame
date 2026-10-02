@@ -139,6 +139,15 @@ def main():
     if args.proxy_pool:
         scraper_kwargs["use_proxy_pool"] = True
 
+    # Asignar automáticamente el usuario de IRIS correspondiente según la cola elegida
+    if "iris" in scraper_name:
+        if args.queue == "registro_no_llame":
+            scraper_kwargs["user"] = getattr(config, "IRIS_REG_NO_LLAME_USER", "enorozco")
+            scraper_kwargs["password"] = getattr(config, "IRIS_REG_NO_LLAME_PASS", "TucaChorron2026.")
+        else:
+            scraper_kwargs["user"] = getattr(config, "IRIS_COLA_AUTO_USER", "emartina")
+            scraper_kwargs["password"] = getattr(config, "IRIS_COLA_AUTO_PASS", "Inicio-2026")
+
     supervisor = SupervisorIndustrial(
         scraper_name=scraper_name,
         workers=args.workers,
