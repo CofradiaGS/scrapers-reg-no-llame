@@ -164,10 +164,14 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             else:
                 # Caso queue_registro_no_llame
                 s_nombre = scraper_actual or "iris"
+                if "iris" in (s_nombre or "").lower():
+                    s_nombre = "iris"
                 query_find = f"""
                     SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
                     FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
-                    WHERE scraper_actual = %s AND estado = 'pendiente'
+                    WHERE scraper_actual = %s 
+                      AND estado = 'pendiente'
+                      AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')
                     ORDER BY id ASC
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED;
@@ -184,7 +188,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 query_update = f"""
                     UPDATE {config.VPS_DB_TABLE}
                     SET estado = 'procesando',
-                        fecha_modificacion = NOW()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id IN ({placeholders});
                 """
                 cursor.execute(query_update, ids)
@@ -445,9 +449,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         fuente = %s,
                         datos_json = %s,
                         dni = CASE WHEN (dni IS NULL OR dni = '') AND %s IS NOT NULL THEN %s ELSE dni END,
-                        descripcion = %s,
-                        latencia = %s,
-                        fecha_modificacion = NOW()
+                        descripcion_scraper = %s,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s;
                 """
                 params = []
@@ -468,8 +471,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_str = str(res_json or "{}")
 
                     dni_val = str(item.get("dni") or "").strip() or None
-                    desc = str(item.get("descripcion") or "")[:250]
-                    lat = float(item.get("latencia", 0.0) or 0.0)
+                    desc = str(item.get("descripcion") or "")[:195]
                     id_vps = item["id_vps"]
 
                     params.append((
@@ -479,7 +481,6 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_str,
                         dni_val, dni_val,
                         desc,
-                        lat,
                         id_vps
                     ))
 
