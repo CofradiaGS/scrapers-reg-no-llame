@@ -881,7 +881,7 @@ def main():
     p_start.add_argument("--all", action="store_true", help="Iniciar en todo el cluster")
     p_start.add_argument("--scraper", default="iris_http", help="Scraper (claro, movistar, personal, iris_http, datuar)")
     p_start.add_argument("--workers", type=int, default=8, help="Cantidad de workers concurrentes (default: 8)")
-    p_start.add_argument("--batch-size", type=int, default=12, help="Lote de reclamo (default: 12)")
+    p_start.add_argument("--batch-size", type=int, default=50, help="Lote de reclamo (default: 50)")
     p_start.add_argument("--prioridad", choices=["auto", "1", "2", "3"], default="auto")
     p_start.add_argument("--tor", action="store_true", help="Activar Tor")
     p_start.add_argument("--proxy-pool", action="store_true", help="Activar Proxy Pool rotativo")

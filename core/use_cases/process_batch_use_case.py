@@ -16,6 +16,7 @@ from core.ports.scraper_port import IScraperEnginePort
 from core.ports.operator_lookup_port import IOperatorLookupPort
 from core.domain.entities import ReglaPipeline, Linea, ScrapeResult
 from core.domain.enums import StatusScraping
+from core.domain.exceptions import FueraDeHorarioComercialException, ScraperTransientError
 
 logger = logging.getLogger("ProcesarLoteUseCase")
 
@@ -61,10 +62,11 @@ class ProcesarLoteUseCase:
 
     def ejecutar_lote(
         self,
-        batch_size: int = 12,
+        batch_size: int = 20,
         prioridad: Optional[int] = None,
         on_item_procesado: Optional[Callable[[Dict[str, Any]], None]] = None,
         should_stop: Optional[Callable[[], bool]] = None,
+        should_pause: Optional[Callable[[], bool]] = None,
         solo_sin_coincidencia: bool = False
     ) -> tuple[int, List[int]]:
         """
@@ -84,10 +86,24 @@ class ProcesarLoteUseCase:
 
         resultados = []
         unprocessed_ids = [r.id for r in lote]
+        is_ipc_streaming = getattr(self.cola, "is_ipc", False)
+
+        def registrar_resultado(item: Dict[str, Any]):
+            resultados.append(item)
+            if item["id"] in unprocessed_ids:
+                unprocessed_ids.remove(item["id"])
+            if on_item_procesado:
+                on_item_procesado(item)
+            if is_ipc_streaming:
+                self.cola.persistir_resultados([item])
 
         for reg in lote:
             if should_stop and should_stop():
                 logger.info("Parada solicitada en mitad del lote. Interrumpiendo ciclo...")
+                break
+
+            if should_pause and should_pause():
+                logger.info("Pausa operativa activa en mitad del lote (ej: horario comercial/VPN). Interrumpiendo ciclo y liberando registros...")
                 break
 
             t0 = time.time()
@@ -185,12 +201,7 @@ class ProcesarLoteUseCase:
                         "latencia": lat,
                         "status": "salteado"
                     }
-                    resultados.append(item_res)
-                    if reg.id in unprocessed_ids:
-                        unprocessed_ids.remove(reg.id)
-
-                    if on_item_procesado:
-                        on_item_procesado(item_res)
+                    registrar_resultado(item_res)
                     continue
 
                 resultado = self.scraper.consultar_linea(linea_consulta)
@@ -234,6 +245,8 @@ class ProcesarLoteUseCase:
                     "id": reg.id,
                     "ani": reg.linea.ani,
                     "dni": dni_res,
+                    "operador": resultado.operador or resultado.fuente_scraper,
+                    "fuente_scraper": resultado.fuente_scraper,
                     "scraper_actual": sig_scraper,
                     "estado": sig_estado,
                     "descripcion": resultado.descripcion or f"Scrapeado por {self.scraper.nombre}",
@@ -242,12 +255,25 @@ class ProcesarLoteUseCase:
                     "latencia": lat,
                     "status": resultado.status.value
                 }
-                resultados.append(item_res)
-                if reg.id in unprocessed_ids:
-                    unprocessed_ids.remove(reg.id)
+                registrar_resultado(item_res)
 
-                if on_item_procesado:
-                    on_item_procesado(item_res)
+            except FueraDeHorarioComercialException as e_hc:
+                logger.warning(
+                    f"⏸️ Horario comercial cerrado durante el procesamiento (Línea {reg.linea.ani}). "
+                    f"Interrumpiendo lote de inmediato. {len(unprocessed_ids)} registros restantes "
+                    f"serán liberados intactos a estado 'pendiente'."
+                )
+                # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
+                break
+
+            except ScraperTransientError as e_trans:
+                logger.warning(
+                    f"⚠️ Fallo transitorio de red / bloqueo IP en scraper (Línea {reg.linea.ani}): {e_trans}. "
+                    f"Interrumpiendo lote para permitir rotación/recuperación. {len(unprocessed_ids)} registros "
+                    f"restantes serán liberados intactos a estado 'pendiente'."
+                )
+                # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
+                break
 
             except Exception as e:
                 lat = round(time.time() - t0, 2)
@@ -256,6 +282,14 @@ class ProcesarLoteUseCase:
                 err_code = getattr(e, "code", None) or getattr(e, "status_code", None) or getattr(e, "errno", None)
                 if not err_code and hasattr(e, "response") and getattr(e.response, "status_code", None):
                     err_code = e.response.status_code
+
+                # Protección adicional: si es una excepción de red no tipada, revertir a pendiente
+                if any(net_kw in err_type for net_kw in ("Connection", "Timeout", "Proxy", "MaxRetry", "SSLError")):
+                    logger.warning(
+                        f"⚠️ Error de red transitorio [{err_type}] en línea {reg.linea.ani}: {err_msg}. "
+                        f"Liberando {len(unprocessed_ids)} registros restantes a estado 'pendiente' para reintento automático."
+                    )
+                    break
 
                 codigo_fmt = f"[{err_type}:{err_code}]" if err_code else f"[{err_type}]"
                 descripcion_error = f"{codigo_fmt} {err_msg}".strip()
@@ -275,15 +309,10 @@ class ProcesarLoteUseCase:
                     "latencia": lat,
                     "status": "error"
                 }
-                resultados.append(item_err)
-                if reg.id in unprocessed_ids:
-                    unprocessed_ids.remove(reg.id)
+                registrar_resultado(item_err)
 
-                if on_item_procesado:
-                    on_item_procesado(item_err)
-
-        # 4. Persistir lote completado a través del puerto de cola
-        if resultados:
+        # 4. Persistir lote completado a través del puerto de cola (solo si no se transmitió por streaming IPC)
+        if resultados and not is_ipc_streaming:
             self.cola.persistir_resultados(resultados)
 
         # 5. Si quedaron registros sin procesar por interrupción, devolverlos a pendiente

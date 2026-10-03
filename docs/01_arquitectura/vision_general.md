@@ -77,7 +77,7 @@ Diseñado para operar semanas enteras sin intervención humana:
 La arquitectura física y lógica del proyecto se distribuye de acuerdo con el siguiente esquema:
 
 ```
-c:/Users/Usuario/Documents/GitHub/scraper iris reg no llame/
+c:/Users/automatizacion.crm/Documents/GitHub/scraper iris reg no llame/
 ├── core/                                # Capa de Dominio y Casos de Uso (Pura)
 │   ├── domain/                          # Modelos, Reglas de Negocio, Enums, Excepciones
 │   │   ├── entities.py                  # Linea, Titular, Servicio, ScrapeResult, RegistroCola, ReglaPipeline

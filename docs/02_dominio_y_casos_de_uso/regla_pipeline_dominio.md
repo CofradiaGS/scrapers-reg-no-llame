@@ -172,6 +172,27 @@ class ReglaPipeline:
                         return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
 
         # Reglas específicas por motor
+        if nombre == "telcos":
+            # Exclusividad Telco: Si Claro, Personal o Movistar dieron coincidencia en los últimos 7 días
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if isinstance(t_data, dict) and t_data.get("status") == StatusScraping.COINCIDENCIA.value:
+                    t_ts = t_data.get("ultima_modificacion")
+                    if cls.es_reciente(t_ts, max_dias=dias_validez):
+                        return False, f"Exclusividad telco: {telco} dio coincidencia el {t_ts}"
+
+            # Si las 3 telcos ya fueron consultadas recientemente sin coincidencia
+            todas_consultadas = True
+            for telco in cls.TELCOS:
+                t_data = datos.get(telco, {})
+                if not (isinstance(t_data, dict) and t_data.get("status") and cls.es_reciente(t_data.get("ultima_modificacion"), max_dias=dias_validez)):
+                    todas_consultadas = False
+                    break
+            if todas_consultadas:
+                return False, f"Las 3 telcos ya fueron ejecutadas recientemente sin coincidencia dentro de la ventana de {dias_validez} días"
+
+            return True, "Apto para Telcos en cascada"
+
         if nombre == "iris":
             return True, "Apto para IRIS"
 

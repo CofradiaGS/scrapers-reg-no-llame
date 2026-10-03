@@ -211,9 +211,14 @@ def test_separacion_responsabilidades_error_vs_completado():
 
     adapter.persistir_resultados([item_error])
 
-    assert mock_cursor.execute.called
-    args = mock_cursor.execute.call_args_list[0][0]
-    query, params = args[0], args[1]
+    if mock_cursor.executemany.called:
+        args = mock_cursor.executemany.call_args_list[0][0]
+        query, params_list = args[0], args[1]
+        params = params_list[0]
+    else:
+        assert mock_cursor.execute.called
+        args = mock_cursor.execute.call_args_list[0][0]
+        query, params = args[0], args[1]
 
     estado_final, res_json, error_msg = params[0], params[1], params[2]
     assert estado_final == "fallido"

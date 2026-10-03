@@ -7,6 +7,7 @@ Extrae el 100% de la información de deuda, comprobantes, códigos de barra y me
 import os
 import re
 import json
+import time
 import uuid
 import base64
 import random
@@ -20,6 +21,7 @@ import config
 from core.ports.scraper_port import IScraperEnginePort
 from core.domain.entities import Linea, ScrapeResult, Titular, Servicio
 from core.domain.enums import StatusScraping
+from core.domain.exceptions import ScraperTransientError, FueraDeHorarioComercialException
 from adapters.scrapers.base_scraper import BaseScraperAdapter
 from adapters.network.tor_controller import TorController
 from adapters.network.proxy_pool import ProxyPoolManager
@@ -79,6 +81,17 @@ class ClaroAdapter(BaseScraperAdapter):
         self.proxy_pool: Optional[ProxyPoolManager] = None
         self._session: Optional[requests.Session] = None
         self._proxy_session: Optional[requests.Session] = None
+        self._forzar_horario = kwargs.get("forzar_horario", False)
+        self._politica_horario = config.obtener_politica_horario_para_scraper(self.nombre)
+
+    def _validar_horario(self) -> None:
+        """Verifica si la consulta está dentro de la ventana comercial permitida."""
+        if not self._forzar_horario and not self._politica_horario.esta_en_horario():
+            estado = self._politica_horario.obtener_estado()
+            raise FueraDeHorarioComercialException(
+                f"Consulta rechazada: Claro (Cobro Express) opera únicamente en horario comercial ({estado['descripcion']}). "
+                "Para forzar la ejecución en pruebas use el flag 'forzar_horario=True' o '--forzar-horario'."
+            )
 
     @property
     def nombre(self) -> str:
@@ -141,11 +154,17 @@ class ClaroAdapter(BaseScraperAdapter):
         if self.use_tor:
             self.proxy = self._generar_proxy_aislado()
             if self._session is not None:
+                try:
+                    self._session.close()
+                except Exception:
+                    pass
+                self._session = requests.Session()
                 self._session.proxies = {
                     "http": self.proxy,
                     "https": self.proxy
                 }
             logger.info(f"🔄 Circuito Tor renovado instantáneamente (Stream Isolation: {self.proxy.split('@')[0]}...)")
+
 
     def iniciar(self) -> None:
         """Inicializa la sesión HTTP y configura proxy Tor o ProxyPool según corresponda."""
@@ -199,6 +218,8 @@ class ClaroAdapter(BaseScraperAdapter):
         Consulta la línea en la API de Cobro Express bajo la modalidad Claro Telefonía.
         Captura exhaustivamente TODOS los campos de la respuesta.
         """
+        self._validar_horario()
+
         if not linea.es_valida:
             return ScrapeResult(
                 ani=linea.ani,
@@ -270,8 +291,8 @@ class ClaroAdapter(BaseScraperAdapter):
                             proxies=proxies_dict,
                             timeout=config.PROXY_POOL_TIMEOUT
                         )
-                        if resp.status_code == 429:
-                            logger.warning(f"⚠️ Cobro Express Rate Limit (HTTP 429) en proxy {current_proxy}. Rotando...")
+                        if resp.status_code in (403, 418, 419, 429):
+                            logger.warning(f"⚠️ Cobro Express Rate Limit / Bloqueo (HTTP {resp.status_code}) en proxy {current_proxy}. Rotando...")
                             if self.proxy_pool.size() <= 8:
                                 logger.info(f"Pool reducido ({self.proxy_pool.size()} proxies). Backoff breve de 1.5s antes de rotar.")
                                 time.sleep(1.5)
@@ -288,27 +309,85 @@ class ClaroAdapter(BaseScraperAdapter):
                         logger.debug(f"Falla proxy {current_proxy} (intento {attempt+1}/{max_retries}): {e}")
 
                 if resp is None:
-                    raise RuntimeError(f"ProxyPool agotó los {max_retries} reintentos para {linea.ani}: {last_err}")
+                    raise ScraperTransientError(f"ProxyPool agotó los {max_retries} reintentos para {linea.ani}: {last_err}")
             else:
-                try:
-                    resp = self._session.post(
-                        url_api,
-                        headers=headers,
-                        data=json.dumps(payload_data),
-                        timeout=self.timeout
-                    )
-                except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
-                    if self.use_tor:
-                        logger.warning(f"Timeout/Error de red en circuito Tor ({net_err}). Rotando circuito instantáneamente y reintentando...")
-                        self._rotar_circuito_instantaneo()
+                # Política de Resiliencia: 3 reintentos en total (hasta 4 intentos)
+                # Ante HTTP 418/419 (WAF Bot Challenge), 403/429 (Rate Limit), 5xx o Timeouts/Red
+                TOTAL_REINTENTOS = 3
+                MAX_INTENTOS = 1 + TOTAL_REINTENTOS
+                req_timeout = (25.0, 20.0) if self.use_tor else self.timeout
+                resp = None
+                ultimo_error = None
+
+                for intento in range(1, MAX_INTENTOS + 1):
+                    try:
                         resp = self._session.post(
                             url_api,
                             headers=headers,
                             data=json.dumps(payload_data),
-                            timeout=self.timeout
+                            timeout=req_timeout
                         )
-                    else:
-                        raise
+                        # Respuestas de negocio válidas: 200 (OK) o 400 (Cliente inexistente / Sin coincidencia)
+                        if resp.status_code in (200, 400):
+                            break
+
+                        # Bloqueos WAF / Rate Limit / Códigos transitorios: 403, 418, 419, 429, 500, 502, 503, 504
+                        codigo_http = resp.status_code
+                        ultimo_error = f"HTTP {codigo_http}: {resp.text[:120]}"
+
+                        if intento < MAX_INTENTOS:
+                            backoff_sec = 2.0 * intento
+                            if self.use_tor:
+                                logger.warning(
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Cobro Express bloqueo WAF ({ultimo_error}) "
+                                    f"en línea {linea.ani}. Renovando circuito Tor (SIGNAL NEWNYM) y esperando {backoff_sec:.1f}s..."
+                                )
+                                self._rotar_circuito_instantaneo()
+                            else:
+                                logger.warning(
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Cobro Express HTTP {codigo_http} en {linea.ani}. "
+                                    f"Esperando {backoff_sec:.1f}s..."
+                                )
+                            time.sleep(backoff_sec)
+                            continue
+                        else:
+                            raise ScraperTransientError(
+                                f"Cobro Express Bloqueo WAF/Rate Limit persistente tras {TOTAL_REINTENTOS} reintentos Tor ({ultimo_error})"
+                            )
+
+                    except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
+                        ultimo_error = str(net_err)
+                        if intento < MAX_INTENTOS:
+                            backoff_sec = 1.5 * intento
+                            if self.use_tor:
+                                if intento > 1:
+                                    logger.warning(
+                                        f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red/Tor en Claro ({net_err}). "
+                                        f"Rotando circuito Tor y esperando {backoff_sec:.1f}s..."
+                                    )
+                                    self._rotar_circuito_instantaneo()
+                                else:
+                                    logger.warning(
+                                        f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Espera de establecimiento de circuito Tor en Claro ({net_err}). "
+                                        f"Reintentando en el mismo circuito tras {backoff_sec:.1f}s..."
+                                    )
+                            else:
+                                logger.warning(
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red directo en Claro ({net_err}). "
+                                    f"Esperando {backoff_sec:.1f}s..."
+                                )
+                            time.sleep(backoff_sec)
+                            continue
+                        else:
+                            raise ScraperTransientError(
+                                f"Error de red/timeout en ClaroAdapter tras {TOTAL_REINTENTOS} reintentos Tor: {ultimo_error}"
+                            )
+
+                if resp is None:
+                    raise ScraperTransientError(
+                        f"No se obtuvo respuesta en ClaroAdapter tras {TOTAL_REINTENTOS} reintentos: {ultimo_error}"
+                    )
+
 
             # --- MANEJO DE RESPUESTAS ---
 
@@ -336,26 +415,9 @@ class ClaroAdapter(BaseScraperAdapter):
                     raw={"status_code": 400, "response": resp.text}
                 )
 
-            # Caso 2: Error 429 (Too Many Requests -> Rotación reactiva instantánea)
-            if resp.status_code == 429:
-                logger.warning(f"⚠️ Cobro Express Rate Limit (HTTP 429) detectado para línea {linea.ani}.")
-                if self.use_tor:
-                    logger.info("Renovando circuito Tor reactivamente y reintentando consulta...")
-                    self._rotar_circuito_instantaneo()
-                    resp = self._session.post(
-                        url_api,
-                        headers=headers,
-                        data=json.dumps(payload_data),
-                        timeout=self.timeout
-                    )
-                if resp.status_code == 429:
-                    raise RuntimeError(
-                        f"Cobro Express Rate Limit persistente (HTTP 429 Too Many Requests): {resp.text[:150]}"
-                    )
-
-            # Caso 3: Otros errores HTTP (5xx, etc.)
+            # Caso 2: Cualquier otro código no esperado
             if resp.status_code != 200:
-                raise RuntimeError(
+                raise ScraperTransientError(
                     f"Cobro Express respondió HTTP {resp.status_code}: {resp.text[:150]}"
                 )
 
@@ -464,11 +526,13 @@ class ClaroAdapter(BaseScraperAdapter):
                 descripcion=desc
             )
 
+        except ScraperTransientError:
+            raise
         except requests.exceptions.RequestException as e:
-            logger.error(f"Error de red al consultar Claro en Cobro Express para {linea.ani}: {e}")
-            raise RuntimeError(f"Error de red en ClaroAdapter: {e}")
+            logger.warning(f"Error de red al consultar Claro en Cobro Express para {linea.ani}: {e}")
+            raise ScraperTransientError(f"Error de red en ClaroAdapter: {e}")
         except Exception as e:
-            if isinstance(e, RuntimeError):
+            if isinstance(e, (RuntimeError, ScraperTransientError)):
                 raise
             logger.error(f"Excepción no controlada en ClaroAdapter para {linea.ani}: {e}", exc_info=True)
             raise RuntimeError(f"Fallo inesperado en ClaroAdapter: {e}")

@@ -280,7 +280,7 @@ Inicia el orquestador industrial [`SupervisorIndustrial`](file:///c:/Users/Usuar
 ### 2.7. Normalizador Masivo de DNI (`scripts/normalize_vps_dni.py`)
 Script autónomo para migrar y normalizar masivamente los números de DNI desde `datos_json` (nodos de IRIS, Datuar, CuitOnline) a la columna relacional `dni` en la base de datos MySQL del VPS.
 
-* **Firma / Implementación:** [`scripts/normalize_vps_dni.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/normalize_vps_dni.py).
+* **Firma / Implementación:** [`scripts/normalize_vps_dni.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/normalize_vps_dni.py).
 * **Parámetros y Flags:**
   | Argumento / Flag | Tipo | Default | Descripción |
   | :--- | :---: | :---: | :--- |

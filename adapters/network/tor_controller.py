@@ -19,6 +19,15 @@ import config
 
 logger = logging.getLogger("TorController")
 
+# Silenciar logging verboso y excepciones de sockets en cierre de Stem en Windows (WinError 10038)
+try:
+    import stem.util.log
+    _stem_log = stem.util.log.get_logger()
+    _stem_log.setLevel(logging.CRITICAL)
+    _stem_log.propagate = False
+except Exception:
+    pass
+
 
 class TorController:
     """
@@ -83,6 +92,10 @@ class TorController:
                 return True
         except Exception:
             return False
+
+    def is_alive(self) -> bool:
+        """Alias retrocompatible para is_running()."""
+        return self.is_running()
 
     def get_bootstrap_status(self) -> tuple[bool, str]:
         """Comprueba conectividad con el ControlPort y devuelve (is_ready_100, phase_string)."""
@@ -162,20 +175,23 @@ class TorController:
                     if config.TOR_GEOIPV6_PATH and os.path.exists(config.TOR_GEOIPV6_PATH):
                         f.write(f"GeoIPv6File {config.TOR_GEOIPV6_PATH}\n")
                     f.write(f"SocksPort {self.socks_port} IsolateSOCKSAuth\n")
-                    f.write(f"ControlPort {self.control_port}\n")
+                    f.write("ControlPort " + str(self.control_port) + "\n")
                     f.write("CookieAuthentication 0\n")
                     f.write("DormantCanceledByStartup 1\n")
-                    f.write("ExitNodes {ar},{cl},{uy},{br}\n")
-                    f.write("StrictNodes 0\n")
-                    f.write("CircuitBuildTimeout 10\n")
+                    # No restringir ExitNodes a {ar},{cl},{uy},{br}: la pasarela no aplica geo-bloqueo
+                    # y el pool sudamericano (<15 nodos) colapsa por congestión bajo 20 workers paralelos.
+                    f.write("CircuitBuildTimeout 30\n")
                     f.write("KeepalivePeriod 60\n")
                     f.write("MaxCircuitDirtiness 300\n")
+                    f.write("NumEntryGuards 8\n")
 
                 cmd = [self.tor_path, "-f", runtime_torrc]
+                creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
                 self._process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags
                 )
             except Exception as e:
                 logger.error(f"Error al iniciar subproceso Tor: {e}")
@@ -205,6 +221,9 @@ class TorController:
                     pass
                 logger.info("Conexión al ControlPort establecida. Esperando bootstrap 100%...")
                 while time.time() - t0 < timeout_sec:
+                    if not ctrl.is_alive():
+                        logger.warning("La conexión con el puerto de control de Tor se interrumpió.")
+                        break
                     try:
                         info = ctrl.get_info("status/bootstrap-phase", default="")
                         progress_str = ""
@@ -216,15 +235,34 @@ class TorController:
                         logger.info(f"Bootstrap: {progress}% — {info[:80]}")
                         if progress >= 100 and self.is_port_open(self.socks_port):
                             logger.info(f"Tor listo y bootstrapped al 100% en {self.get_proxy_url()}.")
+                            self._warmup_circuits()
                             return True
                     except Exception as poll_err:
                         logger.debug(f"Poll error (ignorado): {poll_err}")
+                        if not ctrl.is_alive():
+                            break
                     time.sleep(2.0)
         except Exception as conn_err:
             logger.error(f"No se pudo conectar al ControlPort persistente: {conn_err}")
 
         logger.warning(f"Tor no completó bootstrap en {timeout_sec}s.")
         return False
+
+    def _warmup_circuits(self) -> None:
+        """Precalienta el pool de circuitos de Tor antes de admitir tráfico de workers concurrentes."""
+        logger.info("🔥 [TOR WARMUP] Precalentando circuitos iniciales de Tor antes de liberar workers...")
+        t0 = time.time()
+        try:
+            proxy = self.get_proxy_url()
+            resp = requests.get(
+                "https://pagosce.cobroexpress.com.ar",
+                proxies={"http": proxy, "https": proxy},
+                timeout=(20.0, 10.0),
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            logger.info(f"✅ [TOR WARMUP] Circuito inicial verificado con éxito (HTTP {resp.status_code}) en {time.time()-t0:.2f}s.")
+        except Exception as e:
+            logger.info(f"ℹ️ [TOR WARMUP] Sondeo inicial concluido ({type(e).__name__}) en {time.time()-t0:.2f}s. Red Tor lista.")
 
     def rotate_ip(self) -> bool:
         """

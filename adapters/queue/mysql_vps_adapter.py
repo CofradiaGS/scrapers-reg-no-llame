@@ -74,7 +74,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
     def reservar_lote(
         self, 
-        batch_size: int = 15, 
+        batch_size: int = 20, 
         prioridad: Optional[int] = None, 
         scraper_nombre: str = "iris",
         max_intentos: int = 3,
@@ -145,7 +145,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         break
                     else:
                         if prioridad is None and nivel in self._prio_exhausted_until:
-                            self._prio_exhausted_until[nivel] = time.time() + 45.0
+                            self._prio_exhausted_until[nivel] = time.time() + 3.0
 
                 if not filas:
                     conn.commit()
@@ -371,6 +371,7 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             if lock_adquirido and cursor:
                 try:
                     cursor.execute("SELECT RELEASE_LOCK('watchdog_sweeper_mutex')")
+                    cursor.fetchall()
                 except Exception:
                     pass
             if cursor:
@@ -416,3 +417,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                 except Exception:
                     pass
         return stats
+
+    def enviar_heartbeat(self) -> bool:
+        """Compatibilidad polimórfica con supervisor (no-op para tabla queue_registro_no_llame)."""
+        return True
+
+    def guardar_session_stats(self, delta_p: int, delta_e: int, delta_f: int) -> bool:
+        """Compatibilidad polimórfica con supervisor (no-op para tabla queue_registro_no_llame)."""
+        return True

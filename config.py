@@ -26,6 +26,18 @@ VPS_DBNAME = os.getenv("VPS_DBNAME", "bases")
 VPS_DB_TABLE = os.getenv("VPS_DB_TABLE", "queue_registro_no_llame")
 VPS_DB_USE_PURE = os.getenv("VPS_DB_USE_PURE", "True").strip().lower() in ("true", "1", "yes")
 
+# Credenciales específicas para cola_automatizacion (Power CRM)
+COLA_AUTO_DBUSER = os.getenv("COLA_AUTO_DBUSER", os.getenv("DBUSER", "automatizaciones"))
+COLA_AUTO_DBPASS = os.getenv("COLA_AUTO_DBPASS", os.getenv("DBPASS", "Mg1ZOGk3mE!2_q1Q"))
+
+# Optimización de I/O y Reducción Masiva de Binlog (Staging Buffer en RAM)
+BUFFER_FLUSH_SIZE = int(os.getenv("BUFFER_FLUSH_SIZE", "500"))
+BUFFER_MAX_DELAY = float(os.getenv("BUFFER_MAX_DELAY", "300.0"))
+HEARTBEAT_INTERVAL_SEC = float(os.getenv("HEARTBEAT_INTERVAL_SEC", "180.0"))
+STATS_FLUSH_INTERVAL_SEC = float(os.getenv("STATS_FLUSH_INTERVAL_SEC", "600.0"))
+WATCHDOG_SWEEP_INTERVAL_SEC = float(os.getenv("WATCHDOG_SWEEP_INTERVAL_SEC", "600.0"))
+EMPTY_QUEUE_PAUSE_MAX_SEC = float(os.getenv("EMPTY_QUEUE_PAUSE_MAX_SEC", "900.0"))
+
 # Configuración Modular de Cola (registro_no_llame / cola_automatizacion)
 import socket
 QUEUE_TYPE = os.getenv("QUEUE_TYPE", "registro_no_llame").strip().lower()
@@ -39,6 +51,37 @@ HORARIO_COMERCIAL_FIN_LV = os.getenv("HORARIO_COMERCIAL_FIN_LV", "21:00")
 HORARIO_COMERCIAL_INICIO_SAB = os.getenv("HORARIO_COMERCIAL_INICIO_SAB", "08:00")
 HORARIO_COMERCIAL_FIN_SAB = os.getenv("HORARIO_COMERCIAL_FIN_SAB", "13:00")
 HORARIO_COMERCIAL_TIMEZONE = os.getenv("HORARIO_COMERCIAL_TIMEZONE", "America/Argentina/Buenos_Aires")
+
+# Política de Horario Comercial Cobro Express (Claro, Personal, Movistar, Telcos)
+HORARIO_COBRO_EXPRESS_ACTIVO = os.getenv("HORARIO_COBRO_EXPRESS_ACTIVO", "True").strip().lower() in ("true", "1", "yes")
+HORARIO_COBRO_EXPRESS_INICIO_LV = os.getenv("HORARIO_COBRO_EXPRESS_INICIO_LV", "08:00")
+HORARIO_COBRO_EXPRESS_FIN_LV = os.getenv("HORARIO_COBRO_EXPRESS_FIN_LV", "22:00")
+HORARIO_COBRO_EXPRESS_INICIO_SAB = os.getenv("HORARIO_COBRO_EXPRESS_INICIO_SAB", "08:00")
+HORARIO_COBRO_EXPRESS_FIN_SAB = os.getenv("HORARIO_COBRO_EXPRESS_FIN_SAB", "13:00")
+
+
+def obtener_politica_horario_para_scraper(scraper_name: str):
+    """Devuelve la instancia de PoliticaHorarioComercial correspondiente según el motor."""
+    from core.domain.schedule import PoliticaHorarioComercial
+    name = (scraper_name or "").lower().strip()
+    es_cobro_express = any(k in name for k in ("telco", "claro", "personal", "movistar"))
+    if es_cobro_express:
+        return PoliticaHorarioComercial(
+            activo=HORARIO_COBRO_EXPRESS_ACTIVO,
+            hora_inicio_lv=HORARIO_COBRO_EXPRESS_INICIO_LV,
+            hora_fin_lv=HORARIO_COBRO_EXPRESS_FIN_LV,
+            hora_inicio_sab=HORARIO_COBRO_EXPRESS_INICIO_SAB,
+            hora_fin_sab=HORARIO_COBRO_EXPRESS_FIN_SAB,
+            timezone_name=HORARIO_COMERCIAL_TIMEZONE
+        )
+    return PoliticaHorarioComercial(
+        activo=HORARIO_COMERCIAL_ACTIVO,
+        hora_inicio_lv=HORARIO_COMERCIAL_INICIO_LV,
+        hora_fin_lv=HORARIO_COMERCIAL_FIN_LV,
+        hora_inicio_sab=HORARIO_COMERCIAL_INICIO_SAB,
+        hora_fin_sab=HORARIO_COMERCIAL_FIN_SAB,
+        timezone_name=HORARIO_COMERCIAL_TIMEZONE
+    )
 
 # Configuración Scraper Cobro Express (Claro Telefonía)
 COBRO_EXPRESS_URL = os.getenv("COBRO_EXPRESS_URL", "https://pagosce.cobroexpress.com.ar")
@@ -114,5 +157,42 @@ PROXY_POOL_MAX_RETRIES = int(os.getenv("PROXY_POOL_MAX_RETRIES", "3"))
 PROXY_POOL_VALIDATION_WORKERS = int(os.getenv("PROXY_POOL_VALIDATION_WORKERS", "35"))
 PROXY_POOL_CACHE_FILE = os.getenv("PROXY_POOL_CACHE_FILE", os.path.join(os.getcwd(), "tor_data", "live_proxies.txt"))
 PROXY_POOL_REFRESH_INTERVAL = int(os.getenv("PROXY_POOL_REFRESH_INTERVAL", "600"))  # 10 min
+
+# Staging Local Offline-First (SQLite WAL) y Push Nocturno Masivo (00:00 a 08:00 hs)
+LOCAL_STAGING_ENABLED = os.getenv("LOCAL_STAGING_ENABLED", "True").strip().lower() in ("true", "1", "yes")
+LOCAL_STAGING_DB_PATH = os.getenv("LOCAL_STAGING_DB_PATH", os.path.join(os.path.dirname(__file__), "data", "staging_local.db"))
+PULL_CHUNK_SIZE = int(os.getenv("PULL_CHUNK_SIZE", "5000"))
+LOW_WATERMARK_THRESHOLD = int(os.getenv("LOW_WATERMARK_THRESHOLD", "2000"))
+PULL_DAILY_LIMIT = int(os.getenv("PULL_DAILY_LIMIT", "50000"))
+SYNC_PUSH_WINDOW_START_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_START_HOUR", "0"))  # 00:00 hs
+SYNC_PUSH_WINDOW_END_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_END_HOUR", "8"))      # 08:00 hs
+SYNC_PUSH_HOUR = SYNC_PUSH_WINDOW_START_HOUR  # Retrocompatibilidad
+SYNC_CHUNK_SIZE = int(os.getenv("SYNC_CHUNK_SIZE", "5000"))
+SYNC_SWEEP_WAIT_SEC = float(os.getenv("SYNC_SWEEP_WAIT_SEC", "10.0"))
+SYNC_RETENTION_DAYS = int(os.getenv("SYNC_RETENTION_DAYS", "7"))
+# Semáforo Distribuido para Push Nocturno (Round-Robin cooperativo entre PCs en red)
+SYNC_PUSH_SEMAPHORE_ENABLED = os.getenv("SYNC_PUSH_SEMAPHORE_ENABLED", "True").strip().lower() in ("true", "1", "yes")
+SYNC_PUSH_LOCK_NAME = os.getenv("SYNC_PUSH_LOCK_NAME", "vps_push_nocturno_semaphore")
+SYNC_PUSH_LOCK_TIMEOUT = int(os.getenv("SYNC_PUSH_LOCK_TIMEOUT", "600"))
+SYNC_PUSH_ROUNDROBIN_PAUSE_SEC = float(os.getenv("SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", "2.0"))
+
+
+def esta_en_ventana_push(dt=None) -> bool:
+    """
+    Verifica si el horario proporcionado (o datetime.now()) se encuentra
+    dentro de la ventana configurada para push nocturno masivo al VPS (00:00 a 08:00 hs por defecto).
+    """
+    from datetime import datetime
+    now = dt or datetime.now()
+    inicio = SYNC_PUSH_WINDOW_START_HOUR
+    fin = SYNC_PUSH_WINDOW_END_HOUR
+    if inicio < fin:
+        return inicio <= now.hour < fin
+    elif inicio > fin:
+        return now.hour >= inicio or now.hour < fin
+    else:
+        return True
+
+
 
 

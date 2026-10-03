@@ -22,6 +22,7 @@ param (
 )
 
 $ErrorActionPreference = "Stop"
+$ProgressPreference = "SilentlyContinue"
 $RepoRoot = (Get-Item $PSScriptRoot).Parent.FullName
 
 function Write-Step {

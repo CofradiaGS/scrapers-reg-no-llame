@@ -90,12 +90,14 @@ def worker_lifecycle_process(
         scraper_engine.iniciar()
 
         # Espera inicial si el supervisor arrancó en estado de pausa (ej: fuera de horario comercial o caída de VPN)
-        while pause_event.is_set() and not stop_event.is_set():
-            w_log.warning(f"[{worker_tag}] Supervisor en pausa (esperando horario comercial o red/VPN). En reposo...")
-            for _ in range(5):
-                if stop_event.is_set() or not pause_event.is_set():
-                    break
-                time.sleep(1)
+        if pause_event.is_set() and not stop_event.is_set():
+            w_log.info(f"[{worker_tag}] Supervisor en pausa inicial. Entrando en reposo pasivo silencioso...")
+            while pause_event.is_set() and not stop_event.is_set():
+                time.sleep(2.0)
+            if not stop_event.is_set():
+                jitter = random.uniform(0.5, 2.0) + (worker_slot * 0.4)
+                w_log.info(f"[{worker_tag}] Pausa inicial liberada. Reanudando escalonadamente en {jitter:.1f}s (anti-thundering herd)...")
+                time.sleep(jitter)
 
         if stop_event.is_set():
             return
@@ -117,7 +119,7 @@ def worker_lifecycle_process(
         except FueraDeHorarioComercialException as e:
             w_log.warning(f"[{worker_tag}] Autenticación pospuesta por horario comercial: {e}")
             while pause_event.is_set() and not stop_event.is_set():
-                time.sleep(2)
+                time.sleep(2.0)
             if stop_event.is_set():
                 return
 
@@ -131,10 +133,12 @@ def worker_lifecycle_process(
         except Exception as e_enacom:
             w_log.warning(f"[{worker_tag}] No se pudo inicializar EnacomBlockAdapter: {e_enacom}")
 
+        cadena_worker = [scraper_name] if scraper_name == "telcos" else None
         use_case = ProcesarLoteUseCase(
             cola_repo=cola_repo,
             scraper_engine=scraper_engine,
-            operator_lookup=enacom_adapter
+            operator_lookup=enacom_adapter,
+            cadena_pipeline=cadena_worker
         )
 
         # 5. Callback de reporte de progreso por ítem procesado
@@ -150,15 +154,18 @@ def worker_lifecycle_process(
             sig_estado = item.get("estado")
             desc = item.get("descripcion", "")[:70]
 
+            operador = str(item.get("operador") or item.get("fuente_scraper") or "").strip()
             stats_queue.put({
                 "tipo": tipo_stat,
                 "slot": worker_slot,
                 "scraper": scraper_name,
+                "operador": operador,
                 "latency": lat
             })
 
             if status == "coincidencia":
-                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> 🎯 COINCIDENCIA ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
+                op_tag = f" [{operador.upper()}]" if operador and operador.lower() not in ("desconocido", "telcos") else ""
+                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> 🎯 COINCIDENCIA{op_tag} ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
             elif status == "sin_coincidencia":
                 w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> ℹ️ SIN COINCIDENCIA ({lat}s) ➔ [{sig_scraper}:{sig_estado}]")
             elif status == "salteado":
@@ -175,13 +182,15 @@ def worker_lifecycle_process(
                 )
                 break
 
-            # Si el supervisor activa pausa (ej: fin de jornada comercial a las 21:00 o caída de red/VPN)
+            # Si el supervisor activa pausa (ej: fin de jornada comercial, caída de VPN o cola vacía)
             if pause_event.is_set():
-                w_log.warning(f"[{worker_tag}] Supervisor en pausa (fuera de horario comercial o red/VPN). En reposo...")
-                for _ in range(5):
-                    if stop_event.is_set() or not pause_event.is_set():
-                        break
-                    time.sleep(1)
+                w_log.info(f"[{worker_tag}] Supervisor en pausa activa. Entrando en reposo pasivo silencioso...")
+                while pause_event.is_set() and not stop_event.is_set():
+                    time.sleep(2.0)
+                if not stop_event.is_set():
+                    jitter = random.uniform(0.5, 2.0) + (worker_slot * 0.4)
+                    w_log.info(f"[{worker_tag}] Pausa liberada. Reanudando escalonadamente en {jitter:.1f}s (anti-thundering herd)...")
+                    time.sleep(jitter)
                 continue
 
             # Calcular tamaño de lote sin exceder la cuota de rotación preventiva
@@ -193,14 +202,14 @@ def worker_lifecycle_process(
                 prioridad=prioridad,
                 on_item_procesado=notificar_item,
                 should_stop=stop_event.is_set,
+                should_pause=pause_event.is_set,
                 solo_sin_coincidencia=solo_sin_coincidencia
             )
 
             if num_proc == 0:
-                # Cola vacía momentáneamente para este scraper/prioridad
-                w_log.info(f"[{worker_tag}] Sin registros disponibles para '{scraper_name}'. Esperando 6s...")
-                for _ in range(6):
-                    if stop_event.is_set():
+                # Cola vacía: el supervisor activa la pausa coordinada y el Centinela Explorador
+                for _ in range(3):
+                    if stop_event.is_set() or pause_event.is_set():
                         break
                     time.sleep(1)
                 continue

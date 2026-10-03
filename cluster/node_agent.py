@@ -143,7 +143,7 @@ class ProcessManager:
 
             scraper_name = params.get("scraper", "iris_http")
             workers = int(params.get("workers", 9))
-            batch_size = int(params.get("batch_size", 12))
+            batch_size = int(params.get("batch_size", 50))
             max_queries = int(params.get("max_queries_worker", 350))
             prioridad = params.get("prioridad", "auto")
             use_tor = bool(params.get("tor", False))

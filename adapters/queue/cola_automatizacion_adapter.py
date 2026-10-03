@@ -43,13 +43,16 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
         p_name = pool_name or f"pool_cola_auto_{os.getpid()}_{random_suffix}"
 
+        user = getattr(config, "COLA_AUTO_DBUSER", "automatizaciones")
+        password = getattr(config, "COLA_AUTO_DBPASS", "Mg1ZOGk3mE!2_q1Q")
+
         self.pool = MySQLConnectionPool(
             pool_name=p_name,
             pool_size=pool_size,
             host=config.VPS_DBHOST,
             port=config.VPS_DBPORT,
-            user=config.VPS_DBUSER,
-            password=config.VPS_DBPASS,
+            user=user,
+            password=password,
             database=config.VPS_DBNAME,
             use_pure=getattr(config, "VPS_DB_USE_PURE", True),
             autocommit=False,
@@ -58,20 +61,31 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
     def _get_connection(self, max_retries: int = 4, retry_delay: float = 2.0):
         for attempt in range(1, max_retries + 1):
+            conn = None
             try:
                 conn = self.pool.get_connection()
+                if hasattr(conn, "unread_result") and conn.unread_result:
+                    try:
+                        conn.consume_results()
+                    except Exception:
+                        pass
                 conn.ping(reconnect=True, attempts=3, delay=1)
                 return conn
             except Exception as e:
+                if conn:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
                 logger.warning(f"Reintento {attempt}/{max_retries} conexión cola_automatizacion: {e}")
                 if attempt == max_retries:
                     raise
                 import time
-                time.sleep(retry_delay)
+                time.sleep(retry_delay * (1.5 ** (attempt - 1)))
 
     def reservar_lote(
         self,
-        batch_size: int = 15,
+        batch_size: int = 20,
         prioridad: Optional[int] = None,
         scraper_nombre: str = "iris",
         solo_sin_coincidencia: bool = False
@@ -100,7 +114,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         try:
             conn = self._get_connection()
             conn.start_transaction()
-            cursor = conn.cursor(dictionary=True)
+            cursor = conn.cursor(dictionary=True, buffered=True)
 
             cursor.execute(query_find, (self.auto_id, self.pc_id, batch_size))
             filas = cursor.fetchall()
@@ -327,20 +341,20 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         if es_coincidencia:
             if registros_hist:
                 iris_dict = self._agrupar_operaciones_iris(registros_hist)
+                iris_dict["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_dict
             elif datos_iris:
                 iris_dict = dict(datos_iris)
-            else:
-                iris_dict = {}
-            iris_dict["ultima_modificacion"] = ahora_str
-            resultado_final["iris"] = iris_dict
-        else:
+                iris_dict["ultima_modificacion"] = ahora_str
+                resultado_final["iris"] = iris_dict
+        elif datos_iris or registros_hist:
             resultado_final["linea"] = ani_actual
             resultado_final["iris"] = {
                 "message": item.get("descripcion", "Sin registros en IRIS"),
                 "ultima_modificacion": ahora_str
             }
 
-        # 4. Cualquier otra fuente acumulada futura
+        # 4. Cualquier otra fuente acumulada (claro, personal, movistar, etc.)
         for k, v in datos_totales.items():
             if k not in ("enacom", "iris", "iris_v2"):
                 resultado_final[k] = v
@@ -358,6 +372,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         - numero_de_linea = asegura ANI si estaba vacío
         - dni = propaga DNI extraído de IRIS si estaba vacío
         - scrapers_intentados = acumulativo con marca 'iris'
+        Aplica cursor.executemany(...) en una única transacción atómica para minimizar eventos en binlog.
         """
         if not resultados:
             return True
@@ -389,11 +404,10 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
 
-            delta_procesados = len(resultados)
+            valores_lote = []
             delta_enriquecidos = 0
-            delta_fallidos = 0
 
             for item in resultados:
                 tarea_id = item["id"]
@@ -402,7 +416,6 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
 
                 if status_raw in ("error", "failed", "fallido"):
                     estado_final = "fallido"
-                    delta_fallidos += 1
                     err_code = item.get("error_codigo")
                     err_type = item.get("error_tipo")
                     desc = item.get("descripcion") or "Error en procesamiento"
@@ -438,33 +451,23 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                         elif datos_completos.get("dni"):
                             dni_extraido = str(datos_completos.get("dni")).strip()
 
-                    # Si tuvo coincidencia en IRIS o alguna operadora
                     iris_status = datos_completos.get("iris", {}).get("status") if isinstance(datos_completos, dict) and isinstance(datos_completos.get("iris"), dict) else ""
                     if iris_status == "coincidencia" or status_raw == "coincidencia":
                         delta_enriquecidos += 1
 
-                cursor.execute(
-                    query_update,
-                    (
-                        estado_final,
-                        res_json_str,
-                        error_msg,
-                        ani, ani, ani,
-                        dni_extraido, dni_extraido, dni_extraido,
-                        tarea_id
-                    )
-                )
+                valores_lote.append((
+                    estado_final,
+                    res_json_str,
+                    error_msg,
+                    ani, ani, ani,
+                    dni_extraido, dni_extraido, dni_extraido,
+                    tarea_id
+                ))
 
+            cursor.executemany(query_update, valores_lote)
             conn.commit()
 
-            # Enviar heartbeat a worker_heartbeats
-            self._send_heartbeat(cursor)
-
-            # Actualizar métricas incrementales en stats_historial
-            self._save_session_stats(cursor, delta_procesados, delta_enriquecidos, delta_fallidos)
-            conn.commit()
-
-            logger.info(f"Persistidos {len(resultados)} resultados en {self.table} (Enriquecidos: {delta_enriquecidos})")
+            logger.info(f"Persistidos masivamente {len(resultados)} resultados en {self.table} (Enriquecidos: {delta_enriquecidos})")
             return True
 
         except Exception as e:
@@ -473,7 +476,37 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     conn.rollback()
                 except Exception:
                     pass
-            logger.error(f"Error al persistir resultados en {self.table}: {e}")
+            logger.error(f"Error al persistir resultados masivos en {self.table}: {e}")
+            return False
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
+    def enviar_heartbeat(self) -> bool:
+        """Escribe el pulso de vida de esta PC en la tabla worker_heartbeats de forma espaciada (1/min)."""
+        conn = None
+        cursor = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor(buffered=True)
+            query = """
+                INSERT INTO worker_heartbeats (pc_id, auto_id, last_seen, status)
+                VALUES (%s, %s, NOW(), 'online')
+                ON DUPLICATE KEY UPDATE auto_id = VALUES(auto_id), last_seen = NOW(), status = 'online'
+            """
+            cursor.execute(query, (self.pc_id, self.auto_id))
+            conn.commit()
+            return True
+        except Exception as e:
+            logger.debug(f"Aviso al enviar heartbeat: {e}")
             return False
         finally:
             if cursor:
@@ -488,22 +521,22 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     pass
 
     def _send_heartbeat(self, cursor):
-        """Escribe el pulso de vida de esta PC en la tabla worker_heartbeats."""
-        try:
-            query = """
-                INSERT INTO worker_heartbeats (pc_id, auto_id, last_seen, status)
-                VALUES (%s, %s, NOW(), 'online')
-                ON DUPLICATE KEY UPDATE auto_id = VALUES(auto_id), last_seen = NOW(), status = 'online'
-            """
-            cursor.execute(query, (self.pc_id, self.auto_id))
-        except Exception as e:
-            logger.debug(f"Aviso al enviar heartbeat: {e}")
+        """Compatibilidad interna: redirige a enviar_heartbeat."""
+        return self.enviar_heartbeat()
 
-    def _save_session_stats(self, cursor, delta_p: int, delta_e: int, delta_f: int):
-        """Actualiza las estadísticas diarias acumulativas en stats_historial."""
+    def guardar_session_stats(self, delta_p: int, delta_e: int, delta_f: int) -> bool:
+        """
+        Actualiza las estadísticas diarias acumulativas en stats_historial periódicamente.
+        Elimina el SELECT COUNT(*) para proteger el Buffer Pool y la memoria RAM del VPS.
+        """
+        if delta_p == 0 and delta_e == 0 and delta_f == 0:
+            return True
+        conn = None
+        cursor = None
         try:
+            conn = self._get_connection()
+            cursor = conn.cursor(buffered=True)
             identificador = f"{self.pc_id}_{self.auto_id}"
-            pendientes = self._get_pending_count(cursor)
 
             query = """
                 INSERT INTO stats_historial (fecha, tipo, identificador, datos)
@@ -513,30 +546,35 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                         datos,
                         '$.procesados', CAST(JSON_UNQUOTE(JSON_EXTRACT(datos, '$.procesados')) AS UNSIGNED) + %s,
                         '$.enriquecidos', CAST(JSON_UNQUOTE(JSON_EXTRACT(datos, '$.enriquecidos')) AS UNSIGNED) + %s,
-                        '$.fallidos', CAST(JSON_UNQUOTE(JSON_EXTRACT(datos, '$.fallidos')) AS UNSIGNED) + %s,
-                        '$.quedaron_pendientes', %s
+                        '$.fallidos', CAST(JSON_UNQUOTE(JSON_EXTRACT(datos, '$.fallidos')) AS UNSIGNED) + %s
                     )
             """
             initial_stats = json.dumps({
                 "procesados": delta_p,
                 "enriquecidos": delta_e,
-                "fallidos": delta_f,
-                "quedaron_pendientes": pendientes
+                "fallidos": delta_f
             })
-            cursor.execute(query, (identificador, initial_stats, delta_p, delta_e, delta_f, pendientes))
+            cursor.execute(query, (identificador, initial_stats, delta_p, delta_e, delta_f))
+            conn.commit()
+            return True
         except Exception as e:
-            logger.debug(f"Aviso al actualizar stats_historial: {e}")
+            logger.debug(f"Aviso al actualizar stats_historial periódicamente: {e}")
+            return False
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
 
-    def _get_pending_count(self, cursor) -> int:
-        try:
-            cursor.execute(
-                f"SELECT COUNT(*) FROM {self.table} WHERE estado = 'pendiente' AND auto_id = %s",
-                (self.auto_id,)
-            )
-            res = cursor.fetchone()
-            return res[0] if res else 0
-        except Exception:
-            return 0
+    def _save_session_stats(self, cursor, delta_p: int, delta_e: int, delta_f: int):
+        """Compatibilidad interna: redirige a guardar_session_stats."""
+        return self.guardar_session_stats(delta_p, delta_e, delta_f)
 
     def revertir_a_pendiente(self, ids: List[int]) -> bool:
         """Devuelve una lista de IDs del estado 'en_proceso' al estado 'pendiente'."""
@@ -547,7 +585,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         cursor = None
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             placeholders = ", ".join(["%s"] * len(ids))
             query = f"""
                 UPDATE {self.table}
@@ -580,13 +618,25 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     pass
 
     def liberar_huerfanos(self, minutos_inactividad: int = 15) -> int:
-        """Watchdog: Rescata tareas bloqueadas en 'en_proceso' tras caídas imprevistas."""
+        """Watchdog: Rescata tareas bloqueadas en 'en_proceso' tras caídas imprevistas protegiendo con mutex distribuido."""
         conn = None
         cursor = None
         liberados = 0
+        lock_adquirido = False
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
+
+            # Mutex distribuido MySQL: GET_LOCK con timeout 0s (no-wait)
+            # Solo 1 nodo entre todas las máquinas concurrentes ejecutará el barrido
+            cursor.execute("SELECT GET_LOCK('watchdog_sweeper_cola_auto_mutex', 0)")
+            row = cursor.fetchone()
+            if not row or (isinstance(row, (list, tuple)) and row[0] != 1) or (isinstance(row, dict) and list(row.values())[0] != 1):
+                logger.debug("Watchdog Sweeper cola_automatizacion: Mutex ya adquirido por otro nodo. Omitiendo ciclo.")
+                return 0
+
+            lock_adquirido = True
+
             query = f"""
                 UPDATE {self.table}
                 SET estado = 'pendiente',
@@ -608,6 +658,12 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     pass
             logger.error(f"Error al liberar huérfanos en {self.table}: {e}")
         finally:
+            if lock_adquirido and cursor:
+                try:
+                    cursor.execute("SELECT RELEASE_LOCK('watchdog_sweeper_cola_auto_mutex')")
+                    cursor.fetchall()
+                except Exception:
+                    pass
             if cursor:
                 try:
                     cursor.close()
@@ -628,7 +684,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         stats: Dict[str, int] = {}
         try:
             conn = self._get_connection()
-            cursor = conn.cursor()
+            cursor = conn.cursor(buffered=True)
             query = f"""
                 SELECT estado, COUNT(*)
                 FROM {self.table}
