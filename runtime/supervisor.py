@@ -89,14 +89,7 @@ class SupervisorIndustrial:
         if "forzar_horario" not in self.scraper_kwargs:
             self.scraper_kwargs["forzar_horario"] = self.forzar_horario
 
-        self.politica_horario = PoliticaHorarioComercial(
-            activo=config.HORARIO_COMERCIAL_ACTIVO,
-            hora_inicio_lv=config.HORARIO_COMERCIAL_INICIO_LV,
-            hora_fin_lv=config.HORARIO_COMERCIAL_FIN_LV,
-            hora_inicio_sab=config.HORARIO_COMERCIAL_INICIO_SAB,
-            hora_fin_sab=config.HORARIO_COMERCIAL_FIN_SAB,
-            timezone_name=config.HORARIO_COMERCIAL_TIMEZONE
-        )
+        self.politica_horario = config.obtener_politica_horario_para_scraper(self.scraper_name)
 
         self.stop_event = Event()
         self.pause_event = Event()
@@ -271,7 +264,10 @@ class SupervisorIndustrial:
         """
         hc_logger = logging.getLogger("HorarioComercial")
 
-        if self.forzar_horario or not ("iris" in self.scraper_name):
+        es_cobro_express = any(t in self.scraper_name.lower() for t in ("telco", "claro", "personal", "movistar"))
+        es_iris = "iris" in self.scraper_name.lower()
+
+        if self.forzar_horario or not (es_iris or es_cobro_express):
             return
 
         while not self.stop_event.is_set():

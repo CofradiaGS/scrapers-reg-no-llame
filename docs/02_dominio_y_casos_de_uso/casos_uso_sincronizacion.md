@@ -26,16 +26,19 @@ sequenceDiagram
     PullUC->>LocalRepo: insertar_tareas_descargadas(filas)
     LocalRepo-->>PullUC: 10.000 insertadas en SQLite
 
-    Note over SyncSched: Llegada de las 20:00 hs
-    SyncSched->>PushUC: ejecutar(chunk_size=5.000)
-    loop Chunks de a 5.000
+    Note over SyncSched: Ventana Nocturna (00:00 a 08:00 hs)
+    SyncSched->>LocalRepo: contar_listos_para_subir()
+    LocalRepo-->>SyncSched: listos > 0
+    SyncSched->>PushUC: ejecutar(chunk_size=5.000, should_stop)
+    loop Chunks de a 5.000 (mientras hora < 08:00)
         PushUC->>LocalRepo: obtener_lote_para_push(5.000)
         LocalRepo-->>PushUC: lote de hasta 5.000 filas
         PushUC->>RemoteRepo: subir_lote_vps(executemany, 1 commit)
         RemoteRepo-->>PushUC: OK comprometido en VPS
         PushUC->>LocalRepo: marcar_como_sincronizados(ids)
     end
-    Note over PushUC: Barrido Final (Sweep de 10s)
+    Note over PushUC: Si llega 08:00 hs, interrupción limpia (remanentes para el próximo ciclo)
+    Note over PushUC: Barrido Final (Sweep de 10s si completó dentro de ventana)
     PushUC->>LocalRepo: purgar_antiguos(7 días)
     PushUC-->>SyncSched: Resumen final
 ```
@@ -56,6 +59,7 @@ Definidos en [`core/ports/sync_port.py`](file:///c:/Users/automatizacion.crm/Doc
 - `marcar_como_sincronizados(ids_vps, tipo_cola) -> bool`: Registro de `fecha_sincronizado = CURRENT_TIMESTAMP`.
 - `purgar_antiguos(dias_retencion) -> int`: Purga rotativa de tareas sincronizadas con más de 7 días.
 - `contar_pendientes(tipo_cola) -> int`: Conteo de tareas en estado `pendiente`.
+- `contar_listos_para_subir(tipo_cola) -> int`: Conteo de tareas listas para subir (`listo_para_subir` o `fallido`).
 
 ---
 
@@ -65,7 +69,8 @@ Definidos en [`core/ports/sync_port.py`](file:///c:/Users/automatizacion.crm/Doc
 |---|---|---|---|
 | **Bloque de Pull** | `PULL_CHUNK_SIZE` | `10000` | Minimiza viajes de red al VPS a 1 o 2 consultas por turno diario. |
 | **Umbral Watermark** | `LOW_WATERMARK_THRESHOLD` | `2000` | Asegura que los workers nunca sufran inanición (*starvation*). |
-| **Hora de Push** | `SYNC_PUSH_HOUR` | `20` | Ejecuta el volcado fuera de la ventana comercial pesada. |
+| **Ventana de Push** | `SYNC_PUSH_WINDOW_START_HOUR` / `END_HOUR` | `0` a `8` | Volcado nocturno exclusivo de 00:00 a 08:00 AM para no competir con el horario comercial. |
+| **Cierre de Ventana Limpio** | `should_stop` | Fin a las 08:00 AM | Si el volumen no termina de subir a las 08:00 AM, la subida frena limpiamente y los registros remanentes se suben en el siguiente ciclo. |
 | **Techo de Transacción** | `SYNC_CHUNK_SIZE` | `5000` | Previene bloqueos largos y fragmentación en el VPS binlog. |
 | **Manejo de Remanentes** | `executemany` | Variable ($\le 5000$) | Si el último chunk tiene 1.450 o 12 filas, se compromete inmediatamente. |
 | **Barrido Final (Sweep)** | `SYNC_SWEEP_WAIT_SEC` | `10.0` | Captura registros concluidos por workers durante el push previo. |

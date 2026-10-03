@@ -17,7 +17,10 @@ La ejecución de consultas automatizadas fuera de las ventanas laborales habitua
 
 ## 2. Reglas de Negocio de la Ventana Operativa
 
-La política gobernada por [`PoliticaHorarioComercial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) establece las siguientes ventanas estrictas bajo la zona horaria oficial de Argentina (**UTC-3 / `America/Argentina/Buenos_Aires`**):
+La política gobernada por [`PoliticaHorarioComercial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) establece ventanas operativas estrictas bajo la zona horaria oficial de Argentina (**UTC-3 / `America/Argentina/Buenos_Aires`**), diferenciando según el tipo de pasarela externa:
+
+### A. Ventana para Portales Oficiales Corporativos (IRIS Movistar BPM)
+* `HORARIO_COMERCIAL_FIN_LV = "21:00"`
 
 | Día de la Semana | Rango Horario Habilitado | Estado Operativo | Comportamiento del Sistema |
 | :--- | :--- | :--- | :--- |
@@ -27,21 +30,31 @@ La política gobernada por [`PoliticaHorarioComercial`](file:///c:/Users/automat
 | **Sábado** | `13:00` en adelante (UTC-3) | **Cerrado / Standby** | Pausa hasta el lunes a las `08:00`. |
 | **Domingo** | Todo el día (`00:00` a `23:59`) | **Cerrado / Inactivo** | Cese total de consultas a IRIS. |
 
+### B. Ventana para Pasarelas de Cobro Express (Telcos Cascada, Claro, Personal, Movistar)
+* `HORARIO_COBRO_EXPRESS_FIN_LV = "22:00"`
+
+| Día de la Semana | Rango Horario Habilitado | Estado Operativo | Comportamiento del Sistema |
+| :--- | :--- | :--- | :--- |
+| **Lunes a Viernes** | `08:00` a `22:00` (UTC-3) | **Abierto / Operativo** | Consultas activas de facturación y deuda. |
+| **Lunes a Viernes** | `22:00` a `08:00` (UTC-3) | **Cerrado / Standby** | Supervisor en pausa activa; cese de tráfico hacia Cobro Express. |
+| **Sábado** | `08:00` a `13:00` (UTC-3) | **Abierto / Operativo** | Turno matutino activo. |
+| **Sábado** | `13:00` en adelante (UTC-3) | **Cerrado / Standby** | Pausa hasta el lunes a las `08:00`. |
+| **Domingo** | Todo el día (`00:00` a `23:59`) | **Cerrado / Inactivo** | Cese total de consultas. |
+
 ---
 
 ## 3. Diagrama de Arquitectura y Flujo Defensivo
 
-La política opera de forma multi-capa garantizando que ninguna consulta no autorizada llegue a los servidores de Movistar:
+La política opera de forma multi-capa garantizando que ninguna consulta no autorizada llegue a los servidores de Movistar o Cobro Express:
 
 ```mermaid
 flowchart TD
     subgraph Config [Configuración: config.py / .env]
         CFG1["HORARIO_COMERCIAL_ACTIVO = True"]
-        CFG2["HORARIO_COMERCIAL_INICIO_LV = 08:00"]
-        CFG3["HORARIO_COMERCIAL_FIN_LV = 21:00"]
-        CFG4["HORARIO_COMERCIAL_INICIO_SAB = 08:00"]
-        CFG5["HORARIO_COMERCIAL_FIN_SAB = 13:00"]
-        CFG6["HORARIO_COMERCIAL_TIMEZONE = America/Argentina/Buenos_Aires"]
+        CFG2["HORARIO_COMERCIAL_FIN_LV = 21:00 (IRIS)"]
+        CFG3["HORARIO_COBRO_EXPRESS_FIN_LV = 22:00 (Telcos / CE)"]
+        CFG4["HORARIO_COMERCIAL_TIMEZONE = America/Argentina/Buenos_Aires"]
+        CFG_FUNC["config.obtener_politica_horario_para_scraper(nombre)"]
     end
 
     subgraph Dominio [Dominio Puro: core/domain/schedule.py]
@@ -51,18 +64,18 @@ flowchart TD
         POL -->|Estructura| EST["obtener_estado() : Dict"]
     end
 
-    subgraph Adapters [Guardia Defensiva en Adaptadores: adapters/scrapers/iris/]
-        HTTP_AD["IrisHttpAdapter: _validar_horario()"]
-        PLAY_AD["IrisBrowserAdapter: _validar_horario()"]
-        HTTP_AD & PLAY_AD -->|Si está cerrado y not forzar_horario| ERR["Lanza FueraDeHorarioComercialException"]
+    subgraph Adapters [Guardia Defensiva en Adaptadores]
+        IRIS_AD["IrisHttpAdapter / IrisBrowserAdapter: _validar_horario() (hasta 21:00)"]
+        CE_AD["TelcoCascadeAdapter / Claro / Personal / Movistar: _validar_horario() (hasta 22:00)"]
+        IRIS_AD & CE_AD -->|Si está cerrado y not forzar_horario| ERR["Lanza FueraDeHorarioComercialException"]
     end
 
     subgraph Runtime [Runtime 24/7: runtime/supervisor.py]
         SENTINEL["Centinela: HorarioComercialThread"]
-        SENTINEL -->|A las 21:00 Lun-Vie o 13:00 Sáb| PAUSE_ON["_set_pause('horario') -> pause_event.set()"]
+        SENTINEL -->|Al cierre de ventana (21:00 o 22:00)| PAUSE_ON["_set_pause('horario') -> pause_event.set()"]
         SENTINEL -->|A las 08:00 Lun-Sáb| PAUSE_OFF["_clear_pause('horario') -> pause_event.clear()"]
-        WORKERS["Workers Concurrentes (W1..W9)"]
-        PAUSE_ON -.->|Detiene reclamo atómico SKIP LOCKED| WORKERS
+        WORKERS["Workers Concurrentes (W1..WN)"]
+        PAUSE_ON -.->|Detiene reclamo atómico y pausa workers| WORKERS
         PAUSE_OFF -.->|Reanuda consumo continuo| WORKERS
     end
 

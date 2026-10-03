@@ -461,3 +461,22 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
             return 0
         finally:
             conn.close()
+
+    def contar_listos_para_subir(self, tipo_cola: Optional[str] = None) -> int:
+        """Devuelve la cantidad actual de registros listos para subir ('listo_para_subir' o 'fallido') en SQLite local."""
+        q_type = tipo_cola or self.tipo_cola
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute("""
+                SELECT COUNT(*) as listos
+                FROM tareas_staging
+                WHERE estado_local IN ('listo_para_subir', 'fallido') AND tipo_cola = ?;
+            """, (q_type,))
+            row = cursor.fetchone()
+            return row["listos"] if row else 0
+        except Exception as e:
+            logger.error(f"Error contando registros listos para subir: {e}")
+            return 0
+        finally:
+            conn.close()
+

@@ -27,7 +27,7 @@ flowchart LR
     WorkersPool -->|3. Reserva lote local 0ms| DBDisp
     DBDisp --> LocalDB
     WorkersPool -->|4. Escribe listo_para_subir| DBDisp
-    SyncRemote -->|5. Push Nocturno 20:00 hs\nChunks de 5.000 atómicos| VPS_MySQL
+    SyncRemote -->|5. Push Nocturno 00:00 a 08:00 hs\nChunks de 5.000 atómicos| VPS_MySQL
 ```
 
 ---
@@ -80,7 +80,7 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 | `en_proceso` | Tarea reservada por un worker en memoria. | `reservar_lote()` vía `DBDispatcherThread`. |
 | `listo_para_subir` | Tarea raspada localmente con éxito (coincidencia o sin coincidencia). | `persistir_resultados()` local. |
 | `fallido` | Error irrecuperable en scraping local (WAF, caída de proxy). | `persistir_resultados()` con status error. |
-| `sincronizado` | Registros comprometidos exitosamente en MySQL VPS. | Push nocturno de las 20:00 hs. |
+| `sincronizado` | Registros comprometidos exitosamente en MySQL VPS. | Push nocturno (ventana 00:00 a 08:00 hs). |
 
 ---
 
@@ -97,6 +97,8 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 | `marcar_como_sincronizados` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Registra `fecha_sincronizado = NOW()`. |
 | `purgar_antiguos` | `dias_retencion: int = 7` | `int` | Limpia registros sincronizados con > 7 días de resguardo. |
 | `contar_pendientes` | `tipo_cola: str` | `int` | Evalúa el umbral mínimo para disparo de recarga. |
+| `contar_listos_para_subir` | `tipo_cola: str` | `int` | Cantidad de registros en espera de subida nocturna. |
+
 
 ---
 

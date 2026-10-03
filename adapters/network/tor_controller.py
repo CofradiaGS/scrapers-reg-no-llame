@@ -180,7 +180,7 @@ class TorController:
                     f.write("DormantCanceledByStartup 1\n")
                     # No restringir ExitNodes a {ar},{cl},{uy},{br}: la pasarela no aplica geo-bloqueo
                     # y el pool sudamericano (<15 nodos) colapsa por congestión bajo 20 workers paralelos.
-                    f.write("CircuitBuildTimeout 15\n")
+                    f.write("CircuitBuildTimeout 30\n")
                     f.write("KeepalivePeriod 60\n")
                     f.write("MaxCircuitDirtiness 300\n")
                     f.write("NumEntryGuards 8\n")
@@ -235,6 +235,7 @@ class TorController:
                         logger.info(f"Bootstrap: {progress}% — {info[:80]}")
                         if progress >= 100 and self.is_port_open(self.socks_port):
                             logger.info(f"Tor listo y bootstrapped al 100% en {self.get_proxy_url()}.")
+                            self._warmup_circuits()
                             return True
                     except Exception as poll_err:
                         logger.debug(f"Poll error (ignorado): {poll_err}")
@@ -246,6 +247,22 @@ class TorController:
 
         logger.warning(f"Tor no completó bootstrap en {timeout_sec}s.")
         return False
+
+    def _warmup_circuits(self) -> None:
+        """Precalienta el pool de circuitos de Tor antes de admitir tráfico de workers concurrentes."""
+        logger.info("🔥 [TOR WARMUP] Precalentando circuitos iniciales de Tor antes de liberar workers...")
+        t0 = time.time()
+        try:
+            proxy = self.get_proxy_url()
+            resp = requests.get(
+                "https://pagosce.cobroexpress.com.ar",
+                proxies={"http": proxy, "https": proxy},
+                timeout=(20.0, 10.0),
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            logger.info(f"✅ [TOR WARMUP] Circuito inicial verificado con éxito (HTTP {resp.status_code}) en {time.time()-t0:.2f}s.")
+        except Exception as e:
+            logger.info(f"ℹ️ [TOR WARMUP] Sondeo inicial concluido ({type(e).__name__}) en {time.time()-t0:.2f}s. Red Tor lista.")
 
     def rotate_ip(self) -> bool:
         """

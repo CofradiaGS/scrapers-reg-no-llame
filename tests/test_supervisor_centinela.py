@@ -219,6 +219,38 @@ class TestSupervisorCentinela(unittest.TestCase):
         # De domingo 14:00 a lunes 08:00 hay 18 horas = 64,800 segundos
         self.assertEqual(segundos, 18 * 3600)
 
+    def test_09_horario_cobro_express_cierre_a_las_22(self):
+        """
+        Verifica que los scrapers de Cobro Express (telcos, claro, personal, movistar)
+        cierren a las 22:00 hs mientras que IRIS cierra a las 21:00 hs.
+        """
+        from datetime import datetime, timezone, timedelta
+        import config
+
+        tz = timezone(timedelta(hours=-3))
+
+        pol_telcos = config.obtener_politica_horario_para_scraper("telcos")
+        pol_claro = config.obtener_politica_horario_para_scraper("claro")
+        pol_iris = config.obtener_politica_horario_para_scraper("iris")
+
+        # Viernes a las 21:30 hs (UTC-3)
+        viernes_2130 = datetime(2026, 10, 2, 21, 30, 0, tzinfo=tz)
+
+        # IRIS debe estar cerrado (cierra a las 21:00)
+        self.assertFalse(pol_iris.esta_en_horario(viernes_2130))
+
+        # Telcos y Claro deben estar ABIERTOS (cierran a las 22:00)
+        self.assertTrue(pol_telcos.esta_en_horario(viernes_2130))
+        self.assertTrue(pol_claro.esta_en_horario(viernes_2130))
+
+        # Viernes a las 22:05 hs (UTC-3)
+        viernes_2205 = datetime(2026, 10, 2, 22, 5, 0, tzinfo=tz)
+
+        # A las 22:05 ambos deben estar CERRADOS
+        self.assertFalse(pol_telcos.esta_en_horario(viernes_2205))
+        self.assertFalse(pol_claro.esta_en_horario(viernes_2205))
+
 
 if __name__ == "__main__":
     unittest.main()
+

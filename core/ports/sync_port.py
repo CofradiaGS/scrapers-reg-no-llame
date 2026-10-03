@@ -85,3 +85,12 @@ class ISyncLocalRepoPort(ABC):
     ) -> int:
         """Retorna la cantidad actual de registros 'pendiente' en la cola local."""
         pass
+
+    @abstractmethod
+    def contar_listos_para_subir(
+        self,
+        tipo_cola: Optional[str] = None
+    ) -> int:
+        """Retorna la cantidad actual de registros listos para subir ('listo_para_subir' o 'fallido')."""
+        pass
+

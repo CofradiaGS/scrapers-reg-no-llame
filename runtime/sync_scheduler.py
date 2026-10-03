@@ -42,6 +42,8 @@ class SyncSchedulerThread(threading.Thread):
         stop_event: Optional[threading.Event] = None,
         pull_chunk_size: Optional[int] = None,
         low_watermark: Optional[int] = None,
+        sync_push_window_start_hour: Optional[int] = None,
+        sync_push_window_end_hour: Optional[int] = None,
         sync_push_hour: Optional[int] = None,
         sync_chunk_size: Optional[int] = None,
         sync_sweep_wait_sec: Optional[float] = None,
@@ -60,7 +62,9 @@ class SyncSchedulerThread(threading.Thread):
         self.stop_event = stop_event or threading.Event()
         self.pull_chunk_size = pull_chunk_size if pull_chunk_size is not None else getattr(config, "PULL_CHUNK_SIZE", 5000)
         self.low_watermark = low_watermark if low_watermark is not None else getattr(config, "LOW_WATERMARK_THRESHOLD", 2000)
-        self.sync_push_hour = sync_push_hour if sync_push_hour is not None else getattr(config, "SYNC_PUSH_HOUR", 20)
+        self.sync_push_window_start_hour = sync_push_window_start_hour if sync_push_window_start_hour is not None else getattr(config, "SYNC_PUSH_WINDOW_START_HOUR", 0)
+        self.sync_push_window_end_hour = sync_push_window_end_hour if sync_push_window_end_hour is not None else getattr(config, "SYNC_PUSH_WINDOW_END_HOUR", 8)
+        self.sync_push_hour = sync_push_hour if sync_push_hour is not None else self.sync_push_window_start_hour
         self.sync_chunk_size = sync_chunk_size if sync_chunk_size is not None else getattr(config, "SYNC_CHUNK_SIZE", 5000)
         self.sync_sweep_wait_sec = sync_sweep_wait_sec if sync_sweep_wait_sec is not None else getattr(config, "SYNC_SWEEP_WAIT_SEC", 10.0)
         self.sync_retention_days = sync_retention_days if sync_retention_days is not None else getattr(config, "SYNC_RETENTION_DAYS", 7)
@@ -73,6 +77,18 @@ class SyncSchedulerThread(threading.Thread):
         self._ultimo_push_fecha: Optional[date] = None
         self._sync_lock = threading.Lock()
         self._ultimo_pull_vacio_time: float = 0.0
+
+    def esta_en_ventana_push(self, dt: Optional[datetime] = None) -> bool:
+        """Verifica si el horario actual se encuentra en la ventana nocturna de push (por defecto 00:00 a 08:00 hs)."""
+        now = dt or datetime.now()
+        inicio = self.sync_push_window_start_hour
+        fin = self.sync_push_window_end_hour
+        if inicio < fin:
+            return inicio <= now.hour < fin
+        elif inicio > fin:
+            return now.hour >= inicio or now.hour < fin
+        else:
+            return True
 
     def ejecutar_pull_inmediato(self, forzar: bool = True) -> Dict[str, Any]:
         """Ejecuta un pull de forma síncrona y atómica bajo lock."""
@@ -87,14 +103,25 @@ class SyncSchedulerThread(threading.Thread):
                 scraper_actual=self.scraper_actual
             )
 
-    def ejecutar_push_inmediato(self) -> Dict[str, Any]:
-        """Ejecuta un push de forma síncrona y atómica bajo lock."""
+    def ejecutar_push_inmediato(self, verificar_ventana: bool = False) -> Dict[str, Any]:
+        """
+        Ejecuta un push de forma síncrona y atómica bajo lock.
+        :param verificar_ventana: Si es True, detiene la subida si la ventana nocturna finaliza (08:00 AM).
+        """
         with self._sync_lock:
+            def should_stop() -> bool:
+                if self.stop_event.is_set():
+                    return True
+                if verificar_ventana and not self.esta_en_ventana_push():
+                    return True
+                return False
+
             res = self._push_use_case.ejecutar(
                 tipo_cola=self.tipo_cola,
                 chunk_size=self.sync_chunk_size,
                 sweep_wait_sec=self.sync_sweep_wait_sec,
-                dias_retencion=self.sync_retention_days
+                dias_retencion=self.sync_retention_days,
+                should_stop=should_stop
             )
             if res.get("exito"):
                 self._ultimo_push_fecha = datetime.now().date()
@@ -105,8 +132,8 @@ class SyncSchedulerThread(threading.Thread):
         logger.info(
             f"⏰ [SYNC SCHEDULER] Centinela de sincronización iniciado. "
             f"(Cola: {self.tipo_cola} | Watermark: <= {self.low_watermark:,} -> Pull {self.pull_chunk_size:,} | "
-            f"Push Nocturno: {self.sync_push_hour:02d}:00 hs | Chunks: {self.sync_chunk_size:,} | "
-            f"Retención: {self.sync_retention_days}d)."
+            f"Ventana Push Nocturno: {self.sync_push_window_start_hour:02d}:00 a {self.sync_push_window_end_hour:02d}:00 hs | "
+            f"Chunks: {self.sync_chunk_size:,} | Retención: {self.sync_retention_days}d)."
         )
 
         # 1. Comprobación inicial de arranque: Si la cola local está vacía o baja, recargar
@@ -127,15 +154,32 @@ class SyncSchedulerThread(threading.Thread):
             try:
                 now = datetime.now()
 
-                # --- 1. EVALUAR PUSH NOCTURNO (20:00 hs) ---
-                if now.hour == self.sync_push_hour and self._ultimo_push_fecha != now.date():
-                    logger.info(f"🌙 [HORA PUSH] Son las {now.hour:02d}:{now.minute:02d} hs. Disparando Push Nocturno Masivo...")
-                    res_push = self.ejecutar_push_inmediato()
-                    if res_push.get("exito"):
-                        self._ultimo_push_fecha = now.date()
-                        logger.info(f"🎉 Push nocturno completado exitosamente para la fecha {now.date()}.")
-                    else:
-                        logger.error(f"⚠️ Push nocturno reportó errores: {res_push.get('error')}. Reintentará en el próximo ciclo.")
+                # --- 1. EVALUAR PUSH NOCTURNO (Ventana 00:00 a 08:00 hs) ---
+                if self.esta_en_ventana_push(now):
+                    listos_subir = self.local_repo.contar_listos_para_subir(tipo_cola=self.tipo_cola)
+                    if listos_subir > 0:
+                        logger.info(
+                            f"🌙 [VENTANA PUSH {self.sync_push_window_start_hour:02d}:00-{self.sync_push_window_end_hour:02d}:00] "
+                            f"Son las {now.hour:02d}:{now.minute:02d} hs y hay {listos_subir:,} registros listos para subir. "
+                            f"Iniciando subida masiva a VPS..."
+                        )
+                        res_push = self.ejecutar_push_inmediato(verificar_ventana=True)
+                        if res_push.get("exito"):
+                            if res_push.get("interrumpido_por_ventana"):
+                                logger.info(
+                                    f"⏰ [FIN VENTANA] Ventana de subida cerrada ({self.sync_push_window_end_hour:02d}:00 hs). "
+                                    f"Se subieron {res_push.get('total_subidos', 0):,} registros. "
+                                    f"Los remanentes permanecen seguros en SQLite local y se sincronizarán en el próximo ciclo."
+                                )
+                            else:
+                                logger.info(
+                                    f"🎉 Push completado exitosamente: {res_push.get('total_subidos', 0):,} registros sincronizados al VPS."
+                                )
+                        else:
+                            logger.error(
+                                f"⚠️ Push nocturno reportó errores: {res_push.get('error')}. Reintentará en el próximo ciclo."
+                            )
+
 
                 # --- 2. EVALUAR WATERMARK PULL (Reabastecimiento) ---
                 # Evitar bombardeo continuo si el VPS no tenía tareas recientemente (cooldown de 60s)

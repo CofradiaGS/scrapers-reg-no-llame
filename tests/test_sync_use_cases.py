@@ -191,5 +191,87 @@ class TestSyncUseCases(unittest.TestCase):
         self.assertEqual(res["lotes_procesados"], 1)
 
 
+    def test_06_push_interrumpido_por_ventana_deja_remanentes_para_proximo_ciclo(self):
+        """Verifica que si la ventana horaria se agota (08:00 AM) o should_stop se activa,
+        la subida se detiene limpiamente y los registros restantes quedan listos para el próximo ciclo."""
+        total_filas = 10000
+        tareas = [{"id": i, "numero_de_linea": f"119900{i:05d}", "dni": "20112233"} for i in range(1, total_filas + 1)]
+        self.local_repo.insertar_tareas_descargadas(tareas)
+        self.local_repo.reservar_lote(batch_size=total_filas)
+        resultados = [{"id": i, "status": "sin_coincidencias", "datos": {}} for i in range(1, total_filas + 1)]
+        self.local_repo.persistir_resultados(resultados)
+
+        self.assertEqual(self.local_repo.contar_listos_para_subir(), 10000)
+
+        # Condición de stop: detenerse tras el primer chunk de 5.000
+        chunks_subidos = 0
+        def should_stop():
+            return chunks_subidos >= 1
+
+        def mock_subir(tipo_cola, lote):
+            nonlocal chunks_subidos
+            chunks_subidos += 1
+            return len(lote)
+
+        self.remote_mock.subir_lote_vps.side_effect = mock_subir
+
+        use_case = SincronizarPushNocturnoUseCase(remote_repo=self.remote_mock, local_repo=self.local_repo)
+        res = use_case.ejecutar(
+            tipo_cola="cola_automatizacion",
+            chunk_size=5000,
+            sweep_wait_sec=0.0,
+            roundrobin_pause_sec=0.0,
+            should_stop=should_stop
+        )
+
+        self.assertTrue(res["exito"])
+        self.assertTrue(res["interrumpido_por_ventana"])
+        self.assertEqual(res["total_subidos"], 5000)
+        self.assertEqual(res["lotes_procesados"], 1)
+
+        # Quedan exactamente 5.000 listos para subir en el siguiente ciclo
+        self.assertEqual(self.local_repo.contar_listos_para_subir(), 5000)
+        stats = self.local_repo.obtener_estadisticas()
+        self.assertEqual(stats["sincronizado"], 5000)
+        self.assertEqual(stats["listo_para_subir"], 5000)
+
+        # Próximo ciclo: se suben las 5.000 restantes
+        res_segundo_ciclo = use_case.ejecutar(
+            tipo_cola="cola_automatizacion",
+            chunk_size=5000,
+            sweep_wait_sec=0.0,
+            roundrobin_pause_sec=0.0
+        )
+        self.assertTrue(res_segundo_ciclo["exito"])
+        self.assertFalse(res_segundo_ciclo["interrumpido_por_ventana"])
+        self.assertEqual(res_segundo_ciclo["total_subidos"], 5000)
+        self.assertEqual(self.local_repo.contar_listos_para_subir(), 0)
+
+    def test_07_ventana_horaria_sync_scheduler(self):
+        """Verifica la lógica de la ventana de push nocturno (00:00 a 08:00 hs) en el planificador."""
+        from datetime import datetime
+        from runtime.sync_scheduler import SyncSchedulerThread
+
+        scheduler = SyncSchedulerThread(
+            local_repo=self.local_repo,
+            remote_repo=self.remote_mock,
+            sync_push_window_start_hour=0,
+            sync_push_window_end_hour=8
+        )
+
+        # Horas dentro de la ventana: 00:00, 03:30, 07:59
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 0, 0, 0)))
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 3, 30, 0)))
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 7, 59, 59)))
+
+        # Horas fuera de la ventana: 08:00, 12:00, 20:00, 22:00, 23:59
+        self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 8, 0, 0)))
+        self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 12, 0, 0)))
+        self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 20, 0, 0)))
+        self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 22, 0, 0)))
+        self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 23, 59, 59)))
+
+
 if __name__ == "__main__":
     unittest.main()
+

@@ -9,7 +9,7 @@ CookieAuthentication 0
 DormantCanceledByStartup 1
 
 # Optimización de latencias y timeouts de circuitos (sin restricción estricta de ExitNodes para evitar congestión bajo 20 workers)
-CircuitBuildTimeout 15
+CircuitBuildTimeout 30
 KeepalivePeriod 60
 MaxCircuitDirtiness 300
 NumEntryGuards 8

@@ -19,7 +19,7 @@ import config
 from core.ports.scraper_port import IScraperEnginePort
 from core.domain.entities import Linea, ScrapeResult, Titular, Servicio
 from core.domain.enums import StatusScraping
-from core.domain.exceptions import ScraperTransientError
+from core.domain.exceptions import ScraperTransientError, FueraDeHorarioComercialException
 from adapters.scrapers.base_scraper import BaseScraperAdapter
 from adapters.scrapers.claro.claro_adapter import ClaroAdapter
 from adapters.scrapers.personal.personal_adapter import PersonalAdapter
@@ -39,11 +39,14 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         worker_slot: Optional[int] = None,
         delay_min: Optional[float] = None,
         delay_max: Optional[float] = None,
+        forzar_horario: bool = False,
         **kwargs
     ):
         self.worker_slot = worker_slot or kwargs.get("worker_slot")
         self.delay_min = delay_min or 0.1
         self.delay_max = delay_max or 0.3
+        self._forzar_horario = forzar_horario or kwargs.get("forzar_horario", False)
+        self._politica_horario = config.obtener_politica_horario_para_scraper("telcos")
 
         adapter_kwargs = {
             "base_url": base_url,
@@ -52,12 +55,22 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
             "worker_slot": self.worker_slot,
             "delay_min": self.delay_min,
             "delay_max": self.delay_max,
+            "forzar_horario": self._forzar_horario,
             **kwargs
         }
 
         self.claro = ClaroAdapter(**adapter_kwargs)
         self.personal = PersonalAdapter(**adapter_kwargs)
         self.movistar = MovistarAdapter(**adapter_kwargs)
+
+    def _validar_horario(self) -> None:
+        """Verifica si la consulta está dentro de la ventana comercial permitida."""
+        if not self._forzar_horario and not self._politica_horario.esta_en_horario():
+            estado = self._politica_horario.obtener_estado()
+            raise FueraDeHorarioComercialException(
+                f"Consulta rechazada: Telcos (Cobro Express) opera únicamente en horario comercial ({estado['descripcion']}). "
+                "Para forzar la ejecución en pruebas use el flag 'forzar_horario=True' o '--forzar-horario'."
+            )
 
     @property
     def nombre(self) -> str:
@@ -93,6 +106,8 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         Claro (si DNI) ➔ Personal ➔ Movistar ➔ Sin coincidencias.
         Enriquece determinísticamente el bloque ENACOM y acumula la historia completa.
         """
+        self._validar_horario()
+
         if not linea.es_valida:
             return ScrapeResult(
                 ani=linea.ani,
