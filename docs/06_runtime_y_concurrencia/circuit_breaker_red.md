@@ -10,7 +10,7 @@ Para neutralizar este riesgo, el sistema incorpora un **Circuit Breaker reactivo
 
 ## 1. Arquitectura del Centinela Circuit Breaker
 
-El Circuit Breaker se orquesta en el método [`_circuit_breaker_loop`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L63-L96) de [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31), ejecutándose como un hilo de soporte en segundo plano (`CircuitBreakerThread`).
+El Circuit Breaker se orquesta en el método [`_circuit_breaker_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L63-L96) de [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31), ejecutándose como un hilo de soporte en segundo plano (`CircuitBreakerThread`).
 
 ```mermaid
 stateDiagram-v2
@@ -94,7 +94,7 @@ def _circuit_breaker_loop(self, check_interval: float = 25.0):
 
 ## 3. Reacción y Comportamiento de los Workers ante la Pausa
 
-En [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L126-L133), antes de intentar reclamar cualquier nuevo lote a la base de datos MySQL, cada worker evalúa la condición del Circuit Breaker:
+En [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L126-L133), antes de intentar reclamar cualquier nuevo lote a la base de datos MySQL, cada worker evalúa la condición del Circuit Breaker:
 
 ```python
 # Circuit breaker: si está activado por caída de red, pausar sin reclamar lotes

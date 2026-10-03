@@ -2,7 +2,7 @@
 
 Este documento detalla el análisis exhaustivo de ingeniería inversa realizado sobre el portal de operaciones **Movistar IRIS** (sustentado sobre la infraestructura legacy de **Oracle WebLogic Server**, **BEA AquaLogic User Interaction / Plumtree** y el motor de procesos de negocio **Fuego BPM / Oracle BPM 10g/11g**).
 
-El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
+El cliente HTTP puro está implementado en [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L264), el cual reemplaza la sobrecarga de renderizado del navegador emitiendo peticiones directas de servlets.
 
 ---
 
@@ -20,7 +20,7 @@ El servidor `http://iris.tmoviles.com.ar` no expone una API REST moderna; su int
 
 ### Comparativa: Motor HTTP vs Playwright Chromium
 
-| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
+| Métrica / Dimensión | Playwright Headless ([`IrisBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_bot.py)) | HTTP Puro ([`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)) | Beneficio / Razón |
 | :--- | :--- | :--- | :--- |
 | **Latencia por consulta** | 15 a 22 segundos | **4 a 8 segundos** | Eliminación del parseo DOM, CSSOM y scripts JS pesados. |
 | **Consumo de Memoria RAM** | ~1.200 MB por worker | **~35 MB por worker** | Reducción del 97% del footprint en memoria. |
@@ -215,11 +215,11 @@ El dominio corporativo `iris.tmoviles.com.ar` resolvía intermitentemente por ro
 - `10.167.46.191`: Servidor secundario Microsoft-IIS/10.0 caído que devuelve HTTP `404 Not Found`.
 - `10.167.27.185`: Servidor corporativo WebLogic / Fuego BPM activo que devuelve HTTP `200 OK`.
 
-[`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py) aplica monkey-patching sobre `urllib3.util.connection.create_connection` en su método `start()`, enrutando todas las conexiones socket de `iris.tmoviles.com.ar` hacia la IP `10.167.27.185` preservando intactas las cabeceras HTTP `Host`, eliminando al 100% las fallas 404.
+[`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py) aplica monkey-patching sobre `urllib3.util.connection.create_connection` en su método `start()`, enrutando todas las conexiones socket de `iris.tmoviles.com.ar` hacia la IP `10.167.27.185` preservando intactas las cabeceras HTTP `Host`, eliminando al 100% las fallas 404.
 
 ### 4.2. Connection Pooling y Resiliencia
 
-El método [`start()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
+El método [`start()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L38-L60) configura `urllib3` con reintentos a nivel socket TCP y reuso de conexiones:
 
 ```python
 retries = Retry(
@@ -234,17 +234,17 @@ self.session.mount("http://", adapter)
 
 ### Mecanismo de Auto-Sanación (*Self-Healing*) de Sesión
 
-Si durante cualquier petición intermedia el servidor WebLogic/IRIS invalida la sesión por inactividad, timeout de vista JSF, desincronización de `app_link_id` o bloqueo por diálogo activo en el servidor, [`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L368) detecta los patrones de fallo y recupera la sesión automáticamente:
+Si durante cualquier petición intermedia el servidor WebLogic/IRIS invalida la sesión por inactividad, timeout de vista JSF, desincronización de `app_link_id` o bloqueo por diálogo activo en el servidor, [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L30-L368) detecta los patrones de fallo y recupera la sesión automáticamente:
 
 1. **Destrucción Preventiva de Sesión y Cookies Obsoletas**:
-   Al invocar [`login()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141), la instancia anterior de `requests.Session` es destruida y re-creada para asegurar que WebLogic no mantenga asociadas las cookies `JSESSIONID` colgadas en el estado previo.
+   Al invocar [`login()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141), la instancia anterior de `requests.Session` es destruida y re-creada para asegurar que WebLogic no mantenga asociadas las cookies `JSESSIONID` colgadas en el estado previo.
 2. **Cierre Activo de Diálogos JSF (`close_execution_dialog`)**:
-   En [`close_execution_dialog()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L72-L88) y en la cláusula `finally` de cada consulta, se emite la petición AJAX de aborto de diálogo al listener de JSF para liberar el proceso en el backend del servidor WebLogic antes de cada nueva iteración.
+   En [`close_execution_dialog()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L72-L88) y en la cláusula `finally` de cada consulta, se emite la petición AJAX de aborto de diálogo al listener de JSF para liberar el proceso en el backend del servidor WebLogic antes de cada nueva iteración.
 3. **Intercepción de Respuestas Vacías (`len: 0`)**:
-   Si el callback AJAX no retorna la directiva `executeDialogApplications(...)` o devuelve una respuesta XML vacía de 0 bytes (causante previo del error *"No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX"*), el bot invalida el estado (`self.logged_in = False`), ejecuta [`login()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141) con reseteo de sesión y reintenta la solicitud de apertura inmediatamente.
+   Si el callback AJAX no retorna la directiva `executeDialogApplications(...)` o devuelve una respuesta XML vacía de 0 bytes (causante previo del error *"No se pudo obtener la URL del diálogo de consulta en la respuesta AJAX"*), el bot invalida el estado (`self.logged_in = False`), ejecuta [`login()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L81-L141) con reseteo de sesión y reintenta la solicitud de apertura inmediatamente.
 4. **Reseteo del Estado del Worker**:
    Si ocurre cualquier excepción no controlada en la consulta de una línea, el bot fuerza `self.logged_in = False`, garantizando que la siguiente iteración del worker inicie una re-autenticación limpia en lugar de encadenar errores en bucle.
 5. **Verificación de Salud**:
-   Implementa el método [`check_health()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L142-L144) en el motor HTTP para ser consumido directamente por [`verificar_salud()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L134-L138) en el adaptador hexagonal.
+   Implementa el método [`check_health()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py#L142-L144) en el motor HTTP para ser consumido directamente por [`verificar_salud()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L134-L138) en el adaptador hexagonal.
 
 

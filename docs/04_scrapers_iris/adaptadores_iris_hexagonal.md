@@ -1,10 +1,10 @@
 # Adaptadores Hexagonales de IRIS: HTTP vs Browser
 
-Este documento describe la arquitectura de los dos adaptadores secundarios que implementan el puerto de extracción [`IScraperEnginePort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py):
-1. [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py)
-2. [`IrisBrowserAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py)
+Este documento describe la arquitectura de los dos adaptadores secundarios que implementan el puerto de extracción [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py):
+1. [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py)
+2. [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py)
 
-Ambos adaptadores encapsulan la complejidad de red, autenticación, sesión y scraping, ofreciendo una interfaz uniforme y limpia hacia la capa de casos de uso ([`ProcesarLoteUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py)).
+Ambos adaptadores encapsulan la complejidad de red, autenticación, sesión y scraping, ofreciendo una interfaz uniforme y limpia hacia la capa de casos de uso ([`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py)).
 
 ---
 
@@ -79,8 +79,8 @@ classDiagram
 Ambos adaptadores devuelven la cadena `"iris"` como su identificador único de fuente en el pipeline. Esto permite que el caso de uso y el sistema de enriquecimiento reconozcan la información sin importar si provino de HTTP o Browser.
 
 ### 2.2. Ciclo de Vida: `iniciar()` y `cerrar()`
-- **HTTP**: [`IrisHttpAdapter.iniciar()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L22-L25) instancia `IrisHttpBot` y configura los pools de sockets TCP con reintentos HTTP automáticos. `cerrar()` cierra la sesión `requests` y libera descriptores de archivo.
-- **Browser**: [`IrisBrowserAdapter.iniciar()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L23-L26) levanta el subproceso `node` de Playwright, arranca el proceso Chromium e inicializa el `BrowserContext`. `cerrar()` cierra context, browser y termina el runtime de Playwright.
+- **HTTP**: [`IrisHttpAdapter.iniciar()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L22-L25) instancia `IrisHttpBot` y configura los pools de sockets TCP con reintentos HTTP automáticos. `cerrar()` cierra la sesión `requests` y libera descriptores de archivo.
+- **Browser**: [`IrisBrowserAdapter.iniciar()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L23-L26) levanta el subproceso `node` de Playwright, arranca el proceso Chromium e inicializa el `BrowserContext`. `cerrar()` cierra context, browser y termina el runtime de Playwright.
 
 ### 2.3. Autenticación Perezosa (*Lazy Auth*) en `consultar_linea`
 Ambos adaptadores implementan un patrón de inicialización y autenticación tolerante a fallos:
@@ -144,20 +144,20 @@ return ScrapeResult(
 ## 4. Captura de Excepciones y Circuito de Salud (`verificar_salud`)
 
 Los adaptadores aíslan al caso de uso de cualquier error de transporte de red o parseo.
-- [`IrisHttpAdapter.verificar_salud()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L103-L107) comprueba la accesibilidad del portal WebLogic sin incurrir en un ciclo de búsqueda pesado.
-- [`IrisBrowserAdapter.verificar_salud()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L104-L106) comprueba que la referencia de la página de Playwright permanezca abierta y no haya colapsado por fallas del proceso Chromium.
+- [`IrisHttpAdapter.verificar_salud()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py#L103-L107) comprueba la accesibilidad del portal WebLogic sin incurrir en un ciclo de búsqueda pesado.
+- [`IrisBrowserAdapter.verificar_salud()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py#L104-L106) comprueba que la referencia de la página de Playwright permanezca abierta y no haya colapsado por fallas del proceso Chromium.
 
-Si ocurre un error imprevisto (ej. `ConnectionRefusedError`, `PlaywrightTimeoutError`), [`ProcesarLoteUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L102-L120) captura la excepción en el nivel superior del lote, registra la traza, trunca el mensaje a 195 caracteres y marca el registro como `error` sin botar el proceso daemon.
+Si ocurre un error imprevisto (ej. `ConnectionRefusedError`, `PlaywrightTimeoutError`), [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L102-L120) captura la excepción en el nivel superior del lote, registra la traza, trunca el mensaje a 195 caracteres y marca el registro como `error` sin botar el proceso daemon.
 
 ---
 
 ## 5. Guardia Defensiva de Horario Comercial Oficial
 
-Dado que IRIS es una plataforma corporativa oficial de Movistar, tanto [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) como [`IrisBrowserAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py) integran una **guardia defensiva interna** gobernada por [`PoliticaHorarioComercial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py):
+Dado que IRIS es una plataforma corporativa oficial de Movistar, tanto [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) como [`IrisBrowserAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_browser_adapter.py) integran una **guardia defensiva interna** gobernada por [`PoliticaHorarioComercial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py):
 
 * **Ventana habilitada**: Lunes a Viernes de `08:00` a `21:00`, Sábados de `08:00` a `13:00` (UTC-3 / Argentina).
 * **Validación en Entrada**: Antes de emitir peticiones de login (`autenticar()`) o consultas de líneas (`consultar_linea()`), se invoca `_validar_horario()`.
-* **Excepción de Dominio**: Si la petición se realiza fuera de horario sin autorización, se interrumpe inmediatamente lanzando [`FueraDeHorarioComercialException`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py).
+* **Excepción de Dominio**: Si la petición se realiza fuera de horario sin autorización, se interrumpe inmediatamente lanzando [`FueraDeHorarioComercialException`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py).
 * **Bypass de Pruebas**: Para tareas de desarrollo puntual, ambos adaptadores aceptan el parámetro `forzar_horario: bool = True` (activable mediante `--forzar-horario` en CLI).
 
 ---

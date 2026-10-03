@@ -179,8 +179,11 @@ class CuitOnlineAdapter(BaseScraperAdapter):
 
         cuit_fmt = cuit_el.get_text(strip=True) if cuit_el else ""
         cuit_clean = "".join(filter(str.isdigit, cuit_fmt))
+        if len(cuit_clean) != 11:
+            cuit_clean = ""
+            cuit_fmt = ""
         raw_denom = denom_el.get_text(strip=True) if denom_el else ""
-        denom = raw_denom.replace("?", "Ñ") if "ACU?A" in raw_denom else raw_denom
+        denom = raw_denom.replace("?", "Ñ")
 
         href = link_el.get("href", "") if link_el else ""
         if href and not href.startswith("http"):
@@ -211,7 +214,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                 p_soup = BeautifulSoup(part, "html.parser")
                 txt = p_soup.get_text().replace("\xa0", " ").strip(" \t\n\r•\ufffd")
                 if txt.startswith("Persona"):
-                    tipo_persona = txt
+                    tipo_persona = re.sub(r"F[^\w\s]?sica", "Física", txt, flags=re.IGNORECASE)
                     if "masculino" in txt.lower():
                         genero = "Masculino"
                     elif "femenino" in txt.lower():
@@ -251,22 +254,29 @@ class CuitOnlineAdapter(BaseScraperAdapter):
             cuit_el = p_data.select_one(".p_cuit")
             if cuit_el:
                 cuit_txt = cuit_el.get_text(strip=True)
-                if cuit_txt:
+                clean_c = "".join(filter(str.isdigit, cuit_txt))
+                if len(clean_c) == 11:
                     data["cuit"] = cuit_txt
-                    data["cuit_limpio"] = "".join(filter(str.isdigit, cuit_txt))
+                    data["cuit_limpio"] = clean_c
 
             # 2. Denominación / Título oficial
             h1_el = soup.select_one("h1")
             if h1_el:
                 raw_t = h1_el.get_text(strip=True)
-                raw_t = raw_t.replace("?", "Ñ") if "ACU?A" in raw_t else raw_t
+                raw_t = raw_t.replace("?", "Ñ")
                 if raw_t:
                     data["denominacion"] = raw_t
 
             # 3. Género y Nacionalidad / Inmigrante
             gender_el = p_data.select_one('[itemprop="gender"]')
             if gender_el:
-                data["genero"] = gender_el.get_text(strip=True)
+                gen_raw = gender_el.get_text(strip=True).lower()
+                if "masculin" in gen_raw or gen_raw == "m":
+                    data["genero"] = "Masculino"
+                elif "femenin" in gen_raw or gen_raw == "f":
+                    data["genero"] = "Femenino"
+                else:
+                    data["genero"] = ""
 
             nat_el = p_data.select_one('[itemprop="nationality"]')
             if nat_el:
@@ -412,11 +422,14 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         try:
             resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
 
-            if resp.status_code == 429:
-                logger.warning("⚠️ CuitOnline Rate Limit (HTTP 429). Reintentando...")
+            retries_429 = 0
+            while resp.status_code == 429 and retries_429 < 3:
+                retries_429 += 1
                 if self.use_tor:
                     self._rotar_circuito_instantaneo()
-                time.sleep(1.5)
+                wait_time = 2.0 * retries_429 + random.uniform(0.5, 1.5)
+                logger.warning(f"⚠️ CuitOnline Rate Limit (HTTP 429). Esperando {wait_time:.1f}s (intento {retries_429}/3)...")
+                time.sleep(wait_time)
                 resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
 
             if resp.status_code != 200:
@@ -429,6 +442,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                     detalles={"http_status": resp.status_code, "dni": dni_limpio}
                 )
 
+            resp.encoding = "utf-8"
             soup = BeautifulSoup(resp.text, "html.parser")
             hit_elements = soup.select(".hit")
 
@@ -445,6 +459,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                         self.sleep_jitter(0.1, 0.3)
                         r_det = self._session.get(detalle_url, headers=headers, timeout=self.timeout)
                         if r_det.status_code == 200:
+                            r_det.encoding = "utf-8"
                             full_data = self._parse_detail_page(r_det.text, hit_principal)
                     except Exception as e_det:
                         logger.debug(f"Aviso al consultar detalle de CuitOnline: {e_det}")

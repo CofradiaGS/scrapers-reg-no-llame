@@ -52,6 +52,8 @@ class IrisHttpAdapter(IScraperEnginePort):
 
     def consultar_linea(self, linea: Linea) -> ScrapeResult:
         if not linea.es_valida:
+            if linea.dni and len("".join(filter(str.isdigit, str(linea.dni)))) >= 6:
+                return self.consultar_por_dni(linea.dni)
             return ScrapeResult(
                 ani=linea.ani,
                 status=StatusScraping.SIN_COINCIDENCIA,
@@ -75,15 +77,41 @@ class IrisHttpAdapter(IScraperEnginePort):
                 detalles={"mensaje": "Sin registros en IRIS"}
             )
 
+        tit_val = datos.get("titular")
+        if isinstance(tit_val, dict):
+            nom = (tit_val.get("nombre") or datos.get("nombre") or "").strip()
+            ape = (tit_val.get("apellido") or datos.get("apellido") or "").strip()
+            tipo_doc = (tit_val.get("tipo_documento") or datos.get("tipo_documento") or "DNI").strip()
+            nro_doc = (tit_val.get("nro_documento") or datos.get("nro_documento") or "").strip()
+            tipo_per = (tit_val.get("tipo_persona") or datos.get("tipo_persona") or "").strip()
+            tel_con = (tit_val.get("telefono_contacto") or datos.get("telefono_contacto") or "").strip()
+            mail_con = (tit_val.get("email") or datos.get("email") or "").strip()
+        elif isinstance(tit_val, str):
+            nom = (datos.get("nombre") or tit_val).strip()
+            ape = (datos.get("apellido") or "").strip()
+            tipo_doc = (datos.get("tipo_documento") or "DNI").strip()
+            nro_doc = (datos.get("nro_documento") or "").strip()
+            tipo_per = (datos.get("tipo_persona") or "").strip()
+            tel_con = (datos.get("telefono_contacto") or "").strip()
+            mail_con = (datos.get("email") or "").strip()
+        else:
+            nom = (datos.get("nombre") or "").strip()
+            ape = (datos.get("apellido") or "").strip()
+            tipo_doc = (datos.get("tipo_documento") or "DNI").strip()
+            nro_doc = (datos.get("nro_documento") or "").strip()
+            tipo_per = (datos.get("tipo_persona") or "").strip()
+            tel_con = (datos.get("telefono_contacto") or "").strip()
+            mail_con = (datos.get("email") or "").strip()
+
         titular = Titular(
-            nombre=datos.get("nombre", "").strip(),
-            apellido=datos.get("apellido", "").strip(),
-            razon_social=datos.get("razon_social", "").strip(),
-            tipo_documento=datos.get("tipo_documento", "").strip(),
-            nro_documento=datos.get("nro_documento", "").strip(),
-            tipo_persona=datos.get("tipo_persona", "").strip(),
-            telefono_contacto=datos.get("telefono_contacto", "").strip(),
-            email=datos.get("email", "").strip()
+            nombre=nom,
+            apellido=ape,
+            razon_social=(datos.get("razon_social") or "").strip(),
+            tipo_documento=tipo_doc,
+            nro_documento=nro_doc,
+            tipo_persona=tipo_per,
+            telefono_contacto=tel_con,
+            email=mail_con
         )
 
         servicio = Servicio(
@@ -130,6 +158,113 @@ class IrisHttpAdapter(IScraperEnginePort):
             fuente_scraper=self.nombre,
             operador=datos.get("operador_receptor", "Movistar"),
             operador_receptor=datos.get("operador_receptor", ""),
+            titular=titular,
+            servicio=servicio,
+            fechas=fechas,
+            detalles=detalles,
+            raw=datos,
+            descripcion=desc
+        )
+
+    def consultar_por_dni(self, dni: str) -> ScrapeResult:
+        """
+        Consulta IRIS a partir del número de documento mediante att$nroIdentificacion.
+        Extrae exhaustivamente todas las operaciones históricas (lupas) y acumula
+        todas las líneas telefónicas descubiertas para el DNI.
+        """
+        self._validar_horario()
+        if not self._bot:
+            self.iniciar()
+            self.autenticar()
+
+        dni_limpio = "".join(filter(str.isdigit, str(dni)))
+        datos = self._bot.consultar_dni(dni_limpio)
+
+        if not datos or not datos.get("total_operaciones"):
+            return ScrapeResult(
+                ani="",
+                status=StatusScraping.SIN_COINCIDENCIA,
+                fuente_scraper=self.nombre,
+                descripcion=f"Sin registros en IRIS para DNI {dni_limpio}",
+                detalles={"mensaje": "Sin registros en IRIS", "dni": dni_limpio}
+            )
+
+        titular_raw = datos.get("titular")
+        if isinstance(titular_raw, dict):
+            nom = (titular_raw.get("nombre") or datos.get("nombre") or "").strip()
+            ape = (titular_raw.get("apellido") or datos.get("apellido") or "").strip()
+            tipo_doc = (titular_raw.get("tipo_documento") or datos.get("tipo_documento") or "DNI").strip()
+            tel_con = (titular_raw.get("telefono_contacto") or datos.get("telefono_contacto") or "").strip()
+            mail_con = (titular_raw.get("email") or datos.get("email") or "").strip()
+        elif isinstance(titular_raw, str):
+            nom = (datos.get("nombre") or titular_raw).strip()
+            ape = (datos.get("apellido") or "").strip()
+            tipo_doc = (datos.get("tipo_documento") or "DNI").strip()
+            tel_con = (datos.get("telefono_contacto") or "").strip()
+            mail_con = (datos.get("email") or "").strip()
+        else:
+            nom = (datos.get("nombre") or "").strip()
+            ape = (datos.get("apellido") or "").strip()
+            tipo_doc = (datos.get("tipo_documento") or "DNI").strip()
+            tel_con = (datos.get("telefono_contacto") or "").strip()
+            mail_con = (datos.get("email") or "").strip()
+
+        titular = Titular(
+            nombre=nom,
+            apellido=ape,
+            razon_social=(datos.get("razon_social") or "").strip(),
+            tipo_documento=tipo_doc,
+            nro_documento=dni_limpio,
+            tipo_persona=(datos.get("tipo_persona") or "").strip(),
+            telefono_contacto=tel_con,
+            email=mail_con
+        )
+
+        servicio = Servicio(
+            tecnologia=(datos.get("tecnologia") or "").strip(),
+            producto=(datos.get("producto") or "").strip(),
+            modalidad_factura=(datos.get("modalidad_factura") or "").strip()
+        )
+
+        fechas = {
+            "fecha_operacion": datos.get("fecha_operacion", ""),
+            "fecha_alta": datos.get("fecha_alta", ""),
+            "fecha_estado": datos.get("fecha_estado", ""),
+            "fvc_orig": datos.get("fecha_ventana_cambio_orig", ""),
+            "fvc_aprobada": datos.get("fecha_ventana_cambio_aprobada", "")
+        }
+
+        lineas = datos.get("lineas", [])
+        ani_principal = lineas[0] if lineas else ""
+
+        detalles = {
+            "dni": dni_limpio,
+            "lineas": lineas,
+            "lineas_asociadas": lineas,
+            "lineas_descubiertas": lineas,
+            "total_lineas": len(lineas),
+            "nro_tramite_abd": datos.get("nro_tramite_abd", ""),
+            "id_tramite_spn": datos.get("id_tramite_spn", ""),
+            "sistema_origen": datos.get("sistema_origen", ""),
+            "resultado_spn": datos.get("resultado_spn", ""),
+            "sistema_comercial": datos.get("sistema_comercial", ""),
+            "estado_tramite": datos.get("estado", ""),
+            "operador_receptor": datos.get("operador_receptor", ""),
+            "error_spn": datos.get("error_spn", ""),
+            "total_registros_historicos": datos.get("total_operaciones", 0),
+            "registros_historicos": datos.get("registros", []),
+            "operaciones": datos.get("registros", [])
+        }
+
+        nom_tit = f"{titular.nombre} {titular.apellido}".strip()
+        desc = f"IRIS DNI {dni_limpio} - {len(lineas)} líneas descubiertas en {datos.get('total_operaciones', 0)} ops | Titular: {nom_tit}"[:195]
+
+        return ScrapeResult(
+            ani=ani_principal,
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper=self.nombre,
+            operador="Movistar",
+            operador_receptor=datos.get("operador_receptor", "").strip(),
             titular=titular,
             servicio=servicio,
             fechas=fechas,

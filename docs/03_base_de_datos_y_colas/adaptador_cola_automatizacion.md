@@ -1,17 +1,17 @@
 # Adaptador de Cola: Cola Automatización (VPS Central)
 
 > **Capa 03: Base de Datos y Colas** | Módulo de Extensión Hexagonal  
-> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
-> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
+> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
+> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
 
 ---
 
 ## 1. Propósito y Visión General
 
-El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
+El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
 
 Este adaptador desacopla por completo la fuente de datos del dominio de la aplicación:
-* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
+* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
 * **Compatibilidad Retrospectiva**: Formatea la columna `resultado` (tipo `JSON`) respetando la estructura que esperan los consumidores y dashboards legados del proyecto `worker_package`.
 * **Enriquecimiento sin Pérdidas**: Conserva en el JSON todas las capas de datos extendidos que extraen los motores modernos (`tramite`, `fechas`, `detalles_extendidos`, `raw`), evitando pérdida de precisión técnica.
 * **Telemetría e Integración**: Emite latidos de vida en `worker_heartbeats` y deltas de producción en `stats_historial`.
@@ -316,7 +316,7 @@ ORDER BY fecha_fin DESC;
 ## 6. Verificación y Pruebas
 
 El adaptador cuenta con una suite de pruebas unitarias y de integración en:
-* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
+* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
 
 Para ejecutar la verificación:
 ```powershell

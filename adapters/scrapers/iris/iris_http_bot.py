@@ -516,3 +516,238 @@ class IrisHttpBot:
         finally:
             self.close_execution_dialog()
 
+    def consultar_dni(self, nro_dni: str, reintento: bool = False) -> Optional[Dict[str, Any]]:
+        """
+        Ejecuta la consulta completa de un DNI en IRIS mediante att$nroIdentificacion:
+        1. Utiliza la pantalla de consulta activa o abre una nueva si no está disponible.
+        2. Envía POST con el número de DNI en att$nroIdentificacion (con att$nroLinea vacío).
+        3. Obtiene la tabla de resultados. Si no hay filas de datos -> retorna None.
+        4. Itera exhaustivamente sobre TODAS las filas de la grilla (lupas), abre cada una,
+           extrae sus datos mediante parse_iris_detail, retorna a la tabla con att$button0,
+           y acumula todas las líneas telefónicas descubiertas (lineas a portar, contacto, etc.).
+        5. Retorna un diccionario consolidado con todas las líneas únicas y la lista de operaciones.
+        """
+        if not self.logged_in or not self.session:
+            if not self.login():
+                raise RuntimeError("No autenticado en IRIS HTTP.")
+
+        dni_limpio = "".join(filter(str.isdigit, str(nro_dni).strip()))
+        logger.info(f"--- [HTTP] Consultando DNI en IRIS: {dni_limpio} ---")
+
+        try:
+            # 1. Obtener pantalla de búsqueda activa o reabrirla limpiamente
+            if self.search_doc_key and self.search_form_action:
+                doc_key, form_action = self.search_doc_key, self.search_form_action
+            else:
+                doc_key, form_action = self._open_query_screen()
+                self.search_doc_key = doc_key
+                self.search_form_action = form_action
+
+            # 2. POST de búsqueda por DNI
+            ts_now = int(time.time() * 1000)
+            post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={ts_now}"
+            query_payload = {
+                "xo$Action": "11",
+                "xo$AttName": "att$button6",
+                "xo$ChangedAtts": "att$nroIdentificacion,",
+                "xo$DocSessKey": doc_key,
+                "xo$ScreenSessKey": "0",
+                "xo$executionType": "rscript",
+                "att$nroIdentificacion": dni_limpio,
+                "att$nroLinea": "",
+                "": "undefined"
+            }
+
+            r_post = self.session.post(post_url, data=query_payload, timeout=25)
+
+            # Auto-sanación si la sesión expiró
+            if "login.xhtml" in r_post.url or "loginForm" in r_post.text:
+                logger.warning(f"DNI {dni_limpio}: Sesión expirada en POST de búsqueda. Re-autenticando...")
+                self.logged_in = False
+                if self.login():
+                    self.search_doc_key = None
+                    self.search_form_action = None
+                    doc_key, form_action = self._open_query_screen()
+                    self.search_doc_key = doc_key
+                    self.search_form_action = form_action
+                    post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={int(time.time() * 1000)}"
+                    query_payload["xo$DocSessKey"] = doc_key
+                    r_post = self.session.post(post_url, data=query_payload, timeout=25)
+
+            finish_url_match = re.search(r'url="([^"]+)"', r_post.text)
+            if not finish_url_match:
+                if not reintento:
+                    logger.warning(f"DNI {dni_limpio}: Desincronización de pantalla (sin finishUrl). Reintentando...")
+                    self.search_doc_key = None
+                    self.search_form_action = None
+                    self._open_query_screen()
+                    return self.consultar_dni(nro_dni, reintento=True)
+                else:
+                    self.search_doc_key = None
+                    self.search_form_action = None
+                    raise RuntimeError(f"Respuesta inesperada de IRIS al consultar DNI {dni_limpio} (sin finishUrl).")
+
+            finish_url = finish_url_match.group(1).replace("'", "")
+
+            # 3. GET de la tabla de resultados
+            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=25)
+
+            doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table.text)
+            action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table.text, re.IGNORECASE)
+            table_doc_key = doc_key_match.group(1) if doc_key_match else None
+            table_action = action_match.group(1) if action_match else None
+
+            # 4. Extraer filas de la tabla de operaciones
+            soup_table = BeautifulSoup(r_table.text, "html.parser")
+            filas_operaciones: List[Dict[str, Any]] = []
+
+            for tr in soup_table.find_all("tr"):
+                btn = tr.find(lambda e: e.name in ["input", "button"] and e.get("id", "").startswith("grp$array1$detalle$"))
+                if btn:
+                    tds = tr.find_all("td", recursive=False)
+                    if len(tds) >= 7:
+                        filas_operaciones.append({
+                            "lupa_id": btn.get("id"),
+                            "canal": tds[0].get_text(strip=True),
+                            "operacion": tds[1].get_text(strip=True),
+                            "producto": tds[2].get_text(strip=True),
+                            "formulario": tds[3].get_text(strip=True),
+                            "nro_tramite": tds[4].get_text(strip=True),
+                            "fecha_alta": tds[5].get_text(strip=True),
+                            "estado": tds[6].get_text(strip=True),
+                            "detalle": {}
+                        })
+
+            # Si no hay operaciones: volver a la pantalla de búsqueda y retornar None
+            if not filas_operaciones:
+                logger.info(f"DNI {dni_limpio}: Sin registros en IRIS.")
+                if table_doc_key and table_action:
+                    self._volver_a_busqueda(table_doc_key, table_action)
+                return None
+
+            logger.info(f"DNI {dni_limpio}: Se encontraron {len(filas_operaciones)} operaciones en IRIS. Extrayendo todas las lupas...")
+
+            if not table_doc_key or not table_action:
+                logger.warning(f"DNI {dni_limpio}: No se extrajo docKey/action de la tabla de resultados.")
+                return {"registros": filas_operaciones, "total_operaciones": len(filas_operaciones), "lineas": []}
+
+            current_doc_key = table_doc_key
+            current_action = table_action
+            todas_las_lineas = set()
+
+            # 5. Iterar exhaustivamente sobre cada operación navegando a su detalle y volviendo
+            for idx, op in enumerate(filas_operaciones):
+                lupa_id = op["lupa_id"]
+                try:
+                    ts_now2 = int(time.time() * 1000)
+                    detail_post_url = f"http://iris.tmoviles.com.ar{current_action}&C=undefined&U={ts_now2}"
+                    detail_payload = {
+                        "xo$Action": "11",
+                        "xo$AttName": lupa_id,
+                        "xo$ChangedAtts": "",
+                        "xo$DocSessKey": current_doc_key,
+                        "xo$ScreenSessKey": "0",
+                        "xo$executionType": "rscript"
+                    }
+
+                    r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=25)
+                    detail_match = re.search(r'url="([^"]+)"', r_detail_post.text)
+                    if not detail_match:
+                        logger.warning(f"DNI {dni_limpio}: No se extrajo URL de detalle para {lupa_id}.")
+                        continue
+
+                    detail_finish_url = detail_match.group(1).replace("'", "")
+                    r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=25)
+
+                    det_datos = parse_iris_detail(r_detail.text)
+                    op["detalle"] = det_datos
+
+                    # Recolectar líneas telefónicas de este trámite
+                    lines = det_datos.get("lineas") or []
+                    for l in lines:
+                        clean_l = "".join(filter(str.isdigit, str(l)))
+                        if len(clean_l) == 10:
+                            todas_las_lineas.add(clean_l)
+
+                    contacto = det_datos.get("telefono_contacto")
+                    if contacto:
+                        clean_c = "".join(filter(str.isdigit, str(contacto)))
+                        if len(clean_c) == 10:
+                            todas_las_lineas.add(clean_c)
+
+                    # Volver SIEMPRE a la tabla de resultados usando att$button0 (Volver)
+                    d_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_detail.text)
+                    a_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_detail.text, re.IGNORECASE)
+                    if not d_match or not a_match:
+                        logger.warning(f"DNI {dni_limpio}: No se hallaron tokens para volver tras {lupa_id}.")
+                        break
+
+                    det_doc_key = d_match.group(1)
+                    det_action = a_match.group(1)
+
+                    back_url = f"http://iris.tmoviles.com.ar{det_action}&C=undefined&U={int(time.time() * 1000)}"
+                    back_payload = {
+                        "xo$Action": "11",
+                        "xo$AttName": "att$button0",
+                        "xo$ChangedAtts": "",
+                        "xo$DocSessKey": det_doc_key,
+                        "xo$ScreenSessKey": "0",
+                        "xo$executionType": "rscript"
+                    }
+                    r_back = self.session.post(back_url, data=back_payload, timeout=25)
+                    back_match = re.search(r'url="([^"]+)"', r_back.text)
+                    if not back_match:
+                        logger.warning(f"DNI {dni_limpio}: No se obtuvo URL de retorno a la tabla tras {lupa_id}.")
+                        break
+
+                    r_table_next = self.session.get("http://iris.tmoviles.com.ar" + back_match.group(1).replace("'", ""), timeout=25)
+                    k_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table_next.text)
+                    act_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table_next.text, re.IGNORECASE)
+                    if not k_match or not act_match:
+                        break
+                    current_doc_key = k_match.group(1)
+                    current_action = act_match.group(1)
+
+                except Exception as e_row:
+                    logger.warning(f"DNI {dni_limpio}: Error al abrir detalle de {lupa_id}: {e_row}")
+                    break
+
+            # 6. Retornar desde la tabla de resultados a la pantalla de búsqueda con att$button0
+            if current_doc_key and current_action:
+                self._volver_a_busqueda(current_doc_key, current_action)
+
+            # 7. Consolidar el registro principal para titularidad
+            registro_principal = None
+            for op in filas_operaciones:
+                det = op.get("detalle", {})
+                if det.get("nro_documento") or det.get("nombre"):
+                    registro_principal = det
+                    if det.get("nombre") and det.get("nro_documento"):
+                        break
+
+            if not registro_principal and filas_operaciones:
+                registro_principal = filas_operaciones[0].get("detalle", {})
+
+            lineas_lista = sorted(list(todas_las_lineas))
+            resultado_consolidado = dict(registro_principal) if registro_principal else {}
+            resultado_consolidado["dni"] = dni_limpio
+            resultado_consolidado["lineas"] = lineas_lista
+            resultado_consolidado["lineas_asociadas"] = lineas_lista
+            resultado_consolidado["registros"] = filas_operaciones
+            resultado_consolidado["total_operaciones"] = len(filas_operaciones)
+
+            logger.info(
+                f"DNI {dni_limpio}: Extraído con éxito vía HTTP - "
+                f"Total operaciones: {len(filas_operaciones)}, "
+                f"Líneas descubiertas: {len(lineas_lista)} -> {lineas_lista}, "
+                f"Titular: {resultado_consolidado.get('nombre')}"
+            )
+            return resultado_consolidado
+
+        except Exception as e:
+            logger.error(f"Error procesando DNI {dni_limpio}: {e}")
+            self.logged_in = False
+            raise
+        finally:
+            self.close_execution_dialog()
+
