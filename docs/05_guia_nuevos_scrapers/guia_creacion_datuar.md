@@ -83,6 +83,8 @@ sequenceDiagram
             else 200 OK (Sin atributos / No registrado)
                 API-->>Adapter: HTML vacío de resultados
                 Adapter-->>CasoUso: ScrapeResult(SIN_COINCIDENCIA, 'DNI no registrado')
+            else 200 OK con '0 resultados' (Bloqueo IP de Tor)
+                Adapter->>Adapter: Rotación inmediata de circuito Tor y reintento
             else 429 Too Many Requests
                 Adapter->>Adapter: Rotación de circuito Tor e intento con backoff 1.5s
             end
@@ -92,7 +94,20 @@ sequenceDiagram
 
 ---
 
-## 3. Caché Local SQLite de Alta Velocidad (`datuar_cache.sqlite`)
+## 3. Protocolo de Evasión Tor y Auto-Detección de Puertos
+
+Datuar impone bloqueos perimetrales por IP de salida cuando detecta ráfagas masivas. [`DatuarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) incorpora:
+
+1. **Auto-Detección de Puerto Tor (`detectar_puerto_tor`)**:
+   - Sondea dinámicamente los puertos locales `[9058, 9050, 9052, 9054, 9056]` y selecciona automáticamente aquel que responde y cuenta con salida exitosa hacia Datuar.
+2. **Rotación Periódica Preventiva (`tor_rotate_every = 25`)**:
+   - Cada 25 peticiones exitosas, renueva el circuito Socks5 mediante un identificador de flujo único (`Stream Isolation`), evitando la saturación del nodo de salida.
+3. **Detección de Bloqueo Silencioso ('0 resultados')**:
+   - Cuando un nodo de Tor está quemado, Datuar no retorna HTTP 429 sino HTTP 200 con `"0 resultados"`. El adaptador intercepta esta condición, fuerza la rotación instantánea del circuito y reintenta de inmediato (hasta 4 intentos).
+
+---
+
+## 4. Caché Local SQLite de Alta Velocidad (`datuar_cache.sqlite`)
 
 Para eliminar peticiones redundantes a la web cuando un mismo DNI aparece en múltiples líneas o reintentos, [`DatuarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) implementa una base de datos local SQLite con soporte completo de atributos de identidad y demografía:
 

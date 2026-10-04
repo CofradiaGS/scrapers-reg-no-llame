@@ -25,7 +25,7 @@ from adapters.scrapers.telcos.telco_cascade_adapter import TelcoCascadeAdapter
 class TestTelcoCascadeAdapter(unittest.TestCase):
 
     def setUp(self):
-        self.adapter = TelcoCascadeAdapter()
+        self.adapter = TelcoCascadeAdapter(forzar_horario=True)
 
     def test_01_cortocircuito_claro(self):
         linea = Linea(ani="1144001122", dni="30112233")

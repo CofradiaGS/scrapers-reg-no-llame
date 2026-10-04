@@ -91,6 +91,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 );
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado ON tareas_staging(tipo_cola, estado_local);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado_scraper ON tareas_staging(tipo_cola, estado_local, scraper_actual);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fecha_sincronizado);")
             conn.execute("COMMIT;")
         finally:
@@ -106,20 +107,53 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
     ) -> List[RegistroCola]:
         """
         Reclama atómicamente un lote de tareas locales en estado 'pendiente'
-        y las pasa de inmediato a 'en_proceso'.
+        asignadas al scraper especificado y las pasa de inmediato a 'en_proceso'.
         """
         registros: List[RegistroCola] = []
         conn = self._get_connection()
         try:
             conn.execute("BEGIN IMMEDIATE;")
-            cursor = conn.execute("""
-                SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
-                       scraper_actual, payload_origen, resultado_json
-                FROM tareas_staging
-                WHERE estado_local = 'pendiente' AND tipo_cola = ?
-                ORDER BY id_vps ASC
-                LIMIT ?;
-            """, (self.tipo_cola, batch_size))
+
+            # Normalizar alias de scraper al nombre canónico
+            nombre_clean = (scraper_nombre or "iris").lower().strip()
+            if "iris" in nombre_clean:
+                canon = "iris"
+            elif "claro" in nombre_clean:
+                canon = "claro"
+            elif "personal" in nombre_clean:
+                canon = "personal"
+            elif "movistar" in nombre_clean:
+                canon = "movistar"
+            elif "cuit" in nombre_clean:
+                canon = "cuitonline"
+            elif "datuar" in nombre_clean:
+                canon = "datuar"
+            elif "bcra" in nombre_clean:
+                canon = "bcra"
+            else:
+                canon = nombre_clean
+
+
+            if canon == "telcos":
+                cursor = conn.execute("""
+                    SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
+                           scraper_actual, payload_origen, resultado_json, fuente
+                    FROM tareas_staging
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                      AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar')
+                    ORDER BY id_vps ASC
+                    LIMIT ?;
+                """, (self.tipo_cola, batch_size))
+            else:
+                cursor = conn.execute("""
+                    SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
+                           scraper_actual, payload_origen, resultado_json, fuente
+                    FROM tareas_staging
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                      AND scraper_actual = ?
+                    ORDER BY id_vps ASC
+                    LIMIT ?;
+                """, (self.tipo_cola, canon, batch_size))
             filas = cursor.fetchall()
 
             if not filas:
@@ -156,8 +190,9 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     prioridad_nombre="P2 (Staging Local)",
                     estado=EstadoRegistro.PROCESANDO,
                     scraper_actual=f["scraper_actual"] or scraper_nombre,
-                    fuente=f["tipo_cola"],
-                    datos_existentes=payload_dict
+                    fuente=f["fuente"],
+                    datos_existentes=payload_dict,
+                    tipo_cola=f["tipo_cola"]
                 )
                 registros.append(reg)
 
@@ -354,14 +389,22 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 else:
                     payload_str = str(payload_raw) if payload_raw else "{}"
 
+                fuente_raw = t.get("fuente")
+                if isinstance(fuente_raw, list):
+                    fuente_str = json.dumps(fuente_raw, ensure_ascii=False)
+                elif fuente_raw is not None:
+                    fuente_str = str(fuente_raw)
+                else:
+                    fuente_str = None
+
                 valores.append((
-                    id_vps, q_type, linea, dni, auto_id, target_pc, scraper_act, payload_str
+                    id_vps, q_type, linea, dni, auto_id, target_pc, scraper_act, payload_str, fuente_str
                 ))
 
             cursor = conn.executemany("""
                 INSERT OR IGNORE INTO tareas_staging (
-                    id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, estado_local
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');
+                    id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, estado_local
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');
             """, valores)
             conn.execute("COMMIT;")
             logger.info(f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type})")

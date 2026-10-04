@@ -15,7 +15,7 @@ from core.ports.queue_port import IColaRepositorioPort
 from core.ports.scraper_port import IScraperEnginePort
 from core.ports.operator_lookup_port import IOperatorLookupPort
 from core.domain.entities import ReglaPipeline, Linea, ScrapeResult
-from core.domain.enums import StatusScraping
+from core.domain.enums import StatusScraping, EstadoRegistro
 from core.domain.exceptions import FueraDeHorarioComercialException, ScraperTransientError
 
 logger = logging.getLogger("ProcesarLoteUseCase")
@@ -126,31 +126,15 @@ class ProcesarLoteUseCase:
                     if enacom_data:
                         datos_previos["enacom"] = enacom_data.to_dict()
 
-                if not linea_consulta.dni and datos_previos:
-                    # Propagar DNI desde etapas previas (ej: IRIS titular, Datuar o CuitOnline)
-                    titular_iris = datos_previos.get("iris", {})
-                    if isinstance(titular_iris, dict):
-                        titular_info = titular_iris.get("titular", {})
-                    else:
-                        titular_info = {}
-                    datos_datuar = datos_previos.get("datuar", {})
-                    if not isinstance(datos_datuar, dict):
-                        datos_datuar = {}
-                    datos_cuitonline = datos_previos.get("cuitonline", {})
-                    if not isinstance(datos_cuitonline, dict):
-                        datos_cuitonline = {}
+                # Propagar DNI o CUIT desde etapas previas (ej: IRIS titular, Datuar, CuitOnline, BCRA)
+                dni_previo = ReglaPipeline.extraer_dni(datos_previos, linea_consulta.dni)
+                cuit_previo = ReglaPipeline.extraer_cuit(datos_previos)
 
-                    dni_previo = (
-                        datos_datuar.get("detalles", {}).get("dni")
-                        or datos_datuar.get("dni")
-                        or datos_cuitonline.get("detalles", {}).get("dni")
-                        or datos_cuitonline.get("dni")
-                        or (titular_info.get("nro_documento") if isinstance(titular_info, dict) else None)
-                        or (titular_info.get("dni") if isinstance(titular_info, dict) else None)
-                        or datos_previos.get("dni")
-                    )
-                    if dni_previo:
-                        linea_consulta = Linea(ani=reg.linea.ani, dni=str(dni_previo))
+                if self.scraper.nombre == "bcra" and cuit_previo:
+                    linea_consulta = Linea(ani=reg.linea.ani, dni=cuit_previo)
+                elif dni_previo and not linea_consulta.dni:
+                    linea_consulta = Linea(ani=reg.linea.ani, dni=str(dni_previo))
+
 
                 # 2. Pre-flight de Dominio: Validar elegibilidad antes de consultar la red
                 es_apto, motivo = ReglaPipeline.es_elegible_para_scraper(
@@ -171,23 +155,35 @@ class ProcesarLoteUseCase:
                         for t in ReglaPipeline.TELCOS
                     )
 
-                    resultado_salteado = ScrapeResult(
-                        ani=linea_consulta.ani,
-                        status=StatusScraping.SIN_COINCIDENCIA,
-                        fuente_scraper=self.scraper.nombre,
-                        descripcion=f"Salteado por Dominio: {motivo}",
-                        detalles={"motivo_salteado": motivo}
+                    # Salvaguarda de Dominio: Aplica EXCLUSIVAMENTE a queue_registro_no_llame.
+                    # En cola_automatizacion el flujo telcos es independiente y no requiere IRIS previo.
+                    # En queue_registro_no_llame, toda línea debe haber pasado primero por IRIS.
+                    is_reg_no_llame = getattr(reg, "tipo_cola", None) == "registro_no_llame" or (
+                        getattr(reg, "tipo_cola", None) is None and (self.cadena is None or "iris" in self.cadena)
                     )
+                    nombre_sc = self.scraper.nombre.lower()
+                    if is_reg_no_llame and (nombre_sc in ReglaPipeline.TELCOS) and getattr(reg, "scraper_actual", None) == "iris":
+                        sig_scraper = "iris"
+                        sig_estado = EstadoRegistro.PENDIENTE.value
+                        motivo = "Línea de Reg No Llame pertenece a IRIS. Revertida a IRIS pendiente"
+                    else:
+                        resultado_salteado = ScrapeResult(
+                            ani=linea_consulta.ani,
+                            status=StatusScraping.SIN_COINCIDENCIA,
+                            fuente_scraper=self.scraper.nombre,
+                            descripcion=f"Salteado por Dominio: {motivo}",
+                            detalles={"motivo_salteado": motivo}
+                        )
 
-                    sig_scraper, sig_estado = ReglaPipeline.resolver_siguiente_etapa(
-                        scraper_actual=self.scraper.nombre,
-                        resultado=resultado_salteado,
-                        cadena=self.cadena,
-                        dni_disponible=dni_activo,
-                        fuentes_previas=fuentes_previas_list,
-                        coincidencia_telco_previa=coincidencia_telco_previa,
-                        datos_previos=datos_previos
-                    )
+                        sig_scraper, sig_estado = ReglaPipeline.resolver_siguiente_etapa(
+                            scraper_actual=self.scraper.nombre,
+                            resultado=resultado_salteado,
+                            cadena=self.cadena,
+                            dni_disponible=dni_activo,
+                            fuentes_previas=fuentes_previas_list,
+                            coincidencia_telco_previa=coincidencia_telco_previa,
+                            datos_previos=datos_previos
+                        )
 
                     item_res = {
                         "id": reg.id,
@@ -209,11 +205,13 @@ class ProcesarLoteUseCase:
 
                 # Extraer DNI resultante para persistencia en columna relacional
                 dni_res = (
-                    linea_consulta.dni
+                    ReglaPipeline.extraer_dni(resultado.to_namespace_dict(), linea_consulta.dni)
+                    or linea_consulta.dni
                     or (resultado.titular.nro_documento if resultado.titular and resultado.titular.nro_documento else None)
                     or (resultado.detalles.get("dni") if isinstance(resultado.detalles, dict) else None)
                     or (resultado.detalles.get("titular", {}).get("nro_documento") if isinstance(resultado.detalles, dict) else None)
                 )
+
 
                 # 3. Aplicar Regla de Dominio: Cortocircuito y Siguiente Posta
                 dni_activo = bool(dni_res)

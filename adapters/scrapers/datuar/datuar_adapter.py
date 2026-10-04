@@ -24,6 +24,23 @@ from adapters.network.tor_controller import TorController
 logger = logging.getLogger("ScraperDatuar")
 
 
+def detectar_puerto_tor() -> int:
+    """Detecta automáticamente qué puerto local de Tor responde y tiene salida a Datuar."""
+    for p in [9058, 9050, 9052, 9054, 9056]:
+        try:
+            r = requests.get(
+                "https://datuar.com/indext.php?busqueda=30111222",
+                proxies={"http": f"socks5h://127.0.0.1:{p}", "https": f"socks5h://127.0.0.1:{p}"},
+                headers={"User-Agent": "Mozilla/5.0"},
+                timeout=2.5
+            )
+            if r.status_code == 200 and "contador-resultados" in r.text:
+                return p
+        except Exception:
+            continue
+    return 9050
+
+
 class DatuarAdapter(BaseScraperAdapter):
     """
     Adaptador de extracción y enriquecimiento sobre Datuar Argentina (https://datuar.com).
@@ -31,11 +48,11 @@ class DatuarAdapter(BaseScraperAdapter):
     """
 
     USER_AGENTS = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/122.0.0.0 Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Edge/124.0.0.0 Safari/537.36"
     ]
 
     def __init__(
@@ -47,9 +64,10 @@ class DatuarAdapter(BaseScraperAdapter):
         use_tor: bool = False,
         tor_controller: Optional[TorController] = None,
         tor_external_daemon: bool = False,
-        tor_rotate_every: int = 19,
+        tor_rotate_every: int = 25,
         worker_slot: int = 1,
         cache_db_path: Optional[str] = None,
+        tor_port: Optional[int] = None,
         **kwargs
     ):
         super().__init__()
@@ -62,7 +80,9 @@ class DatuarAdapter(BaseScraperAdapter):
         self.tor_external_daemon = tor_external_daemon
         self.tor_rotate_every = tor_rotate_every
         self.worker_slot = worker_slot
+        self.tor_port = tor_port
         self.request_count = 0
+        self.circuit_id = 0
 
         self._session: Optional[requests.Session] = None
         self._proxy_url: Optional[str] = None
@@ -73,10 +93,11 @@ class DatuarAdapter(BaseScraperAdapter):
         return "datuar"
 
     def _generar_proxy_aislado(self) -> str:
-        token = hashlib.md5(f"{time.time()}_{random.random()}".encode()).hexdigest()[:8]
-        user_auth = f"w{self.worker_slot}_{token}"
-        socks_base = getattr(config, "TOR_SOCKS_PORT_BASE", 9050)
-        return f"socks5h://{user_auth}:tor@127.0.0.1:{socks_base}"
+        self.circuit_id += 1
+        token = f"w{self.worker_slot}_{int(time.time()*1000)}_{self.circuit_id}"
+        socks_base = self.tor_port or getattr(config, "TOR_SOCKS_PORT_BASE", 9050)
+        return f"socks5h://{token}:tor@127.0.0.1:{socks_base}"
+
 
     def _rotar_circuito_instantaneo(self) -> None:
         if not self.use_tor:
@@ -100,10 +121,13 @@ class DatuarAdapter(BaseScraperAdapter):
         self._session.mount("https://", adapter)
 
         if self.use_tor:
+            if not self.tor_port:
+                self.tor_port = detectar_puerto_tor()
+
             if not self.tor_controller:
                 self.tor_controller = TorController(
                     data_dir=getattr(config, "TOR_DATA_DIR", "tor_data"),
-                    socks_port=getattr(config, "TOR_SOCKS_PORT_BASE", 9050),
+                    socks_port=self.tor_port or getattr(config, "TOR_SOCKS_PORT_BASE", 9050),
                     control_port=getattr(config, "TOR_CONTROL_PORT_BASE", 9051),
                     tor_path=getattr(config, "TOR_PATH", "tor.exe"),
                     is_owner=(not self.tor_external_daemon)
@@ -119,7 +143,8 @@ class DatuarAdapter(BaseScraperAdapter):
                 "http": self._proxy_url,
                 "https": self._proxy_url
             }
-            logger.info(f"DatuarAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot}).")
+            logger.debug(f"DatuarAdapter enrutando por Tor Stream Isolation puerto {self.tor_port} (Slot {self.worker_slot}).")
+
 
         # Establecer cookies iniciales
         try:
@@ -182,151 +207,168 @@ class DatuarAdapter(BaseScraperAdapter):
                 detalles={"motivo": "DNI no provisto ni inferido"}
             )
 
-        # Consulta en Red a Datuar
+        # Consulta en Red a Datuar con Bucle de Reintentos Multi-Circuito
         if self._session is None:
             self.iniciar()
 
-        self.request_count += 1
-        if self.use_tor and self.tor_rotate_every > 0 and (self.request_count % self.tor_rotate_every == 0):
-            self._rotar_circuito_instantaneo()
+        url_busqueda = f"{self.base_url}/indext.php?busqueda={dni_limpio}"
+        max_intentos = 4
 
-        self.sleep_jitter(self.delay_min, self.delay_max)
+        for intento in range(1, max_intentos + 1):
+            self.request_count += 1
+            if self.use_tor and self.tor_rotate_every > 0 and (self.request_count % self.tor_rotate_every == 0):
+                self._rotar_circuito_instantaneo()
 
-        url_busqueda = f"{self.base_url}/index2.php?busqueda={dni_limpio}"
-        headers = self._get_headers()
+            self.sleep_jitter(self.delay_min, self.delay_max)
+            headers = self._get_headers()
 
-        try:
-            resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
-            
-            if resp.status_code == 429:
-                logger.warning("⚠️ Datuar Rate Limit (HTTP 429). Rotando circuito...")
-                if self.use_tor:
-                    self._rotar_circuito_instantaneo()
-                time.sleep(1.5)
-                # Reintento único
+            try:
                 resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
 
-            if resp.status_code != 200:
-                logger.warning(f"Datuar retornó código HTTP {resp.status_code} para DNI {dni_limpio}")
-                return ScrapeResult(
-                    ani=linea.ani,
-                    status=StatusScraping.SIN_COINCIDENCIA,
-                    fuente_scraper=self.nombre,
-                    descripcion=f"Datuar error HTTP {resp.status_code}",
-                    detalles={"http_status": resp.status_code, "dni": dni_limpio}
-                )
+                if resp.status_code == 429:
+                    logger.warning(f"⚠️ Datuar Rate Limit (HTTP 429). Rotando circuito Tor (intento {intento}/{max_intentos})...")
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
+                    time.sleep(1.5)
+                    continue
 
-            html = resp.text
-            names = re.findall(r'data-nombre-completo="([^"]+)"', html)
-            first_names = re.findall(r'data-nombre="([^"]+)"', html)
-            cdus = re.findall(r'data-cdu="([^"]+)"', html)
-            edades = re.findall(r'data-edad="([^"]+)"', html)
-            generos = re.findall(r'data-genero="([^"]+)"', html)
-            provincias = re.findall(r'data-provincia="([^"]+)"', html)
-            ciudades = re.findall(r'data-ciudad="([^"]+)"', html)
-            municipios = re.findall(r'data-municipio="([^"]+)"', html)
+                if resp.status_code != 200:
+                    time.sleep(0.5)
+                    continue
 
-            if names:
-                personas = []
-                for i in range(len(names)):
-                    raw_name = names[i].strip()
-                    cuil = cdus[i].strip() if i < len(cdus) else None
-                    edad = edades[i].strip() if i < len(edades) else None
-                    genero = generos[i].strip() if i < len(generos) else None
-                    provincia = provincias[i].strip().title() if i < len(provincias) else None
-                    ciudad = ciudades[i].strip().title() if i < len(ciudades) else None
-                    municipio = municipios[i].strip().title() if i < len(municipios) else None
+                html = resp.text
 
-                    parts = [p.strip() for p in raw_name.split(",") if p.strip()]
-                    if len(parts) >= 2:
-                        apellidos = parts[0].upper()
-                        nombres = parts[1].title()
-                    elif i < len(first_names):
-                        nombres = first_names[i].strip().title()
-                        apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
-                    else:
-                        apellidos = raw_name.upper()
-                        nombres = ""
+                # Si dio "0 resultados", es el bloqueo de IP de salida de Tor en Datuar: rotar circuito de inmediato
+                if "0 resultados" in html and intento < max_intentos:
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
+                    time.sleep(0.4)
+                    continue
 
-                    nombre_completo = f"{apellidos}, {nombres}".strip(", ")
-                    personas.append({
-                        "nombre_completo": nombre_completo,
-                        "nombres": nombres,
-                        "apellidos": apellidos,
-                        "cuil": cuil,
-                        "dni": dni_limpio,
-                        "edad": edad,
-                        "genero": genero,
-                        "provincia": provincia,
-                        "ciudad": ciudad,
-                        "municipio": municipio
-                    })
+                names = re.findall(r'data-nombre-completo="([^"]+)"', html)
+                first_names = re.findall(r'data-nombre="([^"]+)"', html)
+                cdus = re.findall(r'data-cdu="([^"]+)"', html)
+                edades = re.findall(r'data-edad="([^"]+)"', html)
+                generos = re.findall(r'data-genero="([^"]+)"', html)
+                provincias = re.findall(r'data-provincia="([^"]+)"', html)
+                ciudades = re.findall(r'data-ciudad="([^"]+)"', html)
+                municipios = re.findall(r'data-municipio="([^"]+)"', html)
 
-                p_primero = personas[0]
-                titular = Titular(
-                    nombre=p_primero["nombres"],
-                    apellido=p_primero["apellidos"],
-                    nro_documento=dni_limpio,
-                    tipo_documento="DNI",
-                    cuil=p_primero["cuil"] or "",
-                    edad=p_primero["edad"] or "",
-                    genero=p_primero["genero"] or "",
-                    provincia=p_primero["provincia"] or "",
-                    ciudad=p_primero["ciudad"] or "",
-                    municipio=p_primero["municipio"] or ""
-                )
+                if names:
+                    personas = []
+                    for i in range(len(names)):
+                        raw_name = names[i].strip()
+                        cuil = cdus[i].strip() if i < len(cdus) else None
+                        edad_raw = edades[i].strip() if i < len(edades) else None
+                        gen_raw = generos[i].strip().lower() if i < len(generos) else ""
+                        provincia = provincias[i].strip().title() if i < len(provincias) else None
+                        ciudad = ciudades[i].strip().title() if i < len(ciudades) else None
+                        municipio = municipios[i].strip().title() if i < len(municipios) else None
 
-                desc_partes = [f"Datuar - {p_primero['nombre_completo']}"]
-                if p_primero["cuil"]:
-                    desc_partes.append(f"CUIL: {p_primero['cuil']}")
-                if p_primero["edad"]:
-                    desc_partes.append(f"Edad: {p_primero['edad']} años")
-                if p_primero["ciudad"] or p_primero["provincia"]:
-                    ub = f"{p_primero['ciudad'] or ''}, {p_primero['provincia'] or ''}".strip(", ")
-                    desc_partes.append(f"Ubicación: {ub}")
-                if len(personas) > 1:
-                    desc_partes.append(f"Total coincidencias: {len(personas)}")
-                descripcion_line = " | ".join(desc_partes)
+                        genero = ""
+                        if gen_raw in ("m", "masculino"):
+                            genero = "Masculino"
+                        elif gen_raw in ("f", "femenino"):
+                            genero = "Femenino"
 
-                return ScrapeResult(
-                    ani=linea.ani,
-                    status=StatusScraping.COINCIDENCIA,
-                    fuente_scraper=self.nombre,
-                    titular=titular,
-                    detalles={
-                        "nombre_completo": p_primero["nombre_completo"],
-                        "nombres": p_primero["nombres"],
-                        "apellidos": p_primero["apellidos"],
-                        "cuil": p_primero["cuil"],
-                        "dni": dni_limpio,
-                        "edad": p_primero["edad"],
-                        "genero": p_primero["genero"],
-                        "provincia": p_primero["provincia"],
-                        "ciudad": p_primero["ciudad"],
-                        "municipio": p_primero["municipio"],
-                        "total_coincidencias": len(personas),
-                        "coincidencias": personas,
-                        "origen": "datuar_live"
-                    },
-                    descripcion=descripcion_line
-                )
+                        edad = int(edad_raw) if edad_raw and edad_raw.isdigit() else None
 
-            # No se encontraron nombres en Datuar
-            return ScrapeResult(
-                ani=linea.ani,
-                status=StatusScraping.SIN_COINCIDENCIA,
-                fuente_scraper=self.nombre,
-                titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
-                detalles={"motivo": "DNI no registrado en Datuar", "dni": dni_limpio},
-                descripcion=f"Datuar - DNI {dni_limpio} sin registros"
-            )
+                        parts = [p.strip() for p in raw_name.split(",") if p.strip()]
+                        if len(parts) >= 2:
+                            apellidos = parts[0].upper()
+                            nombres = parts[1].title()
+                        elif i < len(first_names):
+                            nombres = first_names[i].strip().title()
+                            apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
+                        else:
+                            apellidos = raw_name.upper()
+                            nombres = ""
 
-        except Exception as e:
-            logger.error(f"Error al consultar Datuar para DNI {dni_limpio}: {e}")
-            return ScrapeResult(
-                ani=linea.ani,
-                status=StatusScraping.SIN_COINCIDENCIA,
-                fuente_scraper=self.nombre,
-                descripcion=f"Fallo de conexión a Datuar: {str(e)[:80]}",
-                detalles={"error": str(e), "dni": dni_limpio}
-            )
+                        nombre_completo = f"{apellidos}, {nombres}".strip(", ")
+                        personas.append({
+                            "nombre_completo": nombre_completo,
+                            "nombres": nombres,
+                            "apellidos": apellidos,
+                            "cuil": cuil,
+                            "dni": dni_limpio,
+                            "edad": edad,
+                            "genero": genero,
+                            "provincia": provincia,
+                            "ciudad": ciudad,
+                            "municipio": municipio
+                        })
+
+                    p_primero = personas[0]
+                    titular = Titular(
+                        nombre=p_primero["nombres"],
+                        apellido=p_primero["apellidos"],
+                        nro_documento=dni_limpio,
+                        tipo_documento="DNI",
+                        cuil=p_primero["cuil"] or "",
+                        edad=str(p_primero["edad"]) if p_primero["edad"] is not None else "",
+                        genero=p_primero["genero"] or "",
+                        provincia=p_primero["provincia"] or "",
+                        ciudad=p_primero["ciudad"] or "",
+                        municipio=p_primero["municipio"] or ""
+                    )
+
+                    desc_partes = [f"Datuar - {p_primero['nombre_completo']}"]
+                    if p_primero["cuil"]:
+                        desc_partes.append(f"CUIL: {p_primero['cuil']}")
+                    if p_primero["edad"]:
+                        desc_partes.append(f"Edad: {p_primero['edad']} años")
+                    if p_primero["ciudad"] or p_primero["provincia"]:
+                        ub = f"{p_primero['ciudad'] or ''}, {p_primero['provincia'] or ''}".strip(", ")
+                        desc_partes.append(f"Ubicación: {ub}")
+                    if len(personas) > 1:
+                        desc_partes.append(f"Total coincidencias: {len(personas)}")
+                    descripcion_line = " | ".join(desc_partes)
+
+                    return ScrapeResult(
+                        ani=linea.ani,
+                        status=StatusScraping.COINCIDENCIA,
+                        fuente_scraper=self.nombre,
+                        titular=titular,
+                        detalles={
+                            "nombre_completo": p_primero["nombre_completo"],
+                            "nombres": p_primero["nombres"],
+                            "apellidos": p_primero["apellidos"],
+                            "cuil": p_primero["cuil"],
+                            "dni": dni_limpio,
+                            "edad": p_primero["edad"],
+                            "genero": p_primero["genero"],
+                            "provincia": p_primero["provincia"],
+                            "ciudad": p_primero["ciudad"],
+                            "municipio": p_primero["municipio"],
+                            "total_coincidencias": len(personas),
+                            "coincidencias": personas,
+                            "origen": "datuar_live"
+                        },
+                        descripcion=descripcion_line
+                    )
+
+                # Si llegamos al final del HTML y no dio error ni 0 resultados (o es el último intento)
+                if intento == max_intentos or "0 resultados" not in html:
+                    return ScrapeResult(
+                        ani=linea.ani,
+                        status=StatusScraping.SIN_COINCIDENCIA,
+                        fuente_scraper=self.nombre,
+                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
+                        detalles={"motivo": "DNI no registrado en Datuar", "dni": dni_limpio},
+                        descripcion=f"Datuar - DNI {dni_limpio} sin registros"
+                    )
+
+            except Exception as e:
+                logger.debug(f"Aviso al consultar Datuar para DNI {dni_limpio} (intento {intento}/{max_intentos}): {e}")
+                if self.use_tor:
+                    self._rotar_circuito_instantaneo()
+                time.sleep(0.4)
+
+        return ScrapeResult(
+            ani=linea.ani,
+            status=StatusScraping.SIN_COINCIDENCIA,
+            fuente_scraper=self.nombre,
+            descripcion=f"Datuar sin respuesta tras {max_intentos} intentos para DNI {dni_limpio}",
+            detalles={"error": "Agotados intentos en Datuar", "dni": dni_limpio}
+        )
+

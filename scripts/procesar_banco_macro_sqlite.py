@@ -35,6 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 import config
 from core.domain.entities import Linea, StatusScraping
+from core.domain.cuit_validator import calcular_cuil, inferir_genero, obtener_cuils_candidatos
 from adapters.scrapers.cuitonline.cuitonline_adapter import CuitOnlineAdapter
 from adapters.scrapers.bcra.bcra_client import BCRAClient
 from adapters.scrapers.datuar.datuar_adapter import DatuarAdapter
@@ -214,6 +215,18 @@ class MacroEnricherWorker:
         if self.iris:
             self.iris.cerrar()
 
+    def _consultar_bcra_coordinado(self, cuit: str) -> Optional[Dict[str, Any]]:
+        with self.orchestrator.bcra_lock:
+            ahora = time.time()
+            transcurrido = ahora - self.orchestrator.last_bcra_time
+            if transcurrido < 1.15:
+                time.sleep(1.15 - transcurrido)
+            if self.orchestrator.stop_event.is_set():
+                return None
+            res = self.bcra.consultar_deuda(cuit)
+            self.orchestrator.last_bcra_time = time.time()
+            return res
+
     def procesar_persona(self, dni: str, nombre_excel: str) -> Dict[str, Any]:
         prefix = f"[W{self.worker_id}] [{dni}]"
         resumen: Dict[str, Any] = {
@@ -281,21 +294,61 @@ class MacroEnricherWorker:
         if self.orchestrator.stop_event.is_set():
             return resumen
 
-        # 3. BCRA Central de Deudores (Utiliza CUIT consolidado de CuitOnline o Datuar)
+        # 3. BCRA Central de Deudores (EJECUCIÓN OBLIGATORIA PARA EL 100% DE REGISTROS)
         bcra_data = {}
-        if cuit_encontrado:
-            logger.info(f"{prefix} Paso 3/5: Consultando BCRA con CUIT {cuit_encontrado}...")
-            try:
-                bcra_res = self.bcra.consultar_deuda(cuit_encontrado)
+        logger.info(f"{prefix} Paso 3/5: Consultando BCRA Central de Deudores...")
+        try:
+            if cuit_encontrado:
+                logger.info(f"{prefix} BCRA: Consultando con CUIT verificado {cuit_encontrado}...")
+                bcra_res = self._consultar_bcra_coordinado(cuit_encontrado)
                 if bcra_res:
                     bcra_data = bcra_res
+                    if not bcra_res.get("sin_deuda"):
+                        deuda_macro = bcra_res.get("deuda_macro_miles", 0.0)
+                        sit_macro = bcra_res.get("deuda_macro_situacion")
+                        logger.info(f"{prefix} BCRA OK: Deuda Macro ${deuda_macro}k (Sit {sit_macro}) | Total ${bcra_res.get('deuda_total_miles')}k (Peor Sit {bcra_res.get('peor_situacion')})")
+                    else:
+                        logger.info(f"{prefix} BCRA: Sin deudas registradas para CUIT {cuit_encontrado}")
+            else:
+                genero_hint = cuit_data.get("genero") or datuar_data.get("genero")
+                cuil_cand_1, cuil_cand_2 = obtener_cuils_candidatos(dni, nombre_excel, genero_hint)
+                logger.info(f"{prefix} CUIT no hallado en CuitOnline/Datuar. Generados CUILs algorítmicos: {cuil_cand_1} (primario) / {cuil_cand_2} (alternativo)")
+
+                # 1. Probar candidato primario en BCRA
+                bcra_res = self._consultar_bcra_coordinado(cuil_cand_1)
+                if bcra_res and (not bcra_res.get("sin_deuda") or bcra_res.get("denominacion")):
+                    cuit_encontrado = cuil_cand_1
+                    bcra_data = bcra_res
+                    resumen["cuit"] = cuit_encontrado
                     deuda_macro = bcra_res.get("deuda_macro_miles", 0.0)
                     sit_macro = bcra_res.get("deuda_macro_situacion")
-                    logger.info(f"{prefix} BCRA OK: Deuda Macro ${deuda_macro}k (Sit {sit_macro}) | Total ${bcra_res.get('deuda_total_miles')}k (Peor Sit {bcra_res.get('peor_situacion')})")
-            except Exception as e:
-                logger.warning(f"{prefix} Error en BCRA: {e}")
-        else:
-            logger.info(f"{prefix} Paso 3/5: Omitiendo BCRA (sin CUIT verificado en CuitOnline ni Datuar)")
+                    logger.info(f"{prefix} BCRA OK (CUIL Primario {cuit_encontrado}): {bcra_res.get('denominacion')} | Macro ${deuda_macro}k (Sit {sit_macro}) | Total ${bcra_res.get('deuda_total_miles')}k (Peor Sit {bcra_res.get('peor_situacion')})")
+                else:
+                    # 2. Probar candidato alternativo en BCRA
+                    bcra_res_alt = self._consultar_bcra_coordinado(cuil_cand_2)
+                    if bcra_res_alt and (not bcra_res_alt.get("sin_deuda") or bcra_res_alt.get("denominacion")):
+                        cuit_encontrado = cuil_cand_2
+                        bcra_data = bcra_res_alt
+                        resumen["cuit"] = cuit_encontrado
+                        deuda_macro = bcra_res_alt.get("deuda_macro_miles", 0.0)
+                        sit_macro = bcra_res_alt.get("deuda_macro_situacion")
+                        logger.info(f"{prefix} BCRA OK (CUIL Alternativo {cuit_encontrado}): {bcra_res_alt.get('denominacion')} | Macro ${deuda_macro}k (Sit {sit_macro}) | Total ${bcra_res_alt.get('deuda_total_miles')}k (Peor Sit {bcra_res_alt.get('peor_situacion')})")
+                    else:
+                        # Ninguno tiene deuda registrada en el BCRA (persona sin deuda en sistema financiero)
+                        cuit_encontrado = cuil_cand_1
+                        bcra_data = bcra_res or bcra_res_alt or {
+                            "cuit": cuit_encontrado,
+                            "sin_deuda": True,
+                            "entidades": [],
+                            "peor_situacion": 0,
+                            "deuda_total_miles": 0.0,
+                            "deuda_macro_miles": 0.0,
+                            "deuda_macro_situacion": None
+                        }
+                        resumen["cuit"] = cuit_encontrado
+                        logger.info(f"{prefix} BCRA: Sin deudas en sistema financiero. Asignado CUIL matemático {cuit_encontrado}")
+        except Exception as e:
+            logger.warning(f"{prefix} Error en BCRA: {e}")
 
         if self.orchestrator.stop_event.is_set():
             return resumen
@@ -371,7 +424,8 @@ class MacroEnricherWorker:
             lineas_descubiertas=lineas_descubiertas,
             telcos_resultados=telcos_resultados,
             lineas_activas_resumen=" | ".join(lineas_activas_textos),
-            error_msg=error_iris
+            error_msg=error_iris,
+            cuit_consolidado=cuit_encontrado
         )
 
         resumen["telcos_resultados"] = telcos_resultados
@@ -397,6 +451,8 @@ class BancoMacroOrchestrator:
         self.db_write_lock = threading.Lock()
         self.cuitonline_lock = threading.Lock()
         self.last_cuitonline_time = 0.0
+        self.bcra_lock = threading.Lock()
+        self.last_bcra_time = 0.0
         self.stop_event = threading.Event()
 
         # Telcos: Pool de N workers concurrentes (default 15) sobre Tor Stream Isolation
@@ -438,7 +494,8 @@ class BancoMacroOrchestrator:
         lineas_descubiertas: List[str],
         telcos_resultados: List[Dict[str, Any]],
         lineas_activas_resumen: str,
-        error_msg: Optional[str] = None
+        error_msg: Optional[str] = None,
+        cuit_consolidado: Optional[str] = None
     ):
         with self.db_write_lock:
             conn = self.get_db()
@@ -447,11 +504,11 @@ class BancoMacroOrchestrator:
 
             try:
                 # 1. Actualizar tabla personas
-                nombre_oficial = cuit_data.get("denominacion") or datuar_data.get("nombre_completo") or ""
+                nombre_oficial = cuit_data.get("denominacion") or datuar_data.get("nombre_completo") or bcra_data.get("denominacion") or ""
                 if nombre_oficial:
                     nombre_oficial = nombre_oficial.replace("?", "Ñ")
 
-                cuit_raw = cuit_data.get("cuit_limpio") or datuar_data.get("cuil") or ""
+                cuit_raw = cuit_consolidado or cuit_data.get("cuit_limpio") or datuar_data.get("cuil") or bcra_data.get("cuit") or ""
                 cuit_clean = "".join(filter(str.isdigit, str(cuit_raw)))
                 cuit = cuit_clean if len(cuit_clean) == 11 else ""
 
@@ -460,6 +517,14 @@ class BancoMacroOrchestrator:
                     genero = "Masculino"
                 elif "femenin" in gen_raw or gen_raw == "f":
                     genero = "Femenino"
+                elif cuit.startswith("20"):
+                    genero = "Masculino"
+                elif cuit.startswith("27"):
+                    genero = "Femenino"
+                elif cuit.startswith("23") and cuit.endswith("4"):
+                    genero = "Femenino"
+                elif cuit.startswith("23") and cuit.endswith("9"):
+                    genero = "Masculino"
                 else:
                     genero = ""
 
@@ -470,17 +535,32 @@ class BancoMacroOrchestrator:
                 localidad = cuit_data.get("localidad") or datuar_data.get("ciudad") or ""
                 ciudad = datuar_data.get("ciudad") or ""
                 municipio = datuar_data.get("municipio") or ""
-                provincia = cuit_data.get("provincia") or datuar_data.get("provincia") or ""
-                condicion_afip = f"IVA: {cuit_data.get('iva', '')} | Ganancias: {cuit_data.get('ganancias', '')}".strip(" |") if cuit_data else ""
+                # Condición fiscal AFIP normalizada y comprensible
+                impuestos_cuit = [str(x).upper() for x in (cuit_data.get("impuestos_activos") or [])]
+                iva_raw = (cuit_data.get("iva") or "").strip().lower()
+                gan_raw = (cuit_data.get("ganancias") or "").strip().lower()
+
+                if any("MONOTRIBUTO" in imp for imp in impuestos_cuit):
+                    condicion_afip = "Monotributo Social" if any("SOCIAL" in imp for imp in impuestos_cuit) else "Monotributista"
+                elif "inscripto" in iva_raw or "personas fisicas" in gan_raw or "ganancias" in gan_raw:
+                    condicion_afip = "Responsable Inscripto"
+                elif "exento" in iva_raw:
+                    condicion_afip = "IVA Exento"
+                elif any("NO REGISTRA IMPUESTOS" in imp for imp in impuestos_cuit):
+                    condicion_afip = "No Inscripto (Solo CUIL / Empleado o Jubilado)"
+                elif cuit_data.get("cuit_limpio"):
+                    condicion_afip = "No Inscripto (Solo CUIL)"
+                else:
+                    condicion_afip = ""
                 tipo_persona = cuit_data.get("tipo_persona") or ""
                 empleador = cuit_data.get("empleador") or ""
                 actividades = json.dumps(cuit_data.get("actividades", []), ensure_ascii=False) if cuit_data.get("actividades") else ""
                 constancia_afip_url = cuit_data.get("constancia_inscripcion_afip") or ""
 
-                peor_sit = bcra_data.get("peor_situacion", 0)
-                deuda_total_miles = bcra_data.get("deuda_total_miles", 0.0)
-                deuda_macro_miles = bcra_data.get("deuda_macro_miles", 0.0)
-                deuda_macro_sit = bcra_data.get("deuda_macro_situacion")
+                peor_sit = bcra_data.get("peor_situacion", 0) if bcra_data else None
+                deuda_total_miles = bcra_data.get("deuda_total_miles", 0.0) if bcra_data else 0.0
+                deuda_macro_miles = bcra_data.get("deuda_macro_miles", 0.0) if bcra_data else 0.0
+                deuda_macro_sit = bcra_data.get("deuda_macro_situacion") if bcra_data else None
 
                 # Payload completo consolidado sin omitir ningún campo de cada scraper
                 datos_completos = {
@@ -491,7 +571,8 @@ class BancoMacroOrchestrator:
                         "total_lineas": len(lineas_descubiertas),
                         "total_operaciones": len(operaciones_iris),
                         "lineas_descubiertas": lineas_descubiertas
-                    }
+                    },
+                    "cuil_determinado": cuit
                 }
                 datos_json_str = json.dumps(datos_completos, ensure_ascii=False)
 
@@ -731,44 +812,10 @@ class BancoMacroOrchestrator:
             print("="*70)
 
     def exportar_excel(self, output_path: Optional[Path] = None):
-        """Exporta la base enriquecida a un archivo Excel."""
+        """Exporta la base enriquecida a un archivo Excel multi-hoja profesional."""
+        from scripts.exportar_banco_macro_excel import exportar_base_macro_excel
         out = output_path or (PROJECT_ROOT / "base_macro_enriquecida.xlsx")
-        print(f"📊 Exportando datos enriquecidos a {out}...")
-
-        conn = self.get_db()
-        df = pd.read_sql_query("""
-            SELECT 
-                p.dni AS "DNI",
-                p.nombre_excel AS "Nombre Excel",
-                p.nombre_oficial AS "Nombre Oficial",
-                p.cuit AS "CUIT/CUIL",
-                p.genero AS "Género",
-                p.edad AS "Edad",
-                p.domicilio_fiscal AS "Domicilio Fiscal",
-                p.localidad AS "Localidad",
-                p.ciudad AS "Ciudad (Datuar)",
-                p.municipio AS "Municipio (Datuar)",
-                p.provincia AS "Provincia",
-                p.tipo_persona AS "Tipo Persona AFIP",
-                p.empleador AS "Empleador AFIP",
-                p.condicion_afip AS "Condición AFIP",
-                p.actividades_afip AS "Actividades AFIP",
-                p.constancia_afip_url AS "Constancia AFIP URL",
-                p.peor_situacion_bcra AS "Peor Sit. BCRA",
-                p.deuda_macro_miles AS "Deuda Macro ($ Miles)",
-                p.deuda_macro_situacion AS "Sit. Banco Macro",
-                p.deuda_total_bcra_miles AS "Deuda Total Finan. ($ Miles)",
-                p.total_lineas_iris AS "Líneas Halladas IRIS",
-                p.lineas_activas_resumen AS "Auditoría Telcos Activas",
-                p.estado_proceso AS "Estado",
-                p.fecha_actualizacion AS "Fecha Procesado"
-            FROM personas p
-            ORDER BY p.deuda_macro_miles DESC, p.total_operaciones_excel DESC
-        """, conn)
-        conn.close()
-
-        df.to_excel(out, index=False)
-        print(f"✅ Excel generado con éxito: {out} ({len(df)} registros)")
+        return exportar_base_macro_excel(out)
 
 
 def main():

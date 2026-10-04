@@ -35,8 +35,11 @@ class MemoryQueueAdapter(IColaRepositorioPort):
             canon = "cuitonline"
         elif "datuar" in nombre_clean:
             canon = "datuar"
+        elif "bcra" in nombre_clean:
+            canon = "bcra"
         else:
             canon = nombre_clean
+
 
         candidatos = []
         for r in self.records.values():

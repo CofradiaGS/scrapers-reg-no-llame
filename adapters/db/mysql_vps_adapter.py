@@ -162,7 +162,8 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         estado=EstadoRegistro.PROCESANDO,
                         scraper_actual=scraper_nombre,
                         fuente=r.get("fuente"),
-                        datos_existentes=raw_json
+                        datos_existentes=raw_json,
+                        tipo_cola="registro_no_llame"
                     ))
 
                 return registros

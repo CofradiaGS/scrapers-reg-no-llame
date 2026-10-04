@@ -147,6 +147,7 @@ class RegistroCola:
     fuente: Optional[str] = None
     datos_existentes: Dict[str, Any] = field(default_factory=dict)
     dni: Optional[str] = None
+    tipo_cola: Optional[str] = None
 
     def __post_init__(self):
         if self.dni and self.linea and not self.linea.dni:
@@ -164,8 +165,8 @@ class ReglaPipeline:
     para el modelo de piscina autónoma distribuida multi-PC.
     """
     TELCOS = ("claro", "personal", "movistar")
-    REQUIEREN_DNI = ("claro", "datuar", "cuitonline")
-    CADENA_DEFAULT = ["iris", "claro", "personal", "movistar", "datuar", "cuitonline"]
+    REQUIEREN_DNI = ("claro", "datuar", "cuitonline", "bcra")
+    CADENA_DEFAULT = ["iris", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
 
     @classmethod
     def es_reciente(cls, fecha_str: Optional[str], max_dias: int = 7) -> bool:
@@ -195,6 +196,8 @@ class ReglaPipeline:
         if dni_directo:
             clean = "".join(filter(str.isdigit, str(dni_directo))).strip()
             if clean:
+                if len(clean) == 11 and clean.startswith(("20", "27", "23", "24")):
+                    return str(int(clean[2:10]))
                 return clean
         if not datos_json or not isinstance(datos_json, dict):
             return None
@@ -217,6 +220,11 @@ class ReglaPipeline:
             doc = datuar.get("dni") or datuar.get("detalles", {}).get("dni")
             if doc:
                 return str(doc).strip()
+            cuil_val = datuar.get("cuil") or datuar.get("detalles", {}).get("cuil")
+            if cuil_val:
+                c_clean = "".join(filter(str.isdigit, str(cuil_val)))
+                if len(c_clean) == 11 and c_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(c_clean[2:10]))
 
         # 3. Namespace cuitonline
         cuit = datos_json.get("cuitonline", {})
@@ -224,12 +232,88 @@ class ReglaPipeline:
             doc = cuit.get("dni") or cuit.get("detalles", {}).get("dni")
             if doc:
                 return str(doc).strip()
+            cuit_val = cuit.get("cuit_limpio") or cuit.get("cuit") or cuit.get("detalles", {}).get("cuit_limpio") or cuit.get("detalles", {}).get("cuit")
+            if cuit_val:
+                cuit_clean = "".join(filter(str.isdigit, str(cuit_val)))
+                if len(cuit_clean) == 11 and cuit_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(cuit_clean[2:10]))
 
-        # 4. Raíz
+        # 4. Namespace bcra
+        bcra_ns = datos_json.get("bcra", {})
+        if isinstance(bcra_ns, dict):
+            doc = bcra_ns.get("dni") or bcra_ns.get("detalles", {}).get("dni")
+            if doc:
+                return str(doc).strip()
+            # Derivar DNI desde CUIT de 11 dígitos si aplica (caracteres 2 a 10)
+            cuit_val = bcra_ns.get("cuit") or bcra_ns.get("detalles", {}).get("cuit")
+            if cuit_val:
+                cuit_clean = "".join(filter(str.isdigit, str(cuit_val)))
+                if len(cuit_clean) == 11 and cuit_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(cuit_clean[2:10]))
+
+        # 5. Raíz
         if datos_json.get("dni"):
             return str(datos_json["dni"]).strip()
 
         return None
+
+    @classmethod
+    def extraer_cuit(cls, datos_json: Optional[Dict[str, Any]], cuit_directo: Optional[str] = None) -> Optional[str]:
+        """Extrae el CUIT/CUIL verificado de 11 dígitos desde cualquier namespace de datos_json."""
+        if cuit_directo:
+            clean = "".join(filter(str.isdigit, str(cuit_directo))).strip()
+            if len(clean) == 11:
+                return clean
+        if not datos_json or not isinstance(datos_json, dict):
+            return None
+
+        # 1. Namespace bcra
+        bcra_ns = datos_json.get("bcra", {})
+        if isinstance(bcra_ns, dict):
+            c = bcra_ns.get("cuit") or bcra_ns.get("detalles", {}).get("cuit")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 2. Namespace cuitonline
+        cuit_ns = datos_json.get("cuitonline", {})
+        if isinstance(cuit_ns, dict):
+            c = cuit_ns.get("cuit_limpio") or cuit_ns.get("cuit") or cuit_ns.get("detalles", {}).get("cuit_limpio") or cuit_ns.get("detalles", {}).get("cuit")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 3. Namespace datuar
+        datuar = datos_json.get("datuar", {})
+        if isinstance(datuar, dict):
+            c = datuar.get("cuil") or datuar.get("detalles", {}).get("cuil")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 4. Namespace iris
+        iris = datos_json.get("iris", {})
+        if isinstance(iris, dict):
+            titular = iris.get("titular", {})
+            if isinstance(titular, dict):
+                c = titular.get("cuil") or titular.get("cuit")
+                if c:
+                    clean = "".join(filter(str.isdigit, str(c)))
+                    if len(clean) == 11:
+                        return clean
+
+        # 5. Raíz
+        c_root = datos_json.get("cuit") or datos_json.get("cuil")
+        if c_root:
+            clean = "".join(filter(str.isdigit, str(c_root)))
+            if len(clean) == 11:
+                return clean
+
+        return None
+
 
     @classmethod
     def es_elegible_para_scraper(
@@ -277,6 +361,8 @@ class ReglaPipeline:
             nombre = "cuitonline"
         elif "datuar" in nombre:
             nombre = "datuar"
+        elif "bcra" in nombre:
+            nombre = "bcra"
         elif "telco" in nombre:
             nombre = "telcos"
 
@@ -388,7 +474,14 @@ class ReglaPipeline:
                 return False, "CuitOnline exige haber pasado previamente por Datuar"
             return True, "Apto para CuitOnline"
 
+        if nombre == "bcra":
+            cuit_activo = cls.extraer_cuit(datos)
+            if not dni_activo and not cuit_activo:
+                return False, "BCRA requiere DNI o CUIT disponible"
+            return True, "Apto para BCRA Central de Deudores"
+
         return False, f"Scraper desconocido: {nombre}"
+
 
     @classmethod
     def resolver_siguiente_etapa(
@@ -530,6 +623,12 @@ class ReglaPipeline:
             # 3. CuitOnline requiere haber pasado por Datuar previamente
             paso_datuar = ("datuar" in pasados or (isinstance(datos.get("datuar"), dict) and datos["datuar"].get("status")))
             if candidato == "cuitonline" and not paso_datuar:
+                continue
+
+            # 4. BCRA requiere haber pasado previamente por CuitOnline o Datuar (o contar con DNI/CUIT)
+            paso_previo_id = paso_datuar or ("cuitonline" in pasados or (isinstance(datos.get("cuitonline"), dict) and datos["cuitonline"].get("status")))
+            cuit_disponible = bool(cls.extraer_cuit(datos))
+            if candidato == "bcra" and not (paso_previo_id or tiene_dni or cuit_disponible):
                 continue
 
             # Candidato válido encontrado

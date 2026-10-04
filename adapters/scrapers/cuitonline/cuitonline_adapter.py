@@ -19,6 +19,7 @@ from bs4 import BeautifulSoup
 
 import config
 from core.domain.entities import Linea, ScrapeResult, StatusScraping, Titular
+from core.domain.cuit_validator import validar_cuit_modulo11
 from adapters.scrapers.base_scraper import BaseScraperAdapter
 from adapters.network.tor_controller import TorController
 
@@ -123,14 +124,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                 "http": self._proxy_url,
                 "https": self._proxy_url
             }
-            logger.info(f"CuitOnlineAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot}).")
-
-        # Establecer cookies iniciales
-        try:
-            headers = self._get_headers()
-            self._session.get(f"{self.base_url}/", headers=headers, timeout=self.timeout)
-        except Exception as e:
-            logger.debug(f"Aviso al inicializar cookies en CuitOnline: {e}")
+            logger.debug(f"CuitOnlineAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot}).")
 
     def autenticar(self) -> bool:
         if self._session is None:
@@ -163,10 +157,11 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         ua = random.choice(self.USER_AGENTS)
         return {
             "User-Agent": ua,
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+            "Accept-Language": "es-419,es;q=0.9,en;q=0.8",
             "Referer": f"{self.base_url}/",
-            "Connection": "keep-alive"
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache"
         }
 
     def _parse_search_hit(self, hit_element) -> Dict[str, Any]:
@@ -373,7 +368,42 @@ class CuitOnlineAdapter(BaseScraperAdapter):
             data["apellidos"] = denom.upper()
             data["nombres"] = ""
 
+        # Inferencia de género por prefijo CUIT si no vino en HTML
+        cuit_clean = data.get("cuit_limpio", "")
+        genero = data.get("genero", "")
+        if not genero and cuit_clean:
+            if cuit_clean.startswith("20"):
+                data["genero"] = "Masculino"
+            elif cuit_clean.startswith("27"):
+                data["genero"] = "Femenino"
+            elif cuit_clean.startswith("23") and cuit_clean.endswith("4"):
+                data["genero"] = "Femenino"
+            elif cuit_clean.startswith("23") and cuit_clean.endswith("9"):
+                data["genero"] = "Masculino"
+
+        # Determinación de Condición AFIP Real
+        impuestos_activos = data.get("impuestos_activos", [])
+        has_mono = any("MONOTRIBUTO" in str(x).upper() for x in impuestos_activos)
+        has_mono_social = any("SOCIAL" in str(x).upper() for x in impuestos_activos)
+        no_imp = any("NO REGISTRA" in str(x).upper() for x in impuestos_activos)
+        iva = str(data.get("iva", "")).lower()
+        ganancias = str(data.get("ganancias", "")).lower()
+
+        if has_mono:
+            condicion_afip = "Monotributo Social" if has_mono_social else "Monotributista"
+        elif "inscripto" in iva or "personas fisicas" in ganancias:
+            condicion_afip = "Responsable Inscripto"
+        elif "exento" in iva:
+            condicion_afip = "IVA Exento"
+        elif no_imp:
+            condicion_afip = "No Inscripto (Solo CUIL / Empleado o Jubilado)"
+        else:
+            condicion_afip = "No Inscripto (Solo CUIL / Empleado o Jubilado)"
+
+        data["condicion_afip"] = condicion_afip
+
         return data
+
 
     def _normalizar_url(self, href: str) -> str:
         """Normaliza enlaces relativos y protocol-relative."""
@@ -406,67 +436,104 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                 detalles={"motivo": "DNI no provisto ni inferido"}
             )
 
-        # Consulta en Red a CuitOnline
+        # Consulta en Red a CuitOnline con Blindaje Anti-Honeypot
         if self._session is None:
             self.iniciar()
 
-        self.request_count += 1
-        if self.use_tor and self.tor_rotate_every > 0 and (self.request_count % self.tor_rotate_every == 0):
-            self._rotar_circuito_instantaneo()
-
-        self.sleep_jitter(self.delay_min, self.delay_max)
-
         url_busqueda = f"{self.base_url}/search.php?q={dni_limpio}"
-        headers = self._get_headers()
+        max_intentos = 4
 
-        try:
-            resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
-
-            retries_429 = 0
-            while resp.status_code == 429 and retries_429 < 3:
-                retries_429 += 1
-                if self.use_tor:
+        for intento in range(1, max_intentos + 1):
+            try:
+                self.request_count += 1
+                if self.use_tor and self.tor_rotate_every > 0 and (self.request_count % self.tor_rotate_every == 0):
                     self._rotar_circuito_instantaneo()
-                wait_time = 2.0 * retries_429 + random.uniform(0.5, 1.5)
-                logger.warning(f"⚠️ CuitOnline Rate Limit (HTTP 429). Esperando {wait_time:.1f}s (intento {retries_429}/3)...")
-                time.sleep(wait_time)
+
+                # REGLA DE ORO ANTI-HONEYPOT: Aislamiento Zero-Cookies
+                # CuitOnline activa paywall y honeypot (MD5 traps) si detecta cookies de sesiones previas.
+                self._session.cookies.clear()
+
+                self.sleep_jitter(self.delay_min, self.delay_max)
+                headers = self._get_headers()
+
                 resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
 
-            if resp.status_code != 200:
-                logger.warning(f"CuitOnline retornó código HTTP {resp.status_code} para DNI {dni_limpio}")
-                return ScrapeResult(
-                    ani=linea.ani,
-                    status=StatusScraping.SIN_COINCIDENCIA,
-                    fuente_scraper=self.nombre,
-                    descripcion=f"CuitOnline error HTTP {resp.status_code}",
-                    detalles={"http_status": resp.status_code, "dni": dni_limpio}
-                )
+                # Rate limiting adaptativo 429
+                if resp.status_code == 429:
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
+                    wait_time = 1.5 * intento + random.uniform(0.5, 1.0)
+                    logger.warning(f"⚠️ CuitOnline Rate Limit (HTTP 429). Esperando {wait_time:.1f}s (intento {intento}/{max_intentos})...")
+                    time.sleep(wait_time)
+                    continue
 
-            resp.encoding = "utf-8"
-            soup = BeautifulSoup(resp.text, "html.parser")
-            hit_elements = soup.select(".hit")
+                if resp.status_code != 200:
+                    time.sleep(0.5)
+                    continue
 
-            if hit_elements:
-                parsed_hits = [self._parse_search_hit(h) for h in hit_elements]
-                hit_principal = parsed_hits[0]
+                resp.encoding = "utf-8"
+                soup = BeautifulSoup(resp.text, "html.parser")
+                hit_elements = soup.select(".hit")
 
-                # 3. Profundizar en la página de detalle oficial para extraer el 100% de los campos
-                full_data = dict(hit_principal)
-                detalle_url = hit_principal.get("detalle_url")
+                if not hit_elements:
+                    return ScrapeResult(
+                        ani=linea.ani,
+                        status=StatusScraping.SIN_COINCIDENCIA,
+                        fuente_scraper=self.nombre,
+                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
+                        detalles={"motivo": "DNI no registrado en CuitOnline", "dni": dni_limpio},
+                        descripcion=f"CuitOnline - DNI {dni_limpio} sin registros"
+                    )
+
+                # Procesar hit validando contra Honeypot
+                parsed_hit = None
+                for hit_el in hit_elements:
+                    # Escudo Anti-Honeypot 1: Enlace con CUIT numérico
+                    link_el = hit_el.select_one(".denominacion a")
+                    link = link_el.get("href", "") if link_el else ""
+                    m_cuit = re.search(r"detalle/(\d{11})/", link)
+                    if not m_cuit:
+                        # Trampa MD5 detectada (e.g. /detalle/bcb827a0...)
+                        logger.warning(f"🛡️ Honeypot MD5 detectado en CuitOnline para DNI {dni_limpio}. Descartando trampa...")
+                        continue
+
+                    cuit_candidato = m_cuit.group(1)
+
+                    # Escudo Anti-Honeypot 2: Verificación algorítmica Módulo 11 oficial
+                    if not validar_cuit_modulo11(cuit_candidato):
+                        logger.warning(f"🛡️ CUIT falso detectado en CuitOnline ({cuit_candidato}) para DNI {dni_limpio}. Descartando...")
+                        continue
+
+                    parsed_hit = self._parse_search_hit(hit_el)
+                    break
+
+                if not parsed_hit:
+                    # Todos los hits fueron honeypot o inválidos en este intento; rotar y reintentar
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
+                    time.sleep(1.0)
+                    continue
+
+                # Paso 2: Profundizar en ficha de detalle con sesión limpia
+                full_data = dict(parsed_hit)
+                detalle_url = parsed_hit.get("detalle_url")
 
                 if self.fetch_detail and detalle_url:
                     try:
-                        self.sleep_jitter(0.1, 0.3)
+                        self.sleep_jitter(0.1, 0.25)
+                        self._session.cookies.clear()
                         r_det = self._session.get(detalle_url, headers=headers, timeout=self.timeout)
+                        if r_det.status_code == 429:
+                            time.sleep(1.5)
+                            r_det = self._session.get(detalle_url, headers=headers, timeout=self.timeout)
                         if r_det.status_code == 200:
                             r_det.encoding = "utf-8"
-                            full_data = self._parse_detail_page(r_det.text, hit_principal)
+                            full_data = self._parse_detail_page(r_det.text, parsed_hit)
                     except Exception as e_det:
                         logger.debug(f"Aviso al consultar detalle de CuitOnline: {e_det}")
 
                 full_data["dni"] = dni_limpio
-                full_data["total_coincidencias"] = len(parsed_hits)
-                full_data["coincidencias"] = parsed_hits
+                full_data["total_coincidencias"] = len(hit_elements)
                 full_data["origen"] = "cuitonline_live"
 
                 cuit_fmt = full_data.get("cuit", "")
@@ -489,7 +556,9 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                 desc_partes = [f"CuitOnline - CUIT: {cuit_fmt}"]
                 if denom:
                     desc_partes.append(denom)
-                if full_data.get("iva"):
+                if full_data.get("condicion_afip"):
+                    desc_partes.append(f"AFIP: {full_data['condicion_afip']}")
+                elif full_data.get("iva"):
                     desc_partes.append(f"IVA: {full_data['iva']}")
                 if full_data.get("provincia"):
                     ub = f"{full_data.get('localidad') or ''}, {full_data.get('provincia') or ''}".strip(", ")
@@ -506,22 +575,15 @@ class CuitOnlineAdapter(BaseScraperAdapter):
                     descripcion=descripcion_line
                 )
 
-            # No se encontraron resultados
-            return ScrapeResult(
-                ani=linea.ani,
-                status=StatusScraping.SIN_COINCIDENCIA,
-                fuente_scraper=self.nombre,
-                titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
-                detalles={"motivo": "DNI no registrado en CuitOnline", "dni": dni_limpio},
-                descripcion=f"CuitOnline - DNI {dni_limpio} sin registros"
-            )
+            except Exception as e:
+                logger.debug(f"Aviso al consultar CuitOnline para DNI {dni_limpio} (intento {intento}/{max_intentos}): {e}")
+                time.sleep(0.8)
 
-        except Exception as e:
-            logger.error(f"Error al consultar CuitOnline para DNI {dni_limpio}: {e}")
-            return ScrapeResult(
-                ani=linea.ani,
-                status=StatusScraping.SIN_COINCIDENCIA,
-                fuente_scraper=self.nombre,
-                descripcion=f"Fallo de conexión a CuitOnline: {str(e)[:80]}",
-                detalles={"error": str(e), "dni": dni_limpio}
-            )
+        return ScrapeResult(
+            ani=linea.ani,
+            status=StatusScraping.SIN_COINCIDENCIA,
+            fuente_scraper=self.nombre,
+            descripcion=f"CuitOnline sin respuesta válida tras {max_intentos} intentos para DNI {dni_limpio}",
+            detalles={"error": "Agotados intentos en CuitOnline", "dni": dni_limpio}
+        )
+

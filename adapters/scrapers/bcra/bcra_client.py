@@ -14,14 +14,18 @@ logger = logging.getLogger("BCRAClient")
 class BCRAClient:
     BASE_URL = "https://api.bcra.gob.ar/centraldedeudores/v1.0/Deudas"
 
-    def __init__(self, timeout: int = 10):
-        self.timeout = timeout
-        self.session = requests.Session()
-        self.session.headers.update({
+    def _crear_session(self) -> requests.Session:
+        s = requests.Session()
+        s.headers.update({
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
             "Accept": "application/json, text/plain, */*",
             "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"
         })
+        return s
+
+    def __init__(self, timeout: int = 10):
+        self.timeout = timeout
+        self.session = self._crear_session()
 
     def consultar_deuda(self, identificacion: str) -> Optional[Dict[str, Any]]:
         """
@@ -34,8 +38,35 @@ class BCRAClient:
             return None
 
         url = f"{self.BASE_URL}/{cuit_limpio}"
+        max_retries = 3
+        resp = None
+        for attempt in range(max_retries):
+            try:
+                resp = self.session.get(url, verify=False, timeout=self.timeout)
+                if resp.status_code == 429:
+                    wait_time = 3.5 * (attempt + 1)
+                    logger.warning(f"⚠️ BCRA Rate Limit (HTTP 429) para {cuit_limpio}. Esperando {wait_time:.1f}s (intento {attempt + 1}/{max_retries})...")
+                    import time
+                    time.sleep(wait_time)
+                    continue
+                break
+            except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as conn_err:
+                logger.warning(f"⚠️ Conexión reiniciada por BCRA ({conn_err}). Recreando sesión y reintentando (intento {attempt + 1}/{max_retries})...")
+                try:
+                    self.session.close()
+                except Exception:
+                    pass
+                self.session = self._crear_session()
+                import time
+                time.sleep(1.0 * (attempt + 1))
+            except Exception as e:
+                logger.error(f"Error consultando BCRA para CUIT {cuit_limpio}: {e}")
+                return None
+
+        if resp is None:
+            return None
+
         try:
-            resp = self.session.get(url, verify=False, timeout=self.timeout)
             if resp.status_code == 404:
                 return {
                     "cuit": cuit_limpio,
@@ -120,5 +151,5 @@ class BCRAClient:
             }
 
         except Exception as e:
-            logger.error(f"Error consultando BCRA para CUIT {cuit_limpio}: {e}")
+            logger.error(f"Error parseando respuesta BCRA para CUIT {cuit_limpio}: {e}")
             return None

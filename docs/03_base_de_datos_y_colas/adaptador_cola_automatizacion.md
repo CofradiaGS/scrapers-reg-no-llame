@@ -275,7 +275,57 @@ El campo `resultado` (JSON) en `cola_automatizacion` almacena de forma íntegra 
 }
 ```
 
-### 4.3 Política de Separación de Responsabilidades (`error_msg` vs `resultado`)
+### 4.4 Enriquecimiento Multi-Scraper (`datuar`, `cuitonline`, `bcra`)
+Cuando la cadena de procesamiento incluye motores de identidad, fiscal y bancario, sus bloques se integran de forma limpia y tipificada en la raíz del JSON `resultado`:
+
+```json
+{
+  "enacom": { "operador_oficial": "TELEFONICA MOVILES ARGENTINA S.A.", "es_celular": true },
+  "iris": { ... },
+  "datuar": {
+    "nombre_completo": "PEREZ, Juan Carlos",
+    "dni": "30112233",
+    "cuil": "20301122331",
+    "edad": 42,
+    "genero": "Masculino",
+    "provincia": "Buenos Aires",
+    "ciudad": "La Plata",
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  },
+  "cuitonline": {
+    "cuit": "20-30112233-1",
+    "cuit_limpio": "20301122331",
+    "denominacion": "PEREZ JUAN CARLOS",
+    "condicion_afip": "Monotributista",
+    "tipo_persona": "Persona Física",
+    "genero": "Masculino",
+    "direccion": "AV CORRIENTES 1234",
+    "provincia": "Buenos Aires",
+    "localidad": "La Plata",
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  },
+  "bcra": {
+    "cuit": "20301122331",
+    "denominacion": "PEREZ JUAN CARLOS",
+    "periodo": "202408",
+    "peor_situacion": 2,
+    "cantidad_entidades": 2,
+    "operaciones_en_cartera": 2,
+    "deuda_total_pesos": 200500.0,
+    "deuda_total_miles": 200.5,
+    "sin_deuda": false,
+    "entidades": [ ... ],
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  }
+}
+```
+
+Asimismo, el DNI enriquecido se propaga automáticamente a la columna relacional indexada `dni` de la tabla `cola_automatizacion` si dicha columna se encontraba vacía.
+
+### 4.5 Política de Separación de Responsabilidades (`error_msg` vs `resultado`)
 
 Para garantizar que los dashboards, reportes y consultas SQL no confundan tareas fallidas con tareas que tienen datos procesados (ej. `WHERE resultado IS NOT NULL`), se aplica una separación estricta de responsabilidades:
 

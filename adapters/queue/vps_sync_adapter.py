@@ -1,4 +1,4 @@
-﻿# -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 """
 Adaptador Secundario (Driven Adapter): Sincronizador Remoto VPS MySQL
 Arquitectura Hexagonal - Implementa ISyncRemoteRepoPort
@@ -156,6 +156,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         "auto_id": f.get("auto_id") or target_auto_id,
                         "target_pc": target_pc_id,
                         "scraper_actual": scraper_actual or "telcos",
+                        "fuente": f.get("auto_id") or target_auto_id,
+                        "tipo_cola": "cola_automatizacion",
                         "datos": f.get("payload") or {}
                     })
                 logger.info(f"📥 [VPS PULL] Reclamadas {len(resultado)} tareas de cola_automatizacion (auto_id='{target_auto_id}').")
@@ -184,7 +186,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 query_update = f"""
                     UPDATE {config.VPS_DB_TABLE}
                     SET estado = 'procesando',
-                        fecha_modificacion = NOW()
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id IN ({placeholders});
                 """
                 cursor.execute(query_update, ids)
@@ -192,6 +194,27 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
 
                 resultado = []
                 for f in filas:
+                    datos_raw = f.get("datos_json") or {}
+                    if isinstance(datos_raw, str):
+                        try:
+                            datos_dict = json.loads(datos_raw)
+                        except Exception:
+                            datos_dict = {}
+                    elif isinstance(datos_raw, dict):
+                        datos_dict = datos_raw
+                    else:
+                        datos_dict = {}
+
+                    # Regla estricta exclusiva para queue_registro_no_llame:
+                    # Todo registro debe pasar primero por IRIS a no ser que ya haya sido scrapeado por IRIS.
+                    iris_info = datos_dict.get("iris", {})
+                    iris_ya_scrapeado = isinstance(iris_info, dict) and bool(iris_info.get("status"))
+
+                    if not iris_ya_scrapeado:
+                        sc_destino = "iris"
+                    else:
+                        sc_destino = f.get("scraper_actual") or s_nombre
+
                     resultado.append({
                         "id": f["id"],
                         "numero_de_linea": f.get("ani"),
@@ -199,8 +222,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         "dni": f.get("dni"),
                         "auto_id": "registro_no_llame",
                         "target_pc": pc_id or getattr(config, "WORKER_PC_ID", "PC-00"),
-                        "scraper_actual": f.get("scraper_actual") or s_nombre,
-                        "datos": f.get("datos_json") or {}
+                        "scraper_actual": sc_destino,
+                        "fuente": f.get("fuente"),
+                        "tipo_cola": "registro_no_llame",
+                        "datos": datos_dict
                     })
                 logger.info(f"📥 [VPS PULL] Reclamadas {len(resultado)} tareas de {config.VPS_DB_TABLE} (scraper='{s_nombre}').")
                 return resultado
@@ -328,12 +353,83 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 iris_clean["ultima_modificacion"] = ahora_str
                 resultado_final["iris"] = iris_clean
 
-        # Cualquier otra fuente acumulada (claro, personal, movistar, datuar, etc.)
+        # Bloque DATUAR
+        datos_datuar = datos_totales.get("datuar")
+        if isinstance(datos_datuar, dict) and datos_datuar:
+            det_dat = datos_datuar.get("detalles", {}) if isinstance(datos_datuar.get("detalles"), dict) else {}
+            datuar_clean = {
+                "nombre_completo": det_dat.get("nombre_completo") or datos_datuar.get("nombre_completo", ""),
+                "cuil": det_dat.get("cuil") or datos_datuar.get("cuil", ""),
+                "dni": det_dat.get("dni") or datos_datuar.get("dni", ""),
+                "edad": det_dat.get("edad") if det_dat.get("edad") is not None else datos_datuar.get("edad"),
+                "genero": det_dat.get("genero") or datos_datuar.get("genero", ""),
+                "provincia": det_dat.get("provincia") or datos_datuar.get("provincia", ""),
+                "ciudad": det_dat.get("ciudad") or datos_datuar.get("ciudad", ""),
+                "municipio": det_dat.get("municipio") or datos_datuar.get("municipio", ""),
+                "status": datos_datuar.get("status", "coincidencia"),
+                "ultima_modificacion": datos_datuar.get("ultima_modificacion") or ahora_str
+            }
+            resultado_final["datuar"] = {k: v for k, v in datuar_clean.items() if v is not None and v != ""}
+
+        # Bloque CUITONLINE
+        datos_cuit = datos_totales.get("cuitonline")
+        if isinstance(datos_cuit, dict) and datos_cuit:
+            det_cuit = datos_cuit.get("detalles", {}) if isinstance(datos_cuit.get("detalles"), dict) else {}
+            cuit_clean_block = {
+                "cuit": det_cuit.get("cuit") or datos_cuit.get("cuit", ""),
+                "cuit_limpio": det_cuit.get("cuit_limpio") or datos_cuit.get("cuit_limpio", ""),
+                "denominacion": det_cuit.get("denominacion") or datos_cuit.get("denominacion", ""),
+                "condicion_afip": det_cuit.get("condicion_afip") or datos_cuit.get("condicion_afip", ""),
+                "tipo_persona": det_cuit.get("tipo_persona") or datos_cuit.get("tipo_persona", ""),
+                "genero": det_cuit.get("genero") or datos_cuit.get("genero", ""),
+                "direccion": det_cuit.get("direccion") or datos_cuit.get("direccion", ""),
+                "localidad": det_cuit.get("localidad") or datos_cuit.get("localidad", ""),
+                "provincia": det_cuit.get("provincia") or datos_cuit.get("provincia", ""),
+                "actividades": det_cuit.get("actividades") or datos_cuit.get("actividades", []),
+                "impuestos_activos": det_cuit.get("impuestos_activos") or datos_cuit.get("impuestos_activos", []),
+                "regimenes_activos": det_cuit.get("regimenes_activos") or datos_cuit.get("regimenes_activos", []),
+                "iva": det_cuit.get("iva") or datos_cuit.get("iva", ""),
+                "ganancias": det_cuit.get("ganancias") or datos_cuit.get("ganancias", ""),
+                "empleador": det_cuit.get("empleador") or datos_cuit.get("empleador", ""),
+                "status": datos_cuit.get("status", "coincidencia"),
+                "ultima_modificacion": datos_cuit.get("ultima_modificacion") or ahora_str
+            }
+            resultado_final["cuitonline"] = {k: v for k, v in cuit_clean_block.items() if v is not None and v != "" and v != []}
+
+        # Bloque BCRA
+        datos_bcra = datos_totales.get("bcra")
+        if isinstance(datos_bcra, dict) and datos_bcra:
+            det_bcra = datos_bcra.get("detalles", {}) if isinstance(datos_bcra.get("detalles"), dict) else {}
+            bcra_clean_block = {
+                "cuit": det_bcra.get("cuit") or datos_bcra.get("cuit", ""),
+                "denominacion": det_bcra.get("denominacion") or datos_bcra.get("denominacion", ""),
+                "periodo": det_bcra.get("periodo") or datos_bcra.get("periodo", ""),
+                "peor_situacion": det_bcra.get("peor_situacion") if det_bcra.get("peor_situacion") is not None else datos_bcra.get("peor_situacion", 0),
+                "cantidad_entidades": det_bcra.get("cantidad_entidades") or datos_bcra.get("cantidad_entidades") or len(det_bcra.get("entidades") or datos_bcra.get("entidades") or []),
+                "operaciones_en_cartera": det_bcra.get("operaciones_en_cartera") or datos_bcra.get("operaciones_en_cartera") or len(det_bcra.get("entidades") or datos_bcra.get("entidades") or []),
+                "deuda_total_pesos": det_bcra.get("deuda_total_pesos") if det_bcra.get("deuda_total_pesos") is not None else datos_bcra.get("deuda_total_pesos", 0.0),
+                "deuda_total_miles": det_bcra.get("deuda_total_miles") if det_bcra.get("deuda_total_miles") is not None else datos_bcra.get("deuda_total_miles", 0.0),
+                "sin_deuda": det_bcra.get("sin_deuda") if det_bcra.get("sin_deuda") is not None else datos_bcra.get("sin_deuda", True),
+                "entidades": det_bcra.get("entidades") or datos_bcra.get("entidades", []),
+                "status": datos_bcra.get("status", "coincidencia"),
+                "ultima_modificacion": datos_bcra.get("ultima_modificacion") or ahora_str
+            }
+            if det_bcra.get("deuda_macro_pesos"):
+                bcra_clean_block["deuda_macro_pesos"] = det_bcra["deuda_macro_pesos"]
+            if det_bcra.get("deuda_macro_miles"):
+                bcra_clean_block["deuda_macro_miles"] = det_bcra["deuda_macro_miles"]
+            if det_bcra.get("deuda_macro_situacion"):
+                bcra_clean_block["deuda_macro_situacion"] = det_bcra["deuda_macro_situacion"]
+
+            resultado_final["bcra"] = {k: v for k, v in bcra_clean_block.items() if v is not None and v != ""}
+
+        # Cualquier otra fuente acumulada (claro, personal, movistar, etc.)
         for k, v in datos_totales.items():
-            if k not in ("enacom", "iris", "iris_v2"):
+            if k not in ("enacom", "iris", "iris_v2", "datuar", "cuitonline", "bcra"):
                 resultado_final[k] = v
 
         return resultado_final
+
     def subir_lote_vps(
         self,
         tipo_cola: str,
@@ -418,6 +514,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     err = item.get("error_msg")
                     scrapers = item.get("scrapers_intentados") or item.get("scraper_actual") or "telcos"
                     dni_val = str(item.get("dni") or "").strip() or None
+                    if not dni_val and isinstance(res_dict, dict):
+                        from core.domain.entities import ReglaPipeline
+                        dni_val = ReglaPipeline.extraer_dni(res_dict)
                     linea_val = str(item.get("numero_de_linea") or "").strip() or None
                     id_vps = item["id_vps"]
 
@@ -445,9 +544,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         fuente = %s,
                         datos_json = %s,
                         dni = CASE WHEN (dni IS NULL OR dni = '') AND %s IS NOT NULL THEN %s ELSE dni END,
-                        descripcion = %s,
-                        latencia = %s,
-                        fecha_modificacion = NOW()
+                        descripcion_scraper = %s,
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE id = %s;
                 """
                 params = []
@@ -468,8 +566,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_str = str(res_json or "{}")
 
                     dni_val = str(item.get("dni") or "").strip() or None
-                    desc = str(item.get("descripcion") or "")[:250]
-                    lat = float(item.get("latencia", 0.0) or 0.0)
+                    if not dni_val and isinstance(res_json, dict):
+                        from core.domain.entities import ReglaPipeline
+                        dni_val = ReglaPipeline.extraer_dni(res_json)
+                    desc = str(item.get("descripcion") or item.get("descripcion_scraper") or "")[:200]
                     id_vps = item["id_vps"]
 
                     params.append((
@@ -479,9 +579,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_str,
                         dni_val, dni_val,
                         desc,
-                        lat,
                         id_vps
                     ))
+
 
                 cursor.executemany(query_push, params)
                 conn.commit()

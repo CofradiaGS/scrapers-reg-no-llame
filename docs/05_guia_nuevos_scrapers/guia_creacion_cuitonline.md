@@ -82,6 +82,7 @@ El adaptador realiza una captura exhaustiva en dos fases (búsqueda y ficha deta
 | `impuestos_activos` | `list` | `h2.impuestos_activos` | Array de impuestos activos con fechas de alta |
 | `regimenes_activos` | `list` | `h2.impuestos_activos` | Array de regímenes fiscales vigentes |
 | `actividades` | `list` | `h2.impuestos_activos` | Códigos y descripciones oficiales de actividad económica |
+| `condicion_afip` | `str` | Derivado de impuestos | Condición normalizada (`Monotributista`, `Responsable Inscripto`, etc.) |
 | `constancia_inscripcion_afip` | `str` | `a[href*="constancia/inscripcion"]` | Enlace oficial a la constancia de inscripción AFIP |
 | `constancia_cuil_anses` | `str` | `a[href*="constancia/cuil"]` | Enlace oficial a la constancia de CUIL de ANSES |
 | `actividades_economicas_url` | `str` | `a[href*="constancia/actividades"]` | Enlace a la constancia de actividades económicas |
@@ -90,7 +91,23 @@ El adaptador realiza una captura exhaustiva en dos fases (búsqueda y ficha deta
 
 ---
 
-## 3. Caché Local SQLite de Alta Velocidad (`cuitonline_cache.sqlite`)
+## 3. Blindaje Anti-Honeypot y Evasión de Trampas
+
+CuitOnline cuenta con mecanismos defensivos agresivos y paywalls dinámicos orientados a envenenar bases de datos automatizadas:
+
+1. **Aislamiento Zero-Cookies por Consulta**:
+   - Si una sesión acumula cookies entre peticiones, el portal detecta uso automatizado e inyecta enlaces falsos con hashes MD5 (`/detalle/[a-f0-9]{32}/`) y anagramas. [`CuitOnlineAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) ejecuta `_session.cookies.clear()` antes de cada petición, garantizando un estado prístino e indetectable.
+2. **Escudo 1: Rechazo de Enlaces MD5**:
+   - Todo resultado cuyo enlace no contenga el patrón numérico estricto `/detalle/(\\d{11})/` es descartado de inmediato como trampa honeypot.
+3. **Escudo 2: Verificación Algorítmica Módulo 11**:
+   - Cada CUIT candidato es validado con [`validar_cuit_modulo11`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py). Si el dígito verificador es inconsistente, se descarta y se rota el circuito.
+4. **Normalización Taxonómica de Condición AFIP**:
+   - Se procesan los impuestos activos para derivar categorías formales:
+     * `"Monotributo Social"`: Contiene `MONOTRIBUTO` y `SOCIAL`.
+     * `"Monotributista"`: Contiene `MONOTRIBUTO`.
+     * `"Responsable Inscripto"`: Declara `inscripto` en IVA o `personas fisicas` en Ganancias.
+     * `"IVA Exento"`: Declara condición exenta en IVA.
+     * `"No Inscripto (Solo CUIL / Empleado o Jubilado)"`: Sin impuestos activos comerciales.
 
 Para eliminar peticiones redundantes y garantizar latencias de 0 ms en consultas repetidas de un mismo DNI, [`CuitOnlineAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) implementa una base de datos local SQLite con persistencia relacional y JSON íntegro:
 

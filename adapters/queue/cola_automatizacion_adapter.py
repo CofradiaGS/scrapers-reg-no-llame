@@ -20,7 +20,7 @@ from mysql.connector.pooling import MySQLConnectionPool
 
 import config
 from core.ports.queue_port import IColaRepositorioPort
-from core.domain.entities import Linea, RegistroCola, Prioridad, EstadoRegistro
+from core.domain.entities import Linea, RegistroCola, Prioridad, EstadoRegistro, ReglaPipeline
 
 logger = logging.getLogger("ColaAutomatizacionAdapter")
 
@@ -182,7 +182,8 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     estado=EstadoRegistro.PROCESANDO,
                     scraper_actual=scraper_nombre,
                     fuente=f.get("auto_id"),
-                    datos_existentes=payload_dict
+                    datos_existentes=payload_dict,
+                    tipo_cola="cola_automatizacion"
                 )
                 registros.append(reg)
 
@@ -354,12 +355,83 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                 "ultima_modificacion": ahora_str
             }
 
-        # 4. Cualquier otra fuente acumulada (claro, personal, movistar, etc.)
+        # 4. Bloque DATUAR
+        datos_datuar = datos_totales.get("datuar")
+        if isinstance(datos_datuar, dict) and datos_datuar:
+            det_dat = datos_datuar.get("detalles", {}) if isinstance(datos_datuar.get("detalles"), dict) else {}
+            datuar_clean = {
+                "nombre_completo": det_dat.get("nombre_completo") or datos_datuar.get("nombre_completo", ""),
+                "cuil": det_dat.get("cuil") or datos_datuar.get("cuil", ""),
+                "dni": det_dat.get("dni") or datos_datuar.get("dni", ""),
+                "edad": det_dat.get("edad") if det_dat.get("edad") is not None else datos_datuar.get("edad"),
+                "genero": det_dat.get("genero") or datos_datuar.get("genero", ""),
+                "provincia": det_dat.get("provincia") or datos_datuar.get("provincia", ""),
+                "ciudad": det_dat.get("ciudad") or datos_datuar.get("ciudad", ""),
+                "municipio": det_dat.get("municipio") or datos_datuar.get("municipio", ""),
+                "status": datos_datuar.get("status", "coincidencia"),
+                "ultima_modificacion": datos_datuar.get("ultima_modificacion") or ahora_str
+            }
+            resultado_final["datuar"] = {k: v for k, v in datuar_clean.items() if v is not None and v != ""}
+
+        # 5. Bloque CUITONLINE
+        datos_cuit = datos_totales.get("cuitonline")
+        if isinstance(datos_cuit, dict) and datos_cuit:
+            det_cuit = datos_cuit.get("detalles", {}) if isinstance(datos_cuit.get("detalles"), dict) else {}
+            cuit_clean_block = {
+                "cuit": det_cuit.get("cuit") or datos_cuit.get("cuit", ""),
+                "cuit_limpio": det_cuit.get("cuit_limpio") or datos_cuit.get("cuit_limpio", ""),
+                "denominacion": det_cuit.get("denominacion") or datos_cuit.get("denominacion", ""),
+                "condicion_afip": det_cuit.get("condicion_afip") or datos_cuit.get("condicion_afip", ""),
+                "tipo_persona": det_cuit.get("tipo_persona") or datos_cuit.get("tipo_persona", ""),
+                "genero": det_cuit.get("genero") or datos_cuit.get("genero", ""),
+                "direccion": det_cuit.get("direccion") or datos_cuit.get("direccion", ""),
+                "localidad": det_cuit.get("localidad") or datos_cuit.get("localidad", ""),
+                "provincia": det_cuit.get("provincia") or datos_cuit.get("provincia", ""),
+                "actividades": det_cuit.get("actividades") or datos_cuit.get("actividades", []),
+                "impuestos_activos": det_cuit.get("impuestos_activos") or datos_cuit.get("impuestos_activos", []),
+                "regimenes_activos": det_cuit.get("regimenes_activos") or datos_cuit.get("regimenes_activos", []),
+                "iva": det_cuit.get("iva") or datos_cuit.get("iva", ""),
+                "ganancias": det_cuit.get("ganancias") or datos_cuit.get("ganancias", ""),
+                "empleador": det_cuit.get("empleador") or datos_cuit.get("empleador", ""),
+                "status": datos_cuit.get("status", "coincidencia"),
+                "ultima_modificacion": datos_cuit.get("ultima_modificacion") or ahora_str
+            }
+            resultado_final["cuitonline"] = {k: v for k, v in cuit_clean_block.items() if v is not None and v != "" and v != []}
+
+        # 6. Bloque BCRA
+        datos_bcra = datos_totales.get("bcra")
+        if isinstance(datos_bcra, dict) and datos_bcra:
+            det_bcra = datos_bcra.get("detalles", {}) if isinstance(datos_bcra.get("detalles"), dict) else {}
+            bcra_clean_block = {
+                "cuit": det_bcra.get("cuit") or datos_bcra.get("cuit", ""),
+                "denominacion": det_bcra.get("denominacion") or datos_bcra.get("denominacion", ""),
+                "periodo": det_bcra.get("periodo") or datos_bcra.get("periodo", ""),
+                "peor_situacion": det_bcra.get("peor_situacion") if det_bcra.get("peor_situacion") is not None else datos_bcra.get("peor_situacion", 0),
+                "cantidad_entidades": det_bcra.get("cantidad_entidades") or datos_bcra.get("cantidad_entidades") or len(det_bcra.get("entidades") or datos_bcra.get("entidades") or []),
+                "operaciones_en_cartera": det_bcra.get("operaciones_en_cartera") or datos_bcra.get("operaciones_en_cartera") or len(det_bcra.get("entidades") or datos_bcra.get("entidades") or []),
+                "deuda_total_pesos": det_bcra.get("deuda_total_pesos") if det_bcra.get("deuda_total_pesos") is not None else datos_bcra.get("deuda_total_pesos", 0.0),
+                "deuda_total_miles": det_bcra.get("deuda_total_miles") if det_bcra.get("deuda_total_miles") is not None else datos_bcra.get("deuda_total_miles", 0.0),
+                "sin_deuda": det_bcra.get("sin_deuda") if det_bcra.get("sin_deuda") is not None else datos_bcra.get("sin_deuda", True),
+                "entidades": det_bcra.get("entidades") or datos_bcra.get("entidades", []),
+                "status": datos_bcra.get("status", "coincidencia"),
+                "ultima_modificacion": datos_bcra.get("ultima_modificacion") or ahora_str
+            }
+            if det_bcra.get("deuda_macro_pesos"):
+                bcra_clean_block["deuda_macro_pesos"] = det_bcra["deuda_macro_pesos"]
+            if det_bcra.get("deuda_macro_miles"):
+                bcra_clean_block["deuda_macro_miles"] = det_bcra["deuda_macro_miles"]
+            if det_bcra.get("deuda_macro_situacion"):
+                bcra_clean_block["deuda_macro_situacion"] = det_bcra["deuda_macro_situacion"]
+
+            resultado_final["bcra"] = {k: v for k, v in bcra_clean_block.items() if v is not None and v != ""}
+
+        # 7. Cualquier otra fuente acumulada (claro, personal, movistar, etc.)
         for k, v in datos_totales.items():
-            if k not in ("enacom", "iris", "iris_v2"):
+            if k not in ("enacom", "iris", "iris_v2", "datuar", "cuitonline", "bcra"):
                 resultado_final[k] = v
 
         return resultado_final
+
 
     def persistir_resultados(self, resultados: List[Dict[str, Any]]) -> bool:
         """
@@ -433,9 +505,9 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     datos_completos = self._formatear_resultado(item)
                     res_json_str = json.dumps(datos_completos, ensure_ascii=False)
 
-                    # Extraer DNI de IRIS recorriendo las operaciones agrupadas si está disponible
-                    dni_extraido = None
-                    if isinstance(datos_completos, dict):
+                    # Extraer DNI de cualquier etapa recorrida (Datuar, CuitOnline, BCRA, IRIS)
+                    dni_extraido = ReglaPipeline.extraer_dni(datos_completos)
+                    if not dni_extraido and isinstance(datos_completos, dict):
                         iris_dict = datos_completos.get("iris", {})
                         if isinstance(iris_dict, dict):
                             for k_op, op_list in iris_dict.items():
@@ -450,6 +522,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                                 dni_extraido = str(iris_dict["titular"].get("nro_documento") or "").strip() or None
                         elif datos_completos.get("dni"):
                             dni_extraido = str(datos_completos.get("dni")).strip()
+
 
                     iris_status = datos_completos.get("iris", {}).get("status") if isinstance(datos_completos, dict) and isinstance(datos_completos.get("iris"), dict) else ""
                     if iris_status == "coincidencia" or status_raw == "coincidencia":

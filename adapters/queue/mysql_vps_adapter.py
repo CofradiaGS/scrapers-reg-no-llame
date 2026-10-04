@@ -95,8 +95,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             canon = "cuitonline"
         elif "datuar" in nombre_clean:
             canon = "datuar"
+        elif "bcra" in nombre_clean:
+            canon = "bcra"
         else:
             canon = nombre_clean
+
 
         if prioridad is not None:
             niveles = [prioridad]
@@ -183,7 +186,8 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         scraper_actual=scraper_nombre,
                         fuente=r.get("fuente"),
                         datos_existentes=raw_json,
-                        dni=dni_val
+                        dni=dni_val,
+                        tipo_cola="registro_no_llame"
                     ))
 
                 return registros

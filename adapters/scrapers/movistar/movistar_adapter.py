@@ -165,7 +165,7 @@ class MovistarAdapter(BaseScraperAdapter):
                     "http": self.proxy,
                     "https": self.proxy
                 }
-            logger.info(f"🔄 Circuito Tor renovado instantáneamente (Stream Isolation: {self.proxy.split('@')[0]}...)")
+            logger.debug(f"🔄 Circuito Tor renovado instantáneamente (Stream Isolation: {self.proxy.split('@')[0]}...)")
 
 
     def iniciar(self) -> None:
@@ -196,7 +196,7 @@ class MovistarAdapter(BaseScraperAdapter):
 
             if self.tor_controller.is_running():
                 self.proxy = self._generar_proxy_aislado()
-                logger.info(f"MovistarAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot or 1}).")
+                logger.debug(f"MovistarAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot or 1}).")
 
         self._session = requests.Session()
         if self.proxy:
@@ -204,7 +204,7 @@ class MovistarAdapter(BaseScraperAdapter):
                 "http": self.proxy,
                 "https": self.proxy
             }
-            logger.info(f"MovistarAdapter configurado con proxy: {self.proxy[:30]}...")
+            logger.debug(f"MovistarAdapter configurado con proxy: {self.proxy[:30]}...")
 
     def autenticar(self) -> bool:
         """
@@ -289,8 +289,11 @@ class MovistarAdapter(BaseScraperAdapter):
                         continue
 
                     proxies_dict = {"http": current_proxy, "https": current_proxy}
+                    sess = self._proxy_session
+                    if sess is None:
+                        break
                     try:
-                        resp = self._proxy_session.post(
+                        resp = sess.post(
                             url_api,
                             headers=headers,
                             data=json.dumps(payload_data),
@@ -325,8 +328,11 @@ class MovistarAdapter(BaseScraperAdapter):
                 ultimo_error = None
 
                 for intento in range(1, MAX_INTENTOS + 1):
+                    sess = self._session
+                    if sess is None:
+                        break
                     try:
-                        resp = self._session.post(
+                        resp = sess.post(
                             url_api,
                             headers=headers,
                             data=json.dumps(payload_data),

@@ -267,5 +267,104 @@ class TestReglaPipeline(unittest.TestCase):
         self.assertEqual(sig_sc2, "finalizado")
         self.assertEqual(sig_st2, EstadoRegistro.NO_COINCIDENCIA.value)
 
+    def test_11_salvaguarda_iris_exclusiva_reg_no_llame(self):
+        """
+        Verifica que la regla 'IRIS primero' aplica estrictamente a queue_registro_no_llame
+        y NUNCA interfiere con cola_automatizacion.
+        """
+        from unittest.mock import MagicMock
+        from core.use_cases.process_batch_use_case import ProcesarLoteUseCase
+        from core.domain.entities import RegistroCola, Linea
+
+        mock_cola = MagicMock()
+        mock_claro = MagicMock()
+        mock_claro.nombre = "claro"
+
+        use_case = ProcesarLoteUseCase(cola_repo=mock_cola, scraper_engine=mock_claro)
+
+        # Caso 1: En queue_registro_no_llame, si Claro toma por error una línea de IRIS, debe revertir a IRIS pendiente
+        reg_rnl = RegistroCola(
+            id=101,
+            linea=Linea(ani="1122334455", dni=None),
+            scraper_actual="iris",
+            tipo_cola="registro_no_llame"
+        )
+        mock_cola.reservar_lote.return_value = [reg_rnl]
+        use_case.ejecutar_lote(batch_size=1)
+
+        persisted = mock_cola.persistir_resultados.call_args[0][0]
+        self.assertEqual(len(persisted), 1)
+        self.assertEqual(persisted[0]["scraper_actual"], "iris", "En reg_no_llame debe revertir a IRIS")
+        self.assertEqual(persisted[0]["estado"], "pendiente")
+
+        # Caso 2: En cola_automatizacion, si Claro saltea por falta de DNI, debe avanzar a Personal (NO a IRIS)
+        reg_auto = RegistroCola(
+            id=202,
+            linea=Linea(ani="1122334455", dni=None),
+            scraper_actual="claro",
+            tipo_cola="cola_automatizacion"
+        )
+        mock_cola.reservar_lote.return_value = [reg_auto]
+        use_case.ejecutar_lote(batch_size=1)
+
+        persisted2 = mock_cola.persistir_resultados.call_args[0][0]
+        self.assertEqual(len(persisted2), 1)
+        self.assertEqual(persisted2[0]["scraper_actual"], "personal", "En cola_automatizacion debe avanzar a Personal")
+        self.assertEqual(persisted2[0]["estado"], "pendiente")
+
+    def test_12_bcra_requiere_dni_o_cuit(self):
+        """Verifica que BCRA rechaza pre-flight si no hay DNI ni CUIT disponible."""
+        es_apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="bcra",
+            ani="1122334455",
+            dni=None,
+            datos_json={}
+        )
+        self.assertFalse(es_apto)
+        self.assertIn("DNI o CUIT", motivo)
+
+        # Con DNI disponible sí es apto
+        es_apto2, _ = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="bcra",
+            ani="1122334455",
+            dni="30112233",
+            datos_json={}
+        )
+        self.assertTrue(es_apto2)
+
+    def test_13_bcra_flujo_enriquecimiento(self):
+        """Verifica que BCRA avanza a finalizado tras completar su etapa en la cadena."""
+        cadena = ["iris", "cuitonline", "bcra"]
+        res_bcra = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="bcra",
+            detalles={"cuit": "20301122334", "deuda_total_pesos": 150000.0}
+        )
+        sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="bcra",
+            resultado=res_bcra,
+            cadena=cadena,
+            dni_disponible=True
+        )
+        self.assertEqual(sig_sc, "finalizado")
+        self.assertEqual(sig_st, EstadoRegistro.COMPLETADO.value)
+
+    def test_14_extraer_cuit_y_dni_multinamespace(self):
+        """Verifica extracción acumulada de CUIT y DNI a través de namespaces de BCRA, CuitOnline y Datuar."""
+        datos = {
+            "iris": {"titular": {"nro_documento": "30112233"}},
+            "datuar": {"cuil": "20301122334"},
+            "bcra": {"cuit": "20301122334", "deuda_total_pesos": 25000.0}
+        }
+        dni = ReglaPipeline.extraer_dni(datos)
+        cuit = ReglaPipeline.extraer_cuit(datos)
+        self.assertEqual(dni, "30112233")
+        self.assertEqual(cuit, "20301122334")
+
+        # Derivación de DNI a partir de CUIT directo de 11 dígitos
+        dni_derivado = ReglaPipeline.extraer_dni(datos_json={}, dni_directo="27351234569")
+        self.assertEqual(dni_derivado, "35123456")
+
 if __name__ == "__main__":
     unittest.main()

@@ -18,6 +18,13 @@ from core.domain.entities import (
     ReglaPipeline
 )
 
+from core.domain.cuit_validator import (
+    calcular_cuil,
+    validar_cuit_modulo11,
+    inferir_genero,
+    obtener_cuils_candidatos
+)
+
 __all__ = [
     "Prioridad",
     "EstadoRegistro",
@@ -34,5 +41,9 @@ __all__ = [
     "Servicio",
     "ScrapeResult",
     "RegistroCola",
-    "ReglaPipeline"
+    "ReglaPipeline",
+    "calcular_cuil",
+    "validar_cuit_modulo11",
+    "inferir_genero",
+    "obtener_cuils_candidatos"
 ]
