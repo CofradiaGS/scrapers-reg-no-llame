@@ -166,16 +166,58 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             else:
                 # Caso queue_registro_no_llame
                 s_nombre = scraper_actual or "iris"
-                query_find = f"""
-                    SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
-                    FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
-                    WHERE scraper_actual = %s AND estado = 'pendiente'
-                    ORDER BY id ASC
-                    LIMIT %s
-                    FOR UPDATE SKIP LOCKED;
-                """
-                cursor.execute(query_find, (s_nombre, limit))
-                filas = cursor.fetchall()
+                if s_nombre == "enacom_web":
+                    query_find = f"""
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        FROM {config.VPS_DB_TABLE}
+                        WHERE estado = 'no_coincidencia'
+                          AND (datos_json NOT LIKE '%"enacom_web"%' OR datos_json IS NULL)
+                        ORDER BY id ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED;
+                    """
+                    cursor.execute(query_find, (limit,))
+                    filas = cursor.fetchall()
+                elif s_nombre in ("telcos", "telco", "telco_cascade"):
+                    # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
+                    # Solo si no cubren el limit, completar con registros sin DNI (Personal + Movistar).
+                    query_con_dni = f"""
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
+                        WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
+                          AND estado = 'pendiente'
+                          AND (dni IS NOT NULL AND dni != '')
+                        ORDER BY id ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED;
+                    """
+                    cursor.execute(query_con_dni, (limit,))
+                    filas = cursor.fetchall()
+                    if len(filas) < limit:
+                        remanente = limit - len(filas)
+                        query_sin_dni = f"""
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
+                            WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
+                              AND estado = 'pendiente'
+                              AND (dni IS NULL OR dni = '')
+                            ORDER BY id ASC
+                            LIMIT %s
+                            FOR UPDATE SKIP LOCKED;
+                        """
+                        cursor.execute(query_sin_dni, (remanente,))
+                        filas.extend(cursor.fetchall())
+                else:
+                    query_find = f"""
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
+                        WHERE scraper_actual = %s AND estado = 'pendiente'
+                        ORDER BY id ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED;
+                    """
+                    cursor.execute(query_find, (s_nombre, limit))
+                    filas = cursor.fetchall()
 
                 if not filas:
                     conn.rollback()
@@ -183,13 +225,24 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
 
                 ids = [f["id"] for f in filas]
                 placeholders = ", ".join(["%s"] * len(ids))
-                query_update = f"""
-                    UPDATE {config.VPS_DB_TABLE}
-                    SET estado = 'procesando',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id IN ({placeholders});
-                """
-                cursor.execute(query_update, ids)
+                if s_nombre == "enacom_web":
+                    query_update = f"""
+                        UPDATE {config.VPS_DB_TABLE}
+                        SET estado = 'procesando',
+                            scraper_actual = 'enacom_web',
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id IN ({placeholders});
+                    """
+                    cursor.execute(query_update, ids)
+                else:
+                    query_update = f"""
+                        UPDATE {config.VPS_DB_TABLE}
+                        SET estado = 'procesando',
+                            scraper_actual = %s,
+                            updated_at = CURRENT_TIMESTAMP
+                        WHERE id IN ({placeholders});
+                    """
+                    cursor.execute(query_update, [s_nombre] + ids)
                 conn.commit()
 
                 resultado = []
@@ -205,15 +258,18 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     else:
                         datos_dict = {}
 
-                    # Regla estricta exclusiva para queue_registro_no_llame:
-                    # Todo registro debe pasar primero por IRIS a no ser que ya haya sido scrapeado por IRIS.
-                    iris_info = datos_dict.get("iris", {})
-                    iris_ya_scrapeado = isinstance(iris_info, dict) and bool(iris_info.get("status"))
-
-                    if not iris_ya_scrapeado:
-                        sc_destino = "iris"
+                    if s_nombre == "enacom_web":
+                        sc_destino = "enacom_web"
                     else:
-                        sc_destino = f.get("scraper_actual") or s_nombre
+                        # Regla estricta exclusiva para queue_registro_no_llame:
+                        # Todo registro debe pasar primero por IRIS a no ser que ya haya sido scrapeado por IRIS.
+                        iris_info = datos_dict.get("iris", {})
+                        iris_ya_scrapeado = isinstance(iris_info, dict) and bool(iris_info.get("status"))
+
+                        if not iris_ya_scrapeado:
+                            sc_destino = "iris"
+                        else:
+                            sc_destino = "telcos" if s_nombre == "telcos" else (f.get("scraper_actual") or s_nombre)
 
                     resultado.append({
                         "id": f["id"],
@@ -551,8 +607,13 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 params = []
                 for item in lote:
                     st_local = str(item.get("estado_local", "")).lower()
-                    estado_vps = "error" if st_local == "fallido" else "completado"
-                    s_actual = item.get("scraper_actual") or "finalizado"
+                    s_raw = item.get("scraper_actual") or "finalizado"
+                    if s_raw == "enacom_web":
+                        estado_vps = "no_coincidencia" if st_local == "fallido" else "completado"
+                        s_actual = "finalizado"
+                    else:
+                        estado_vps = "error" if st_local == "fallido" else "completado"
+                        s_actual = s_raw
                     fuente_raw = item.get("fuente") or "[]"
                     if isinstance(fuente_raw, list):
                         fuente_str = json.dumps(fuente_raw, ensure_ascii=False)

@@ -140,7 +140,7 @@ class TestSyncUseCases(unittest.TestCase):
                 "ani": f"117700{i:05d}",
                 "dni": "20112233",
                 "status": "coincidencia" if i % 2 == 0 else "sin_coincidencias",
-                "scraper_actual": "claro",
+                "scraper_actual": "finalizado",
                 "datos": {"test": i},
                 "descripcion": "OK"
             }
@@ -271,7 +271,47 @@ class TestSyncUseCases(unittest.TestCase):
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 22, 0, 0)))
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 23, 59, 59)))
 
+    def test_08_vps_sync_adapter_descargar_telcos(self):
+        """Verifica que VPSSyncAdapter descargue y normalice correctamente tareas para 'telcos' sin sobreescritura vacía."""
+        from unittest.mock import patch, MagicMock
+        from adapters.queue.vps_sync_adapter import VPSSyncAdapter
+
+        adapter = VPSSyncAdapter(pool_size=1)
+        mock_conn = MagicMock()
+        mock_cursor = MagicMock()
+        mock_conn.cursor.return_value = mock_cursor
+
+        # Simular lote con DNI retornado por query_con_dni
+        filas_con_dni = [
+            {
+                "id": 101,
+                "ani": "1122334455",
+                "dni": "30112233",
+                "estado": "pendiente",
+                "scraper_actual": "movistar",
+                "fuente": "[\"iris\", \"claro\", \"personal\"]",
+                "datos_json": "{\"iris\": {\"status\": \"no_coincidencia\"}}"
+            }
+        ]
+        # fetchall retorna las filas en la primera llamada y vacío en la segunda (si se hiciera sin dni)
+        mock_cursor.fetchall.side_effect = [filas_con_dni, []]
+
+        with patch.object(adapter, "_get_connection", return_value=mock_conn):
+            tareas = adapter.descargar_lote_vps(
+                tipo_cola="registro_no_llame",
+                limit=10,
+                scraper_actual="telcos"
+            )
+
+        self.assertEqual(len(tareas), 1)
+        self.assertEqual(tareas[0]["id"], 101)
+        self.assertEqual(tareas[0]["numero_de_linea"], "1122334455")
+        self.assertEqual(tareas[0]["dni"], "30112233")
+        self.assertEqual(tareas[0]["scraper_actual"], "telcos")
+        mock_conn.commit.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

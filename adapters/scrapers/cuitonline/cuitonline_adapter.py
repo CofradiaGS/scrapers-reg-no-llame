@@ -78,21 +78,24 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         return "cuitonline"
 
     def _generar_proxy_aislado(self) -> str:
-        token = hashlib.md5(f"{time.time()}_{random.random()}".encode()).hexdigest()[:8]
-        user_auth = f"w{self.worker_slot}_{token}"
-        socks_base = getattr(config, "TOR_SOCKS_PORT_BASE", 9050)
-        return f"socks5h://{user_auth}:tor@127.0.0.1:{socks_base}"
+        socks_base = TorController.resolve_ports_for_worker(self.worker_slot)[0]
+        return f"socks5h://127.0.0.1:{socks_base}"
 
     def _rotar_circuito_instantaneo(self) -> None:
         if not self.use_tor:
             return
+        if self.tor_controller:
+            try:
+                self.tor_controller.rotate_ip()
+            except Exception:
+                pass
         self._proxy_url = self._generar_proxy_aislado()
         if self._session is not None:
             self._session.proxies = {
                 "http": self._proxy_url,
                 "https": self._proxy_url
             }
-        logger.debug(f"CuitOnline rotó instantáneamente circuito Tor: {self._proxy_url[:28]}...")
+        logger.debug(f"CuitOnline rotó limpiamente circuito Tor: {self._proxy_url}...")
 
     def iniciar(self) -> None:
         """Inicializa la sesión HTTP y enrutamiento de red."""

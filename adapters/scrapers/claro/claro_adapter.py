@@ -73,6 +73,10 @@ class ClaroAdapter(BaseScraperAdapter):
             self.use_tor = use_tor if use_tor is not None else kwargs.get("tor", config.TOR_ENABLED)
             
         self.worker_slot = worker_slot or kwargs.get("worker_slot")
+        self.socks_port, self.control_port = TorController.resolve_ports_for_worker(self.worker_slot)
+        if self.use_tor and not self.proxy:
+            self.proxy = f"socks5h://127.0.0.1:{self.socks_port}"
+
         self.tor_rotate_every = tor_rotate_every or kwargs.get("tor_rotate_every", config.TOR_ROTATE_EVERY)
         self.tor_external_daemon = kwargs.get("tor_external_daemon", False) or bool(self.worker_slot)
         self.proxy_pool_shared = kwargs.get("proxy_pool_shared", False) or (self.worker_slot is not None and self.worker_slot > 1)
@@ -144,15 +148,30 @@ class ClaroAdapter(BaseScraperAdapter):
         return data
 
     def _generar_proxy_aislado(self) -> str:
-        """Genera una URL SOCKS5h con credenciales aleatorias para forzar un circuito Tor independiente."""
-        slot_tag = f"w{self.worker_slot or 0}"
-        rnd_tag = uuid.uuid4().hex[:8]
-        return f"socks5h://{slot_tag}_{rnd_tag}:tor@127.0.0.1:{config.TOR_SOCKS_PORT_BASE}"
+        """Devuelve la URL limpia del proxy SOCKS5h sin tokens aleatorios disruptivos."""
+        socks_p = getattr(self, "socks_port", None) or TorController.resolve_ports_for_worker(self.worker_slot)[0]
+        return f"socks5h://127.0.0.1:{socks_p}"
 
     def _rotar_circuito_instantaneo(self) -> None:
-        """Rota de IP inmediatamente asignando nuevas credenciales SOCKS sin llamadas stem ni demoras."""
+        """Rota de IP usando señal NEWNYM de Tor hacia su instancia correspondiente sin saturar circuitos."""
         if self.use_tor:
-            self.proxy = self._generar_proxy_aislado()
+            socks_p = getattr(self, "socks_port", None)
+            ctrl_p = getattr(self, "control_port", None)
+            if not socks_p or not ctrl_p:
+                socks_p, ctrl_p = TorController.resolve_ports_for_worker(self.worker_slot)
+                self.socks_port = socks_p
+                self.control_port = ctrl_p
+
+            if self.tor_controller is not None:
+                self.tor_controller.rotate_ip()
+            else:
+                try:
+                    ctrl = TorController(socks_port=socks_p, control_port=ctrl_p, is_owner=False)
+                    ctrl.rotate_ip()
+                except Exception as e:
+                    logger.debug(f"Aviso al rotar circuito en puerto {ctrl_p}: {e}")
+
+            self.proxy = f"socks5h://127.0.0.1:{socks_p}"
             if self._session is not None:
                 try:
                     self._session.close()
@@ -163,7 +182,7 @@ class ClaroAdapter(BaseScraperAdapter):
                     "http": self.proxy,
                     "https": self.proxy
                 }
-            logger.debug(f"🔄 Circuito Tor renovado instantáneamente (Stream Isolation: {self.proxy.split('@')[0]}...)")
+            logger.debug(f"🔄 Conexión Tor renovada limpiamente en puerto SOCKS {socks_p}")
 
 
     def iniciar(self) -> None:
@@ -179,22 +198,23 @@ class ClaroAdapter(BaseScraperAdapter):
                 adapter = requests.adapters.HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=0)
                 self._proxy_session.mount("http://", adapter)
                 self._proxy_session.mount("https://", adapter)
-        elif self.use_tor and not self.proxy:
-            socks_port = config.TOR_SOCKS_PORT_BASE
-            control_port = config.TOR_CONTROL_PORT_BASE
+        elif self.use_tor:
+            socks_port, control_port = TorController.resolve_ports_for_worker(self.worker_slot)
+            self.socks_port = socks_port
+            self.control_port = control_port
             is_owner = not (self.tor_external_daemon or self.worker_slot is not None)
             self.tor_controller = TorController(
-                socks_port=socks_port,
-                control_port=control_port,
+                socks_port=self.socks_port,
+                control_port=self.control_port,
                 is_owner=is_owner
             )
             # Reutiliza el Tor compartido o arranca uno si no está corriendo y es dueño
             if not self.tor_controller.ensure_running(timeout_sec=45):
-                logger.warning(f"No se pudo asegurar Tor en puerto {socks_port}. Continuando con conexión directa.")
+                logger.warning(f"No se pudo asegurar Tor en puerto {socks_port}. Continuando con proxy configurado.")
 
-            if self.tor_controller.is_running():
-                self.proxy = self._generar_proxy_aislado()
-                logger.debug(f"ClaroAdapter enrutando por Tor Stream Isolation (Slot {self.worker_slot or 1}).")
+            if not self.proxy:
+                self.proxy = self.tor_controller.get_proxy_url()
+                logger.debug(f"ClaroAdapter enrutando por Tor (Puerto {self.socks_port}, Slot {self.worker_slot or 1}).")
 
         self._session = requests.Session()
         if self.proxy:
@@ -237,9 +257,16 @@ class ClaroAdapter(BaseScraperAdapter):
                 status=StatusScraping.SIN_COINCIDENCIA,
                 fuente_scraper=self.nombre,
                 operador="Claro",
-                descripcion="Sin DNI disponible para consultar Claro en Cobro Express",
-                detalles={"motivo": "DNI no provisto ni inferido de etapas previas"}
+                descripcion="Sin deuda registrada en Claro (Cobro Express)",
+                detalles={
+                    "http_status": 200,
+                    "dni_consultado": "",
+                    "ani_consultado": linea.ani,
+                    "items_count": 0
+                },
+                raw={"status_code": 200, "items": []}
             )
+
 
         if self._session is None:
             self.iniciar()
@@ -364,19 +391,12 @@ class ClaroAdapter(BaseScraperAdapter):
                     except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
                         ultimo_error = str(net_err)
                         if intento < MAX_INTENTOS:
-                            backoff_sec = 1.5 * intento
+                            backoff_sec = 1.5 * intento + random.uniform(0.1, 0.5)
                             if self.use_tor:
-                                if intento > 1:
-                                    logger.warning(
-                                        f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red/Tor en Claro ({net_err}). "
-                                        f"Rotando circuito Tor y esperando {backoff_sec:.1f}s..."
-                                    )
-                                    self._rotar_circuito_instantaneo()
-                                else:
-                                    logger.warning(
-                                        f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Espera de establecimiento de circuito Tor en Claro ({net_err}). "
-                                        f"Reintentando en el mismo circuito tras {backoff_sec:.1f}s..."
-                                    )
+                                logger.warning(
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Claro vía Tor ({net_err}). "
+                                    f"Reintentando en el canal Tor tras pausa de {backoff_sec:.1f}s..."
+                                )
                             else:
                                 logger.warning(
                                     f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red directo en Claro ({net_err}). "

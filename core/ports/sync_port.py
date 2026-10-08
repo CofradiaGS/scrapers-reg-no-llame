@@ -81,9 +81,10 @@ class ISyncLocalRepoPort(ABC):
     @abstractmethod
     def contar_pendientes(
         self,
-        tipo_cola: Optional[str] = None
+        tipo_cola: Optional[str] = None,
+        scraper_actual: Optional[str] = None
     ) -> int:
-        """Retorna la cantidad actual de registros 'pendiente' en la cola local."""
+        """Retorna la cantidad actual de registros 'pendiente' en la cola local, opcionalmente filtrada por scraper."""
         pass
 
     @abstractmethod
@@ -92,5 +93,14 @@ class ISyncLocalRepoPort(ABC):
         tipo_cola: Optional[str] = None
     ) -> int:
         """Retorna la cantidad actual de registros listos para subir ('listo_para_subir' o 'fallido')."""
+        pass
+
+    @abstractmethod
+    def revertir_subida_a_listo(
+        self,
+        ids_vps: List[int],
+        tipo_cola: Optional[str] = None
+    ) -> bool:
+        """Devuelve tareas de 'en_subida' al estado 'listo_para_subir' si el push falló o se interrumpió."""
         pass
 

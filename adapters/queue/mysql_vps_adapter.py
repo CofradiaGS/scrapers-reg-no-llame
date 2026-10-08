@@ -97,6 +97,8 @@ class MySQLQueueAdapter(IColaRepositorioPort):
             canon = "datuar"
         elif "bcra" in nombre_clean:
             canon = "bcra"
+        elif "telco" in nombre_clean:
+            canon = "telcos"
         else:
             canon = nombre_clean
 
@@ -126,19 +128,55 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                     
                     filtro_sql = cfg["filtro"]
 
-                    # Selección con bloqueo SKIP LOCKED forzando índice idx_scraper_estado
-                    select_query = f"""
-                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
-                        FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
-                        WHERE scraper_actual = %s 
-                          AND estado = 'pendiente' 
-                          AND {filtro_sql}
-                        ORDER BY id ASC
-                        LIMIT %s
-                        FOR UPDATE SKIP LOCKED
-                    """
-                    cursor.execute(select_query, (canon, batch_size))
-                    filas = cursor.fetchall()
+                    if canon == "telcos":
+                        cond_scraper = "scraper_actual IN ('telcos', 'claro', 'personal', 'movistar')"
+                        # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
+                        # Solo si no cubren el batch_size, completar con registros sin DNI (Personal + Movistar).
+                        select_con_dni = f"""
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
+                            WHERE {cond_scraper} 
+                              AND estado = 'pendiente' 
+                              AND {filtro_sql}
+                              AND (dni IS NOT NULL AND dni != '')
+                            ORDER BY id ASC
+                            LIMIT %s
+                            FOR UPDATE SKIP LOCKED
+                        """
+                        cursor.execute(select_con_dni, (batch_size,))
+                        filas = cursor.fetchall()
+                        if len(filas) < batch_size:
+                            remanente = batch_size - len(filas)
+                            select_sin_dni = f"""
+                                SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                                FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
+                                WHERE {cond_scraper} 
+                                  AND estado = 'pendiente' 
+                                  AND {filtro_sql}
+                                  AND (dni IS NULL OR dni = '')
+                                ORDER BY id ASC
+                                LIMIT %s
+                                FOR UPDATE SKIP LOCKED
+                            """
+                            cursor.execute(select_sin_dni, (remanente,))
+                            filas.extend(cursor.fetchall())
+                    else:
+                        cond_scraper = "scraper_actual = %s"
+                        param_val = (canon, batch_size)
+
+                        # Selección con bloqueo SKIP LOCKED forzando índice idx_scraper_estado
+                        select_query = f"""
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
+                            WHERE {cond_scraper} 
+                              AND estado = 'pendiente' 
+                              AND {filtro_sql}
+                            ORDER BY id ASC
+                            LIMIT %s
+                            FOR UPDATE SKIP LOCKED
+                        """
+                        cursor.execute(select_query, param_val)
+                        filas = cursor.fetchall()
                     if filas:
                         prio_enum = cfg["enum"]
                         prio_nom = cfg["nombre"]

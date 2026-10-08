@@ -224,11 +224,17 @@ class ReglaPipeline:
         if nombre == "cuitonline":
             if not dni_activo:
                 return False, "CuitOnline requiere DNI disponible"
-            d_data = datos.get("datuar", {})
-            d_ts = d_data.get("ultima_modificacion") if isinstance(d_data, dict) else None
-            if not cls.es_reciente(d_ts, max_dias=dias_validez):
-                return False, "CuitOnline exige haber pasado por Datuar en los últimos 7 días"
             return True, "Apto para CuitOnline"
+
+        if nombre == "bcra":
+            datuar_data = datos.get("datuar", {})
+            paso_datuar = isinstance(datuar_data, dict) and bool(datuar_data.get("status"))
+            cuit_activo = cls.extraer_cuit({"datuar": datuar_data}) if paso_datuar else None
+            if not cuit_activo:
+                cuit_activo = cls.extraer_cuit(datos)
+            if not paso_datuar or not cuit_activo:
+                return False, "BCRA requiere haber pasado previamente por Datuar y contar con el CUIT extraído"
+            return True, "Apto para BCRA Central de Deudores"
 
         return False, f"Scraper desconocido: {nombre}"
 
@@ -360,12 +366,13 @@ if telco_coincidio and candidato in cls.TELCOS:
 - Si `claro`, `personal` o `movistar` ya encontraron la línea activa (`StatusScraping.COINCIDENCIA`), no se consulta ninguna otra telco.
 - Si en la cadena aún quedan scrapers de identidad (`datuar`, `cuitonline`) y se cuenta con DNI, la línea avanza hacia ellos para completar el perfil.
 
-### 2.3. Bloque 3: Dependencia Estricta de Identidad
+### 2.3. Bloque 3: Requisitos de Identidad (DNI)
 ```python
-if candidato == "cuitonline" and not paso_datuar:
+if candidato in cls.REQUIEREN_DNI and not tiene_dni:
     continue
 ```
-- Garantiza que `cuitonline` nunca se ejecute si la línea no fue auditada previamente por `datuar`.
+- Garantiza que `cuitonline` (así como `datuar` y `claro`) solo se ejecuten si la línea cuenta con DNI disponible.
+- `cuitonline` no requiere haber pasado previamente por `datuar`: cualquier registro que posea DNI (desde el origen o enriquecido) es elegible directamente.
 
 ### 2.4. Bloque 4: Terminación del Pipeline
 ```python
@@ -387,11 +394,12 @@ El método `ReglaPipeline.es_elegible_para_scraper` evalúa si un registro es re
    - **PC Personal**: Si la línea **NO tiene DNI**, entra libre directo sin esperar a Claro. Si la línea **TIENE DNI**, exige haber pasado por `claro` en los últimos 7 días. Si Claro o Movistar tuvieron coincidencia positiva en los últimos 7 días, Personal queda vetado.
    - **PC Claro**: Exige DNI disponible. Si no hay DNI, saltea Claro. Respeta exclusividad telco ante coincidencias de Personal o Movistar.
 
-2. **Motores de Enriquecimiento No-Telco (`iris`, `datuar`, `cuitonline`)**:
+2. **Motores de Enriquecimiento No-Telco (`iris`, `datuar`, `cuitonline`, `bcra`)**:
    - **NO tienen regla de 7 días**.
    - **Regla de Nutrición**: Solo nutren registros que aún **no posean datos** de dicho motor (`datos_json[motor]` ausente). Una vez enriquecidos, nunca caducan por tiempo.
    - **PC Datuar**: Exige DNI disponible y que la línea no posea datos previos de Datuar.
-   - **PC CuitOnline**: Exige DNI disponible, que la línea no posea datos previos de CuitOnline y que `datuar` ya haya sido ejecutado previamente (sin restricción de 7 días, puede haber sido auditado hace meses).
+   - **PC CuitOnline**: Exige DNI disponible y que la línea no posea datos previos de CuitOnline.
+   - **PC BCRA Central de Deudores**: Exige haber pasado previamente por `datuar` y disponer del **CUIT/CUIL extraído de Datuar** para garantizar auditoría crediticia sobre el identificador fiscal exacto y certificado.
 
 3. **Bloqueo Concurrente Anti-Colisión**:
    - Ninguna PC puede reclamar un registro cuyo estado sea `'procesando'`, garantizado mediante transacciones InnoDB con `FOR UPDATE SKIP LOCKED`.

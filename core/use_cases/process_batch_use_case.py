@@ -162,7 +162,7 @@ class ProcesarLoteUseCase:
                         getattr(reg, "tipo_cola", None) is None and (self.cadena is None or "iris" in self.cadena)
                     )
                     nombre_sc = self.scraper.nombre.lower()
-                    if is_reg_no_llame and (nombre_sc in ReglaPipeline.TELCOS) and getattr(reg, "scraper_actual", None) == "iris":
+                    if is_reg_no_llame and (nombre_sc in ReglaPipeline.TELCOS or nombre_sc == "telcos") and getattr(reg, "scraper_actual", None) == "iris":
                         sig_scraper = "iris"
                         sig_estado = EstadoRegistro.PENDIENTE.value
                         motivo = "Línea de Reg No Llame pertenece a IRIS. Revertida a IRIS pendiente"

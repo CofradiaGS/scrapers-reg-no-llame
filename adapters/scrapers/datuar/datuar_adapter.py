@@ -93,22 +93,25 @@ class DatuarAdapter(BaseScraperAdapter):
         return "datuar"
 
     def _generar_proxy_aislado(self) -> str:
-        self.circuit_id += 1
-        token = f"w{self.worker_slot}_{int(time.time()*1000)}_{self.circuit_id}"
-        socks_base = self.tor_port or getattr(config, "TOR_SOCKS_PORT_BASE", 9050)
-        return f"socks5h://{token}:tor@127.0.0.1:{socks_base}"
+        socks_base = self.tor_port or TorController.resolve_ports_for_worker(self.worker_slot)[0]
+        return f"socks5h://127.0.0.1:{socks_base}"
 
 
     def _rotar_circuito_instantaneo(self) -> None:
         if not self.use_tor:
             return
+        if self.tor_controller:
+            try:
+                self.tor_controller.rotate_ip()
+            except Exception:
+                pass
         self._proxy_url = self._generar_proxy_aislado()
         if self._session is not None:
             self._session.proxies = {
                 "http": self._proxy_url,
                 "https": self._proxy_url
             }
-        logger.debug(f"Datuar rotó instantáneamente circuito Tor: {self._proxy_url[:28]}...")
+        logger.debug(f"Datuar rotó limpiamente circuito Tor: {self._proxy_url}...")
 
     def iniciar(self) -> None:
         """Inicializa la sesión HTTP y el enrutamiento de red."""

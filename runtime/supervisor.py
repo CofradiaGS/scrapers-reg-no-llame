@@ -479,14 +479,39 @@ class SupervisorIndustrial:
                             if resp_q:
                                 resp_q.put({"encontrados": True, "cantidad": len(lote), "prox_delay": 0.0})
                         else:
-                            self._empty_backoff_level += 1
-                            prox_delay = self._get_current_empty_backoff_delay()
-                            disp_logger.info(
-                                f"📭 [CENTINELA] Sondeo explorador sin registros. Próximo intento en {int(prox_delay)}s "
-                                f"(Nivel {self._empty_backoff_level + 1})."
-                            )
-                            if resp_q:
-                                resp_q.put({"encontrados": False, "cantidad": 0, "prox_delay": prox_delay})
+                            if self.sync_scheduler:
+                                try:
+                                    res_pull = self.sync_scheduler.ejecutar_pull_inmediato(forzar=False)
+                                    if res_pull.get("descargados", 0) > 0:
+                                        lote = self.db_adapter.reservar_lote(
+                                            batch_size=b_size,
+                                            prioridad=prio,
+                                            scraper_nombre=s_nom,
+                                            solo_sin_coincidencia=s_sin
+                                        )
+                                except Exception as e_pull:
+                                    disp_logger.warning(f"Aviso en pull explorador al VPS: {e_pull}")
+
+                            if lote and len(lote) > 0:
+                                with self._scout_lock:
+                                    self._scout_prefetched_lote = lote
+                                    self._empty_backoff_level = 0
+                                self._clear_pause("cola_vacia")
+                                disp_logger.info(
+                                    f"🎯 [CENTINELA] Sondeo exitoso tras recarga del VPS: {len(lote)} registros reservados. "
+                                    "Pausa de cola vacía liberada. Reanudando workers."
+                                )
+                                if resp_q:
+                                    resp_q.put({"encontrados": True, "cantidad": len(lote), "prox_delay": 0.0})
+                            else:
+                                self._empty_backoff_level += 1
+                                prox_delay = self._get_current_empty_backoff_delay()
+                                disp_logger.info(
+                                    f"📭 [CENTINELA] Sondeo explorador sin registros. Próximo intento en {int(prox_delay)}s "
+                                    f"(Nivel {self._empty_backoff_level + 1})."
+                                )
+                                if resp_q:
+                                    resp_q.put({"encontrados": False, "cantidad": 0, "prox_delay": prox_delay})
 
                     elif action == "persistir_resultados":
                         resultados = msg.get("resultados", [])
@@ -820,9 +845,9 @@ class SupervisorIndustrial:
                 self.sync_scheduler.start()
 
                 stats = self.db_adapter.obtener_estadisticas()
-                pendientes_locales = stats.get("pendiente", 0)
+                pendientes_locales = self.db_adapter.contar_pendientes(tipo_cola=self.queue_type, scraper_actual=self.scraper_name)
                 listos_push = stats.get("listo_para_subir", 0)
-                print(f"💾 Staging Local Activo ({config.LOCAL_STAGING_DB_PATH}). Tareas pendientes locales: {pendientes_locales:,} | Esperando push: {listos_push:,}\n")
+                print(f"💾 Staging Local Activo ({config.LOCAL_STAGING_DB_PATH}). Tareas pendientes locales ({self.scraper_name}): {pendientes_locales:,} | Esperando push: {listos_push:,}\n")
             else:
                 if self.queue_type == "cola_automatizacion":
                     self.db_adapter = ColaAutomatizacionAdapter(

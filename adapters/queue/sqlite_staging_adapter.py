@@ -130,6 +130,8 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = "datuar"
             elif "bcra" in nombre_clean:
                 canon = "bcra"
+            elif "enacom" in nombre_clean:
+                canon = "enacom_web"
             else:
                 canon = nombre_clean
 
@@ -141,7 +143,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     FROM tareas_staging
                     WHERE estado_local = 'pendiente' AND tipo_cola = ?
                       AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar')
-                    ORDER BY id_vps ASC
+                    ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
                 """, (self.tipo_cola, batch_size))
             else:
@@ -151,7 +153,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     FROM tareas_staging
                     WHERE estado_local = 'pendiente' AND tipo_cola = ?
                       AND scraper_actual = ?
-                    ORDER BY id_vps ASC
+                    ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
                 """, (self.tipo_cola, canon, batch_size))
             filas = cursor.fetchall()
@@ -175,7 +177,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 dni_val = "".join(filter(str.isdigit, str(f["dni"] or ""))) if f["dni"] else None
 
                 payload_dict = {}
-                raw_payload = f["payload_origen"]
+                raw_payload = f["resultado_json"] or f["payload_origen"]
                 if raw_payload:
                     try:
                         payload_dict = json.loads(raw_payload) if isinstance(raw_payload, str) else raw_payload
@@ -242,23 +244,43 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 else:
                     res_json_str = "{}"
 
+                # Extraer DNI resultante si no vino explícito en el ítem
+                if not dni_item and isinstance(datos_totales, dict):
+                    from core.domain.entities import ReglaPipeline
+                    dni_ext = ReglaPipeline.extraer_dni(datos_totales)
+                    if dni_ext:
+                        dni_item = str(dni_ext).strip()
+
                 # Extraer lista de scrapers ejecutados para scrapers_intentados
                 intentados_lista = []
                 if isinstance(datos_totales, dict):
-                    for telco in ("claro", "personal", "movistar", "iris", "datuar", "cuitonline"):
+                    for telco in ("claro", "personal", "movistar", "iris", "datuar", "cuitonline", "bcra", "enacom_web"):
                         if telco in datos_totales:
                             intentados_lista.append(telco)
                 scrapers_intentados = ",".join(intentados_lista) if intentados_lista else scraper_actual
 
+                is_finished = (
+                    scraper_actual == "finalizado"
+                    or str(item.get("estado") or "").lower() in ("completado", "completed")
+                    or not scraper_actual
+                )
+
                 if status_raw in ("error", "failed", "fallido"):
                     estado_local = "fallido"
                     error_msg = desc or "Error en procesamiento local"
-                else:
+                elif is_finished:
                     estado_local = "listo_para_subir"
+                    error_msg = None
+                else:
+                    # Posta intermedia del pipeline local (ej: iris -> telcos -> cuitonline/datuar -> bcra).
+                    # Permanece como 'pendiente' en SQLite para que el siguiente scraper lo tome de inmediato
+                    # sin esperar al ciclo nocturno ni generar round-trips al VPS.
+                    estado_local = "pendiente"
                     error_msg = None
 
                 valores.append((
                     estado_local,
+                    res_json_str,
                     res_json_str,
                     error_msg,
                     scrapers_intentados,
@@ -275,6 +297,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 UPDATE tareas_staging
                 SET estado_local = ?,
                     resultado_json = ?,
+                    payload_origen = ?,
                     error_msg = ?,
                     scrapers_intentados = ?,
                     dni = CASE WHEN (dni IS NULL OR dni = '') AND ? != '' THEN ? ELSE dni END,
@@ -317,18 +340,48 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
         finally:
             conn.close()
 
+    def revertir_subida_a_listo(self, ids_vps: List[int], tipo_cola: Optional[str] = None) -> bool:
+        """Devuelve tareas de 'en_subida' al estado 'listo_para_subir' si el push falló o se interrumpió."""
+        if not ids_vps:
+            return True
+        q_type = tipo_cola or self.tipo_cola
+        conn = self._get_connection()
+        try:
+            placeholders = ",".join("?" for _ in ids_vps)
+            with conn:
+                conn.execute(f"""
+                    UPDATE tareas_staging
+                    SET estado_local = 'listo_para_subir'
+                    WHERE tipo_cola = ? AND estado_local = 'en_subida' AND id_vps IN ({placeholders});
+                """, [q_type] + ids_vps)
+            return True
+        except Exception as e:
+            logger.error(f"Error al revertir de en_subida a listo_para_subir en SQLite: {e}")
+            return False
+        finally:
+            conn.close()
+
     def liberar_huerfanos(self, minutos_inactividad: int = 15) -> int:
-        """Recupera registros colgados en 'en_proceso' tras caídas imprevistas o reinicios."""
+        """Recupera registros colgados en 'en_proceso' o 'en_subida' tras caídas imprevistas o reinicios."""
         conn = self._get_connection()
         try:
             with conn:
-                cursor = conn.execute("""
+                cursor1 = conn.execute("""
                     UPDATE tareas_staging
                     SET estado_local = 'pendiente'
                     WHERE tipo_cola = ? AND estado_local = 'en_proceso' 
                       AND (fecha_procesado IS NULL OR fecha_procesado < DATETIME('now', ?));
                 """, (self.tipo_cola, f"-{minutos_inactividad} minutes"))
-                return cursor.rowcount
+                h_proc = cursor1.rowcount
+
+                cursor2 = conn.execute("""
+                    UPDATE tareas_staging
+                    SET estado_local = 'listo_para_subir'
+                    WHERE tipo_cola = ? AND estado_local = 'en_subida' 
+                      AND (fecha_procesado IS NULL OR fecha_procesado < DATETIME('now', ?));
+                """, (self.tipo_cola, f"-{minutos_inactividad} minutes"))
+                h_subida = cursor2.rowcount
+                return h_proc + h_subida
         except Exception as e:
             logger.error(f"Error liberando huérfanos locales: {e}")
             return 0
@@ -341,6 +394,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
             "pendiente": 0,
             "en_proceso": 0,
             "listo_para_subir": 0,
+            "en_subida": 0,
             "sincronizado": 0,
             "fallido": 0,
             "total": 0
@@ -402,9 +456,10 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 ))
 
             cursor = conn.executemany("""
-                INSERT OR IGNORE INTO tareas_staging (
+                INSERT INTO tareas_staging (
                     id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, estado_local
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente');
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+                ON CONFLICT(id_vps, tipo_cola) DO NOTHING;
             """, valores)
             conn.execute("COMMIT;")
             logger.info(f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type})")
@@ -420,10 +475,11 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
             conn.close()
 
     def obtener_lote_para_push(self, limit: int = 5000, tipo_cola: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Obtiene un lote de registros terminados esperando subida nocturna."""
+        """Obtiene un lote de registros terminados esperando subida nocturna y los reserva atómicamente como 'en_subida'."""
         q_type = tipo_cola or self.tipo_cola
         conn = self._get_connection()
         try:
+            conn.execute("BEGIN IMMEDIATE;")
             cursor = conn.execute("""
                 SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                        scraper_actual, resultado_json, fuente, scrapers_intentados, 
@@ -434,8 +490,23 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 LIMIT ?;
             """, (q_type, limit))
             filas = [dict(r) for r in cursor.fetchall()]
+            if filas:
+                ids_vps = [f["id_vps"] for f in filas]
+                placeholders = ",".join("?" for _ in ids_vps)
+                conn.execute(f"""
+                    UPDATE tareas_staging
+                    SET estado_local = 'en_subida'
+                    WHERE tipo_cola = ? AND id_vps IN ({placeholders});
+                """, [q_type] + ids_vps)
+                for f in filas:
+                    f["estado_local"] = "en_subida"
+            conn.execute("COMMIT;")
             return filas
         except Exception as e:
+            try:
+                conn.execute("ROLLBACK;")
+            except Exception:
+                pass
             logger.error(f"Error leyendo lote para push en SQLite: {e}")
             return []
         finally:
@@ -487,16 +558,53 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
         finally:
             conn.close()
 
-    def contar_pendientes(self, tipo_cola: Optional[str] = None) -> int:
-        """Devuelve la cantidad actual de registros 'pendiente' en SQLite local."""
+    def contar_pendientes(self, tipo_cola: Optional[str] = None, scraper_actual: Optional[str] = None) -> int:
+        """Devuelve la cantidad actual de registros 'pendiente' en SQLite local, opcionalmente por scraper_actual."""
         q_type = tipo_cola or self.tipo_cola
         conn = self._get_connection()
         try:
-            cursor = conn.execute("""
-                SELECT COUNT(*) as pendientes
-                FROM tareas_staging
-                WHERE estado_local = 'pendiente' AND tipo_cola = ?;
-            """, (q_type,))
+            if scraper_actual:
+                nombre_clean = scraper_actual.lower().strip()
+                if "enacom" in nombre_clean:
+                    canon = "enacom_web"
+                elif "iris" in nombre_clean:
+                    canon = "iris"
+                elif "claro" in nombre_clean:
+                    canon = "claro"
+                elif "personal" in nombre_clean:
+                    canon = "personal"
+                elif "movistar" in nombre_clean:
+                    canon = "movistar"
+                elif "cuit" in nombre_clean:
+                    canon = "cuitonline"
+                elif "datuar" in nombre_clean:
+                    canon = "datuar"
+                elif "bcra" in nombre_clean:
+                    canon = "bcra"
+                elif "telco" in nombre_clean:
+                    canon = "telcos"
+                else:
+                    canon = nombre_clean
+
+                if canon == "telcos":
+                    cursor = conn.execute("""
+                        SELECT COUNT(*) as pendientes
+                        FROM tareas_staging
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? 
+                          AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar');
+                    """, (q_type,))
+                else:
+                    cursor = conn.execute("""
+                        SELECT COUNT(*) as pendientes
+                        FROM tareas_staging
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? AND scraper_actual = ?;
+                    """, (q_type, canon))
+            else:
+                cursor = conn.execute("""
+                    SELECT COUNT(*) as pendientes
+                    FROM tareas_staging
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ?;
+                """, (q_type,))
             row = cursor.fetchone()
             return row["pendientes"] if row else 0
         except Exception as e:

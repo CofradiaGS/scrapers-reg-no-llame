@@ -116,6 +116,11 @@ class SincronizarPushNocturnoUseCase:
 
             except Exception as e:
                 logger.error(f"❌ [PUSH LOTE {lote_num} ERROR] Falló subida al VPS: {e}", exc_info=True)
+                ids_vps = [r["id_vps"] for r in lote]
+                try:
+                    self.local.revertir_subida_a_listo(ids_vps=ids_vps, tipo_cola=tipo_cola)
+                except Exception as e_rev:
+                    logger.warning(f"Aviso al revertir estado de lote fallido: {e_rev}")
                 return {
                     "exito": False,
                     "error": str(e),
@@ -152,6 +157,11 @@ class SincronizarPushNocturnoUseCase:
                         logger.info(f"✅ [PUSH SWEEP OK] {cant_sweep:,} remanentes sincronizados con éxito.")
                     except Exception as e_sweep:
                         logger.error(f"⚠️ [PUSH SWEEP ERROR] Falló el barrido final: {e_sweep}")
+                        ids_sweep = [r["id_vps"] for r in lote_sweep]
+                        try:
+                            self.local.revertir_subida_a_listo(ids_vps=ids_sweep, tipo_cola=tipo_cola)
+                        except Exception:
+                            pass
 
         # Purga rotativa de tareas sincronizadas con más de N días
         purgados = 0

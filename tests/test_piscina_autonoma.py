@@ -153,35 +153,27 @@ class TestPiscinaAutonoma(unittest.TestCase):
         )
         self.assertTrue(apto3, f"Personal con DNI y Claro reciente debió ser apto: {msg3}")
 
-    def test_06_pc_cuitonline_no_tiene_regla_7_dias_solo_exige_datuar_presente(self):
-        """PC CuitOnline: NO tiene regla de 7 días. Solo exige DNI y que Datuar haya sido ejecutado."""
-        # Caso A: Con DNI y Datuar hace 30 días (sin restricción de 7 días) -> APTO
-        hace_30_dias = (self.ahora - timedelta(days=30)).strftime("%Y-%m-%d %H:%M:%S")
-        datos_datuar_30d = {
-            "datuar": {
-                "status": "coincidencia",
-                "ultima_modificacion": hace_30_dias,
-                "dni": "20123456"
-            }
-        }
+    def test_06_pc_cuitonline_solo_exige_dni_disponible(self):
+        """PC CuitOnline: Exige exclusivamente DNI disponible (no depende de Datuar previo)."""
+        # Caso A: Con DNI disponible -> APTO
         apto, msg = ReglaPipeline.es_elegible_para_scraper(
-            scraper_nombre="cuitonline",
-            ani="1122334455",
-            dni=None,
-            datos_json=datos_datuar_30d,
-            dias_validez=7
-        )
-        self.assertTrue(apto, f"CuitOnline debió ser apto aunque Datuar tenga 30 días: {msg}")
-
-        # Caso B: Sin Datuar previo -> RECHAZADO
-        apto2, msg2 = ReglaPipeline.es_elegible_para_scraper(
             scraper_nombre="cuitonline",
             ani="1122334455",
             dni="20123456",
             datos_json={},
             dias_validez=7
         )
-        self.assertFalse(apto2, "CuitOnline debió rechazar si Datuar nunca se ejecutó")
+        self.assertTrue(apto, f"CuitOnline debe ser apto si cuenta con DNI: {msg}")
+
+        # Caso B: Sin DNI disponible -> RECHAZADO
+        apto2, msg2 = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="cuitonline",
+            ani="1122334455",
+            dni=None,
+            datos_json={},
+            dias_validez=7
+        )
+        self.assertFalse(apto2, "CuitOnline debe rechazar si no cuenta con DNI disponible")
 
     def test_07_no_telcos_solo_nutren_los_que_no_tienen_datos(self):
         """Los motores no-telco (iris, datuar, cuitonline) no se re-ejecutan si ya tienen datos."""

@@ -105,6 +105,39 @@ Al reservarse:
 2. Se registra `fecha_inicio = NOW()`.
 3. Se asigna `target_pc = self.pc_id` para trazabilidad de nodo.
 
+### 3.1 Protocolo Especial en Dos Fases para Telcos (`canon == 'telcos'`)
+Para optimizar las consultas y evitar sobrecargas de `filesort` en tablas de millones de registros, [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py) aplica una estrategia de reserva en dos fases secuenciales:
+
+1. **Fase A (Con DNI)**:
+   ```sql
+   SELECT id, datos, numero_de_linea, reintentos
+   FROM {self.table_name}
+   WHERE auto_id = %s
+     AND estado = 'pendiente'
+     AND (target_pc = %s OR target_pc IS NULL OR target_pc = '')
+     AND (dni IS NOT NULL AND dni != '')
+   ORDER BY id ASC
+   LIMIT %s
+   FOR UPDATE SKIP LOCKED;
+   ```
+2. **Fase B (Sin DNI - Relleno)**:
+   Si la cantidad de registros obtenidos en Fase A es inferior a `batch_size`, se ejecuta una consulta complementaria:
+   ```sql
+   SELECT id, datos, numero_de_linea, reintentos
+   FROM {self.table_name}
+   WHERE auto_id = %s
+     AND estado = 'pendiente'
+     AND (target_pc = %s OR target_pc IS NULL OR target_pc = '')
+     AND (dni IS NULL OR dni = '')
+   ORDER BY id ASC
+   LIMIT %s
+   FOR UPDATE SKIP LOCKED;
+   ```
+Ambos subconjuntos se unen y se actualizan a `en_proceso` de forma atómica en la misma transacción. Esto asegura que el worker procese prioritariamente los registros que poseen DNI (aprovechando la cascada completa Claro ➔ Personal ➔ Movistar) y consume los registros sin DNI solo cuando los primeros se agotan.
+
+Para el resto de los scrapers (`iris`, `claro`, `datuar`, etc.), se mantiene la consulta estándar única sin filtro de DNI.
+
+
 ---
 
 ## 4. Formato de Salida Unificado: Trazabilidad `iris_v2` y Retrocompatibilidad

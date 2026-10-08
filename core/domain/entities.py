@@ -166,7 +166,7 @@ class ReglaPipeline:
     """
     TELCOS = ("claro", "personal", "movistar")
     REQUIEREN_DNI = ("claro", "datuar", "cuitonline", "bcra")
-    CADENA_DEFAULT = ["iris", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
+    CADENA_DEFAULT = ["iris", "telcos", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
 
     @classmethod
     def es_reciente(cls, fecha_str: Optional[str], max_dias: int = 7) -> bool:
@@ -343,8 +343,7 @@ class ReglaPipeline:
            No ejecutado en los últimos 7 días.
            EXIGE haber pasado por Personal en los últimos 7 días.
         5. DATUAR: Exige DNI disponible. No ejecutado en los últimos 7 días.
-        6. CUITONLINE: Exige DNI disponible. No ejecutado en los últimos 7 días.
-           EXIGE haber pasado por Datuar en los últimos 7 días.
+        6. CUITONLINE: Exige DNI disponible. No requiere paso previo por Datuar.
         7. FLAG solo_sin_coincidencia: Si es True en telcos, descarta registros con coincidencia en cualquiera
            de las 3 telcos (o status raíz), independientemente de la fecha.
         """
@@ -468,16 +467,16 @@ class ReglaPipeline:
         if nombre == "cuitonline":
             if not dni_activo:
                 return False, "CuitOnline requiere DNI disponible"
-            # CuitOnline NO tiene regla de 7 días: solo exige haber pasado previamente por Datuar
-            d_data = datos.get("datuar", {})
-            if not d_data or not isinstance(d_data, dict) or not d_data.get("status"):
-                return False, "CuitOnline exige haber pasado previamente por Datuar"
             return True, "Apto para CuitOnline"
 
         if nombre == "bcra":
-            cuit_activo = cls.extraer_cuit(datos)
-            if not dni_activo and not cuit_activo:
-                return False, "BCRA requiere DNI o CUIT disponible"
+            datuar_data = datos.get("datuar", {})
+            paso_datuar = isinstance(datuar_data, dict) and bool(datuar_data.get("status"))
+            cuit_activo = cls.extraer_cuit({"datuar": datuar_data}) if paso_datuar else None
+            if not cuit_activo:
+                cuit_activo = cls.extraer_cuit(datos)
+            if not paso_datuar or not cuit_activo:
+                return False, "BCRA requiere haber pasado previamente por Datuar y contar con el CUIT extraído"
             return True, "Apto para BCRA Central de Deudores"
 
         return False, f"Scraper desconocido: {nombre}"
@@ -512,7 +511,7 @@ class ReglaPipeline:
         3. Precedencia y Temporalidad de 7 Días (TTL):
            - Personal con DNI exige haber pasado por Claro en los últimos 7 días.
            - Movistar ('de nadie') solo necesita ANI y exige haber pasado por Personal en los últimos 7 días.
-           - CuitOnline NUNCA se ejecuta si no pasó previamente por Datuar en los últimos 7 días.
+           - CuitOnline solo exige contar con DNI disponible (no depende de Datuar).
         4. Fin de cadena:
            - Si no quedan scrapers aplicables -> ('finalizado', 'completado'|'no_coincidencia').
         """
@@ -529,10 +528,14 @@ class ReglaPipeline:
             sc_canonico = "iris"
         elif "telco" in sc_canonico:
             sc_canonico = "telcos"
-        datos[sc_canonico] = {
-            "status": resultado.status.value,
-            "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        if sc_canonico in datos and isinstance(datos[sc_canonico], dict):
+            datos[sc_canonico]["status"] = resultado.status.value
+            datos[sc_canonico]["ultima_modificacion"] = resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            datos[sc_canonico] = {
+                "status": resultado.status.value,
+                "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
 
         # Determinar si hay DNI activo
         tiene_dni = bool(
@@ -592,11 +595,11 @@ class ReglaPipeline:
 
         for candidato in pipeline[idx + 1:]:
             # Si el candidato es una telco y ya corrió telcos, saltearlo
-            if (scraper_actual == "telcos" or sc_canonico == "telcos") and candidato in cls.TELCOS:
+            if (scraper_actual == "telcos" or sc_canonico == "telcos") and (candidato in cls.TELCOS or candidato == "telcos"):
                 continue
 
-            # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante
-            if telco_coincidio and candidato in cls.TELCOS:
+            # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante o el motor telcos
+            if telco_coincidio and (candidato in cls.TELCOS or candidato == "telcos"):
                 continue
 
             # Si el candidato requiere DNI obligatoriamente y NO tenemos DNI, saltearlo
@@ -620,16 +623,16 @@ class ReglaPipeline:
                 continue
 
             # Dependencia de Identidad (NO aplica regla de 7 días):
-            # 3. CuitOnline requiere haber pasado por Datuar previamente
-            paso_datuar = ("datuar" in pasados or (isinstance(datos.get("datuar"), dict) and datos["datuar"].get("status")))
-            if candidato == "cuitonline" and not paso_datuar:
-                continue
-
-            # 4. BCRA requiere haber pasado previamente por CuitOnline o Datuar (o contar con DNI/CUIT)
-            paso_previo_id = paso_datuar or ("cuitonline" in pasados or (isinstance(datos.get("cuitonline"), dict) and datos["cuitonline"].get("status")))
-            cuit_disponible = bool(cls.extraer_cuit(datos))
-            if candidato == "bcra" and not (paso_previo_id or tiene_dni or cuit_disponible):
-                continue
+            # 3. CuitOnline solo exige tener DNI (filtrado previamente por REQUIEREN_DNI arriba).
+            
+            # 4. BCRA exige haber pasado previamente por Datuar y contar con el CUIT/CUIL extraído
+            if candidato == "bcra":
+                datuar_data = datos.get("datuar", {})
+                paso_datuar = ("datuar" in pasados or (isinstance(datuar_data, dict) and bool(datuar_data.get("status"))))
+                cuit_datuar = cls.extraer_cuit({"datuar": datuar_data}) if isinstance(datuar_data, dict) else None
+                cuit_disponible = bool(cuit_datuar or cls.extraer_cuit(datos))
+                if not (paso_datuar and cuit_disponible):
+                    continue
 
             # Candidato válido encontrado
             return (candidato, EstadoRegistro.PENDIENTE.value)

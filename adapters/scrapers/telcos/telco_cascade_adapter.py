@@ -48,9 +48,16 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         self._forzar_horario = forzar_horario or kwargs.get("forzar_horario", False)
         self._politica_horario = config.obtener_politica_horario_para_scraper("telcos")
 
+        self.use_tor = use_tor if use_tor is not None else kwargs.get("tor", config.TOR_ENABLED)
+        self.proxy = kwargs.get("proxy")
+        if self.use_tor and not self.proxy and not use_proxy_pool:
+            from adapters.network.tor_controller import TorController
+            self.proxy = TorController.get_proxy_for_worker(self.worker_slot)
+
         adapter_kwargs = {
             "base_url": base_url,
-            "use_tor": use_tor,
+            "proxy": self.proxy,
+            "use_tor": self.use_tor,
             "use_proxy_pool": use_proxy_pool,
             "worker_slot": self.worker_slot,
             "delay_min": self.delay_min,
@@ -58,6 +65,7 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
             "forzar_horario": self._forzar_horario,
             **kwargs
         }
+        adapter_kwargs["proxy"] = self.proxy
 
         self.claro = ClaroAdapter(**adapter_kwargs)
         self.personal = PersonalAdapter(**adapter_kwargs)
@@ -147,7 +155,7 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
                     "ultima_modificacion": ahora_iso
                 }
         else:
-            # Línea sin DNI: se documenta omisión de Claro y avanza directo a Personal
+            # Línea sin DNI: Claro se omite en la red pero se deja tal cual cuando da sin coincidencia estándar
             datos_acumulados["claro"] = {
                 "status": "sin_coincidencia",
                 "fuente": "claro",
@@ -157,10 +165,15 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
                 "servicio": {},
                 "fechas": {},
                 "detalles": {
-                    "motivo": "Omitido: Claro Cobro Express exige DNI disponible y la línea no posee DNI",
-                    "ani_consultado": linea.ani
+                    "http_status": 200,
+                    "dni_consultado": "",
+                    "ani_consultado": linea.ani,
+                    "items_count": 0
                 },
-                "raw": {},
+                "raw": {
+                    "status_code": 200,
+                    "items": []
+                },
                 "ultima_modificacion": ahora_iso
             }
 

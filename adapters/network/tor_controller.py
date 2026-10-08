@@ -69,6 +69,64 @@ class TorController:
         ident = session_id or uuid.uuid4().hex[:12]
         return f"socks5h://{ident}:tor@127.0.0.1:{self.socks_port}"
 
+    _cached_alive_ports: list = []
+    _cached_ports_time: float = 0.0
+
+    @classmethod
+    def get_alive_tor_ports(cls) -> list[int]:
+        """
+        Descubre los puertos SOCKS de Tor activos y disponibles en la máquina.
+        Cachea el resultado para no incurrir en sondeos repetitivos.
+        """
+        now = time.time()
+        if cls._cached_alive_ports and (now - cls._cached_ports_time < 120.0):
+            return cls._cached_alive_ports
+
+        base_socks = int(config.TOR_SOCKS_PORT_BASE)
+        alive = []
+        for i in range(20):
+            p = base_socks + (i * 2)
+            s = socket.socket()
+            s.settimeout(0.15)
+            try:
+                if s.connect_ex(("127.0.0.1", p)) == 0:
+                    alive.append(p)
+            except Exception:
+                pass
+            finally:
+                s.close()
+
+        if not alive:
+            alive = [base_socks]
+
+        cls._cached_alive_ports = alive
+        cls._cached_ports_time = now
+        return alive
+
+    @classmethod
+    def resolve_ports_for_worker(cls, worker_slot: Optional[int] = None) -> tuple[int, int]:
+        """
+        Calcula y resuelve los puertos (socks_port, control_port) para un worker slot.
+        Si hay un pool multi-instancia de Tor activo (puertos 9050, 9052, 9054...),
+        distribuye equitativamente los worker slots entre las instancias activas para
+        eliminar totalmente la saturación y colisiones.
+        Si no hay pool y solo corre el puerto base, retorna (TOR_SOCKS_PORT_BASE, TOR_CONTROL_PORT_BASE).
+        """
+        alive = cls.get_alive_tor_ports()
+        slot_idx = (worker_slot - 1) if (worker_slot and worker_slot > 0) else 0
+        chosen_socks = alive[slot_idx % len(alive)]
+        chosen_ctrl = chosen_socks + 1
+        return chosen_socks, chosen_ctrl
+
+    @classmethod
+    def get_proxy_for_worker(cls, worker_slot: Optional[int] = None) -> str:
+        """
+        Retorna la URL SOCKS5h limpia correspondiente al worker slot.
+        Nunca inyecta UUIDs aleatorios destructivos que fuercen construcción compulsiva de circuitos en Tor.
+        """
+        socks_port, _ = cls.resolve_ports_for_worker(worker_slot)
+        return f"socks5h://127.0.0.1:{socks_port}"
+
     def is_port_open(self, port: int) -> bool:
         """Comprueba si un socket local responde rápidamente."""
         s = socket.socket()

@@ -1,1 +1,202 @@
-[]
+[
+  {
+    "id": 109943,
+    "ani": "3533412089",
+    "dni": "21497541",
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (4 ops: Altas, Port In, Port Out) - Titular: SILVIA PATRICIA LOPEZ | Doc: 21497541",
+    "timestamp": "2026-10-08 12:12:55"
+  },
+  {
+    "id": 109778,
+    "ani": "3416658633",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:56"
+  },
+  {
+    "id": 109944,
+    "ani": "3584620025",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:56"
+  },
+  {
+    "id": 109715,
+    "ani": "3424890610",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:56"
+  },
+  {
+    "id": 109945,
+    "ani": "3517615358",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:57"
+  },
+  {
+    "id": 109779,
+    "ani": "3414405211",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:57"
+  },
+  {
+    "id": 109946,
+    "ani": "3585482320",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:59"
+  },
+  {
+    "id": 109780,
+    "ani": "2944151569",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:12:59"
+  },
+  {
+    "id": 109947,
+    "ani": "3855140526",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:00"
+  },
+  {
+    "id": 109716,
+    "ani": "2944834822",
+    "dni": "12659109",
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (1 ops: Port Out) - Titular: CARNAGHI MARIA TERESA | Doc: 12659109",
+    "timestamp": "2026-10-08 12:13:01"
+  },
+  {
+    "id": 109781,
+    "ani": "3447412758",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:01"
+  },
+  {
+    "id": 109948,
+    "ani": "3886423735",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:01"
+  },
+  {
+    "id": 109949,
+    "ani": "3855987136",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:02"
+  },
+  {
+    "id": 109782,
+    "ani": "2994765949",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:03"
+  },
+  {
+    "id": 109784,
+    "ani": "2944328215",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:04"
+  },
+  {
+    "id": 109785,
+    "ani": "3416645080",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:06"
+  },
+  {
+    "id": 110015,
+    "ani": "3515429617",
+    "dni": "21727655",
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (4 ops: Altas, Port In, Port Out) - Titular: GUILLERMO RICAR NUÑEZ | Doc: 21727655",
+    "timestamp": "2026-10-08 12:13:07"
+  },
+  {
+    "id": 109786,
+    "ani": "3415768171",
+    "dni": null,
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "sin_coincidencia",
+    "descripcion": "Sin registros en IRIS",
+    "timestamp": "2026-10-08 12:13:07"
+  },
+  {
+    "id": 109717,
+    "ani": "3434746105",
+    "dni": "32580970",
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (2 ops: Cambios, Port Out) - Titular: SANDRA ITATI UNREIN CLAUDIA | Doc: 32580970",
+    "timestamp": "2026-10-08 12:13:07"
+  },
+  {
+    "id": 109634,
+    "ani": "2392627046",
+    "dni": "23874365",
+    "scraper": "telcos",
+    "estado": "pendiente",
+    "status": "coincidencia",
+    "descripcion": "IRIS (5 ops: Port Out, Altas, Port In) - Titular: SIFRE MARIA EUGENIA | Doc: 23874365",
+    "timestamp": "2026-10-08 12:13:08"
+  }
+]

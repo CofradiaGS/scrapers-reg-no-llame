@@ -125,7 +125,46 @@ class TestTelcoCascadeAdapter(unittest.TestCase):
                     self.assertIn("movistar", acum)
                     self.assertNotIn("enacom", acum)
 
+    def test_05_omision_claro_sin_dni(self):
+        """Si la línea NO tiene DNI, Claro se omite por completo y solo consulta Personal y Movistar."""
+        linea = Linea(ani="1122334455", dni=None)
+        res_pers_no = ScrapeResult(ani=linea.ani, status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="personal", operador="Personal")
+        res_mov_no = ScrapeResult(ani=linea.ani, status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="movistar", operador="Movistar")
+
+        with patch.object(self.adapter.claro, "consultar_linea") as mock_claro:
+            with patch.object(self.adapter.personal, "consultar_linea", return_value=res_pers_no) as mock_personal:
+                with patch.object(self.adapter.movistar, "consultar_linea", return_value=res_mov_no) as mock_movistar:
+                    resultado = self.adapter.consultar_linea(linea)
+
+                    # Claro NUNCA debió llamarse
+                    mock_claro.assert_not_called()
+                    # Personal y Movistar sí debieron consultarse
+                    mock_personal.assert_called_once()
+                    mock_movistar.assert_called_once()
+                    # Scrapers intentados solo debe tener personal y movistar
+                    self.assertEqual(resultado.detalles["scrapers_intentados"], ["personal", "movistar"])
+                    self.assertEqual(resultado.status, StatusScraping.SIN_COINCIDENCIA)
+
+    def test_06_consulta_todos_con_dni(self):
+        """Si la línea TIENE DNI, se consultan todos en orden (Claro -> Personal -> Movistar)."""
+        linea = Linea(ani="1122334455", dni="35123456")
+        res_claro_no = ScrapeResult(ani=linea.ani, status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="claro", operador="Claro")
+        res_pers_no = ScrapeResult(ani=linea.ani, status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="personal", operador="Personal")
+        res_mov_no = ScrapeResult(ani=linea.ani, status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="movistar", operador="Movistar")
+
+        with patch.object(self.adapter.claro, "consultar_linea", return_value=res_claro_no) as mock_claro:
+            with patch.object(self.adapter.personal, "consultar_linea", return_value=res_pers_no) as mock_personal:
+                with patch.object(self.adapter.movistar, "consultar_linea", return_value=res_mov_no) as mock_movistar:
+                    resultado = self.adapter.consultar_linea(linea)
+
+                    # Los 3 debieron llamarse
+                    mock_claro.assert_called_once()
+                    mock_personal.assert_called_once()
+                    mock_movistar.assert_called_once()
+                    # Scrapers intentados debe contener los 3
+                    self.assertEqual(resultado.detalles["scrapers_intentados"], ["claro", "personal", "movistar"])
 
 
 if __name__ == "__main__":
     unittest.main()
+

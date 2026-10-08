@@ -138,7 +138,7 @@ class SyncSchedulerThread(threading.Thread):
 
         # 1. Comprobación inicial de arranque: Si la cola local está vacía o baja, recargar
         try:
-            pendientes_inicio = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola)
+            pendientes_inicio = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
             if pendientes_inicio <= self.low_watermark:
                 logger.info(f"💧 [INICIO STAGING] Cola local baja ({pendientes_inicio:,} tareas). Ejecutando recarga inicial...")
                 res_ini = self.ejecutar_pull_inmediato(forzar=False)
@@ -185,7 +185,7 @@ class SyncSchedulerThread(threading.Thread):
                 # Evitar bombardeo continuo si el VPS no tenía tareas recientemente (cooldown de 60s)
                 time_since_empty = time.time() - self._ultimo_pull_vacio_time
                 if time_since_empty >= 60.0:
-                    pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola)
+                    pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
                     if pendientes <= self.low_watermark:
                         res_pull = self.ejecutar_pull_inmediato(forzar=False)
                         if res_pull.get("ejecutado"):

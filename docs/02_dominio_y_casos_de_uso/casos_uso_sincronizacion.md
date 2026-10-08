@@ -54,11 +54,12 @@ Definidos en [`core/ports/sync_port.py`](file:///c:/Users/Usuario/Documents/GitH
 - `subir_lote_vps(tipo_cola, lote) -> int`: Ejecuta una transacción atómica con `executemany()` para un chunk de hasta 5.000 registros.
 
 ### Puerto Local: `ISyncLocalRepoPort`
-- `insertar_tareas_descargadas(tareas, tipo_cola) -> int`: Inserción masiva en SQLite.
-- `obtener_lote_para_push(limit, tipo_cola) -> List[Dict]`: Lectura de filas terminadas (`listo_para_subir` o `fallido`).
-- `marcar_como_sincronizados(ids_vps, tipo_cola) -> bool`: Registro de `fecha_sincronizado = CURRENT_TIMESTAMP`.
+- `insertar_tareas_descargadas(tareas, tipo_cola) -> int`: Inserción masiva en SQLite con `ON CONFLICT DO NOTHING`.
+- `obtener_lote_para_push(limit, tipo_cola) -> List[Dict]`: Reserva atómica de filas terminadas (`listo_para_subir` o `fallido`) pasando a `en_subida`.
+- `marcar_como_sincronizados(ids_vps, tipo_cola) -> bool`: Registro de `fecha_sincronizado = CURRENT_TIMESTAMP` y estado `sincronizado`.
+- `revertir_subida_a_listo(ids_vps, tipo_cola) -> bool`: Reversión de `en_subida` a `listo_para_subir` si falla la transacción remota.
 - `purgar_antiguos(dias_retencion) -> int`: Purga rotativa de tareas sincronizadas con más de 7 días.
-- `contar_pendientes(tipo_cola) -> int`: Conteo de tareas en estado `pendiente`.
+- `contar_pendientes(tipo_cola, scraper_actual) -> int`: Conteo de tareas en estado `pendiente` por scraper o global.
 - `contar_listos_para_subir(tipo_cola) -> int`: Conteo de tareas listas para subir (`listo_para_subir` o `fallido`).
 
 ---

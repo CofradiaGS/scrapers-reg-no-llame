@@ -76,11 +76,12 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 
 | Estado Local (`estado_local`) | Descripción | Disparador de Transición |
 |---|---|---|
-| `pendiente` | Tarea descargada del VPS lista para raspado local. | Pull matutino o recarga de watermark. |
+| `pendiente` | Tarea descargada del VPS lista para raspado local O posta intermedia del pipeline (ej: IRIS -> Telcos -> CuitOnline/Datuar -> BCRA). | Pull matutino, recarga watermark, o `persistir_resultados()` intermedio. |
 | `en_proceso` | Tarea reservada por un worker en memoria. | `reservar_lote()` vía `DBDispatcherThread`. |
-| `listo_para_subir` | Tarea raspada localmente con éxito (coincidencia o sin coincidencia). | `persistir_resultados()` local. |
-| `fallido` | Error irrecuperable en scraping local (WAF, caída de proxy). | `persistir_resultados()` con status error. |
-| `sincronizado` | Registros comprometidos exitosamente en MySQL VPS. | Push nocturno (ventana 00:00 a 08:00 hs). |
+| `en_subida` | Tarea reservada atómicamente por el proceso de sincronización durante el push hacia el VPS. Previene colisiones multihilo/multiproceso. | `obtener_lote_para_push()` bajo transacción `BEGIN IMMEDIATE`. |
+| `listo_para_subir` | Tarea que completó la totalidad de su pipeline local (`scraper_actual = 'finalizado'`) esperando push a VPS. | `persistir_resultados()` al finalizar la cadena. |
+| `fallido` | Error fatal irrecuperable en scraping local (WAF, caída de proxy). | `persistir_resultados()` con status error. |
+| `sincronizado` | Registros comprometidos exitosamente en MySQL VPS. | Push nocturno (ventana 00:00 a 08:00 hs) o CLI `--sync-now`. |
 
 ---
 
@@ -88,23 +89,46 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 
 | Método | Parámetros | Retorno | Propósito Hexagonal |
 |---|---|---|---|
-| `reservar_lote` | `batch_size: int`, `scraper_nombre: str` | `List[RegistroCola]` | Reclama micro-lotes locales a 0ms sin tocar red. |
-| `persistir_resultados` | `resultados: List[Dict[str, Any]]` | `bool` | Persiste en SQLite marcando `listo_para_subir`. |
+| `reservar_lote` | `batch_size: int`, `scraper_nombre: str` | `List[RegistroCola]` | Reclama micro-lotes locales a 0ms sin tocar red. Prioriza registros con DNI para maximizar cobertura. |
+| `persistir_resultados` | `resultados: List[Dict[str, Any]]` | `bool` | Persiste en SQLite marcando `listo_para_subir` solo si finalizó; si restan etapas, preserva `pendiente` y enriquece `payload_origen`. |
 | `revertir_a_pendiente` | `ids: List[int]` | `bool` | Recupera tareas si un worker concluye anticipadamente. |
-| `liberar_huerfanos` | `minutos_inactividad: int = 15` | `int` | Watchdog local contra apagones o reinicios. |
-| `insertar_tareas_descargadas` | `tareas: List[Dict]`, `tipo_cola: str` | `int` | Inyecta las 10.000 tareas del pull en SQLite. |
-| `obtener_lote_para_push` | `limit: int = 5000`, `tipo_cola: str` | `List[Dict]` | Lee lotes para la subida masiva nocturna. |
-| `marcar_como_sincronizados` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Registra `fecha_sincronizado = NOW()`. |
+| `revertir_subida_a_listo` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Devuelve registros de `en_subida` a `listo_para_subir` si falla o se interrumpe la subida. |
+| `liberar_huerfanos` | `minutos_inactividad: int = 15` | `int` | Watchdog local contra caídas imprevistas (recupera `en_proceso` y `en_subida`). |
+| `insertar_tareas_descargadas` | `tareas: List[Dict]`, `tipo_cola: str` | `int` | Inyecta tareas del pull en SQLite usando `ON CONFLICT DO NOTHING` para proteger el progreso local. |
+| `obtener_lote_para_push` | `limit: int = 5000`, `tipo_cola: str` | `List[Dict]` | Reclama atómicamente registros como `en_subida` para el push masivo al VPS. |
+| `marcar_como_sincronizados` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Registra `fecha_sincronizado = NOW()` y estado `sincronizado`. |
 | `purgar_antiguos` | `dias_retencion: int = 7` | `int` | Limpia registros sincronizados con > 7 días de resguardo. |
-| `contar_pendientes` | `tipo_cola: str` | `int` | Evalúa el umbral mínimo para disparo de recarga. |
-| `contar_listos_para_subir` | `tipo_cola: str` | `int` | Cantidad de registros en espera de subida nocturna. |
+| `contar_pendientes` | `tipo_cola: str`, `scraper_actual: str` | `int` | Evalúa el umbral mínimo para disparo de recarga por scraper o global. |
+| `contar_listos_para_subir` | `tipo_cola: str` | `int` | Cantidad de registros en espera de subida al VPS. |
 
 
 ---
 
-## 5. Documentos Relacionados
+## 5. Política de Priorización por DNI Exclusiva para Telcos
+
+En la invocación de `reservar_lote(batch_size, scraper_nombre)`:
+- Si `canon == "telcos"`:
+  ```sql
+  SELECT id_vps, numero_de_linea, dni, auto_id, target_pc, payload_origen, resultado_json, fuente
+  FROM tareas_staging
+  WHERE tipo_cola = ? AND estado_local = 'pendiente'
+  ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
+  LIMIT ?
+  ```
+  Esto garantiza que el worker local reciba primero todas las tareas que cuentan con DNI disponible, permitiendo evaluar Claro, Personal y Movistar en cascada completa. Una vez agotadas las tareas con DNI, se consumen aquellas sin DNI (donde Claro se omite y solo se consultan Personal y Movistar).
+- Si `canon != "telcos"`:
+  ```sql
+  ORDER BY id_vps ASC
+  ```
+  Los demás scrapers (`iris`, `claro`, `datuar`, etc.) consumen en orden secuencial estricto sin discriminación por DNI.
+
+---
+
+## 6. Documentos Relacionados
 
 - [Adaptador de Cola Automatización](adaptador_cola_automatizacion.md)
+- [Guía Cascada Telcos](../05_guia_nuevos_scrapers/guia_cascada_telcos.md)
 - [Concurrencia SKIP LOCKED en VPS](concurrencia_skip_locked.md)
 - [Casos de Uso de Sincronización](../02_dominio_y_casos_de_uso/casos_uso_sincronizacion.md)
 - [Supervisor Inmortal y Scheduler](../06_runtime_y_concurrencia/supervisor_inmortal.md)
+

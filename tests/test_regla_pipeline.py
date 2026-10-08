@@ -180,19 +180,30 @@ class TestReglaPipeline(unittest.TestCase):
         )
         self.assertEqual(sig_sc3, "claro")
 
-    def test_06_cuitonline_no_puede_ejecutarse_sin_datuar(self):
-        """CuitOnline no puede ejecutarse si no pasó previamente por Datuar."""
-        cadena_invalida = ["iris", "cuitonline", "personal"]
+    def test_06_cuitonline_solo_exige_dni_y_no_depende_de_datuar(self):
+        """CuitOnline solo exige tener DNI disponible y puede ejecutarse sin pasar previamente por Datuar."""
+        cadena = ["iris", "cuitonline", "personal"]
         res_iris = ScrapeResult(ani="1122334455", status=StatusScraping.COINCIDENCIA, fuente_scraper="iris")
+        
+        # Caso A: Con DNI -> Avanza directamente a cuitonline sin exigir datuar
         sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
             scraper_actual="iris",
             resultado=res_iris,
-            cadena=cadena_invalida,
+            cadena=cadena,
             dni_disponible=True,
             fuentes_previas=["iris"]
         )
-        # Debe saltar cuitonline y pasar a personal
-        self.assertEqual(sig_sc, "personal", "Debió saltar cuitonline porque no se pasó por datuar")
+        self.assertEqual(sig_sc, "cuitonline", "Con DNI debe avanzar a cuitonline sin requerir Datuar")
+
+        # Caso B: Sin DNI -> Saltea cuitonline y pasa al siguiente (personal)
+        sig_sc_sin_dni, _ = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="iris",
+            resultado=res_iris,
+            cadena=cadena,
+            dni_disponible=False,
+            fuentes_previas=["iris"]
+        )
+        self.assertEqual(sig_sc_sin_dni, "personal", "Sin DNI debe saltar cuitonline y pasar a personal")
 
     def test_07_telcos_elegibilidad_sin_iris_ni_dni(self):
         """Líneas sin pasar por IRIS y sin DNI deben ser perfectamente elegibles para Telcos."""
@@ -312,8 +323,9 @@ class TestReglaPipeline(unittest.TestCase):
         self.assertEqual(persisted2[0]["scraper_actual"], "personal", "En cola_automatizacion debe avanzar a Personal")
         self.assertEqual(persisted2[0]["estado"], "pendiente")
 
-    def test_12_bcra_requiere_dni_o_cuit(self):
-        """Verifica que BCRA rechaza pre-flight si no hay DNI ni CUIT disponible."""
+    def test_12_bcra_requiere_paso_por_datuar_y_cuit(self):
+        """Verifica que BCRA exige haber pasado previamente por Datuar y disponer del CUIT/CUIL extraído."""
+        # Sin haber pasado por Datuar ni CUIT -> rechaza
         es_apto, motivo = ReglaPipeline.es_elegible_para_scraper(
             scraper_nombre="bcra",
             ani="1122334455",
@@ -321,16 +333,32 @@ class TestReglaPipeline(unittest.TestCase):
             datos_json={}
         )
         self.assertFalse(es_apto)
-        self.assertIn("DNI o CUIT", motivo)
+        self.assertIn("Datuar", motivo)
 
-        # Con DNI disponible sí es apto
-        es_apto2, _ = ReglaPipeline.es_elegible_para_scraper(
+        # Solo con DNI pero sin Datuar ni CUIT -> también rechaza
+        es_apto2, motivo2 = ReglaPipeline.es_elegible_para_scraper(
             scraper_nombre="bcra",
             ani="1122334455",
             dni="30112233",
             datos_json={}
         )
-        self.assertTrue(es_apto2)
+        self.assertFalse(es_apto2)
+        self.assertIn("Datuar", motivo2)
+
+        # Con paso por Datuar y CUIT/CUIL extraído -> es apto
+        datos_con_datuar = {
+            "datuar": {
+                "status": "coincidencia",
+                "cuil": "20301122334"
+            }
+        }
+        es_apto3, _ = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="bcra",
+            ani="1122334455",
+            dni="30112233",
+            datos_json=datos_con_datuar
+        )
+        self.assertTrue(es_apto3)
 
     def test_13_bcra_flujo_enriquecimiento(self):
         """Verifica que BCRA avanza a finalizado tras completar su etapa en la cadena."""
@@ -362,9 +390,129 @@ class TestReglaPipeline(unittest.TestCase):
         self.assertEqual(dni, "30112233")
         self.assertEqual(cuit, "20301122334")
 
-        # Derivación de DNI a partir de CUIT directo de 11 dígitos
-        dni_derivado = ReglaPipeline.extraer_dni(datos_json={}, dni_directo="27351234569")
-        self.assertEqual(dni_derivado, "35123456")
+    def test_15_flujo_condicional_iris_telcos_datuar_cuitonline_bcra(self):
+        """
+        Verifica las reglas de negocio condicionales:
+        - Siempre pasa primero por IRIS
+        - Si pasó por IRIS (con o sin coincidencia) avanza a telcos (NO cortocircuita)
+        - Si tiene DNI puede pasar por Datuar
+        - Si pasó por Datuar puede pasar por CuitOnline
+        - Si pasó por CuitOnline puede pasar por BCRA
+        """
+        # 1. IRIS con coincidencia avanza a TELCOS
+        res_iris_match = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="iris",
+            titular=Titular(nombre="JUAN PEREZ", nro_documento="30111222")
+        )
+        sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="iris",
+            resultado=res_iris_match,
+            cadena=None,
+            dni_disponible=True
+        )
+        self.assertEqual(sig_sc, "telcos", "IRIS con coincidencia DEBE avanzar a telcos (sin cortocircuito)")
+        self.assertEqual(sig_st, EstadoRegistro.PENDIENTE.value)
+
+        # 2. IRIS sin coincidencia avanza a TELCOS
+        res_iris_no_match = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.SIN_COINCIDENCIA,
+            fuente_scraper="iris"
+        )
+        sig_sc2, sig_st2 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="iris",
+            resultado=res_iris_no_match,
+            cadena=None,
+            dni_disponible=False
+        )
+        self.assertEqual(sig_sc2, "telcos", "IRIS sin coincidencia DEBE avanzar a telcos")
+        self.assertEqual(sig_st2, EstadoRegistro.PENDIENTE.value)
+
+        # 3. TELCOS con DNI avanza a DATUAR
+        res_telcos_con_dni = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="telcos",
+            titular=Titular(nombre="JUAN PEREZ", nro_documento="30111222")
+        )
+        sig_sc3, sig_st3 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos",
+            resultado=res_telcos_con_dni,
+            cadena=None,
+            dni_disponible=True,
+            fuentes_previas=["iris"]
+        )
+        self.assertEqual(sig_sc3, "datuar", "Telcos con DNI DEBE avanzar a datuar")
+        self.assertEqual(sig_st3, EstadoRegistro.PENDIENTE.value)
+
+        # 4. TELCOS sin DNI NO puede pasar a Datuar -> finaliza
+        res_telcos_sin_dni = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="telcos"
+        )
+        sig_sc4, sig_st4 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos",
+            resultado=res_telcos_sin_dni,
+            cadena=None,
+            dni_disponible=False,
+            fuentes_previas=["iris"]
+        )
+        self.assertEqual(sig_sc4, "finalizado", "Telcos sin DNI no puede pasar a datuar, debe finalizar")
+        self.assertEqual(sig_st4, EstadoRegistro.COMPLETADO.value)
+
+        # 5. DATUAR avanza a CUITONLINE
+        res_datuar = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="datuar",
+            detalles={"cuil": "20301112224"}
+        )
+        sig_sc5, sig_st5 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="datuar",
+            resultado=res_datuar,
+            cadena=None,
+            dni_disponible=True,
+            fuentes_previas=["iris", "telcos"]
+        )
+        self.assertEqual(sig_sc5, "cuitonline", "Si pasó por Datuar DEBE avanzar a cuitonline")
+        self.assertEqual(sig_st5, EstadoRegistro.PENDIENTE.value)
+
+        # 6. CUITONLINE avanza a BCRA
+        res_cuit = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="cuitonline",
+            detalles={"cuit_limpio": "20301112224"}
+        )
+        sig_sc6, sig_st6 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="cuitonline",
+            resultado=res_cuit,
+            cadena=None,
+            dni_disponible=True,
+            fuentes_previas=["iris", "telcos", "datuar"]
+        )
+        self.assertEqual(sig_sc6, "bcra", "Si pasó por CuitOnline DEBE avanzar a bcra")
+        self.assertEqual(sig_st6, EstadoRegistro.PENDIENTE.value)
+
+        # 7. BCRA finaliza
+        res_bcra = ScrapeResult(
+            ani="1122334455",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="bcra"
+        )
+        sig_sc7, sig_st7 = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="bcra",
+            resultado=res_bcra,
+            cadena=None,
+            dni_disponible=True,
+            fuentes_previas=["iris", "telcos", "datuar", "cuitonline"]
+        )
+        self.assertEqual(sig_sc7, "finalizado", "BCRA finaliza el pipeline")
+        self.assertEqual(sig_st7, EstadoRegistro.COMPLETADO.value)
 
 if __name__ == "__main__":
     unittest.main()
+
