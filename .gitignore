@@ -194,3 +194,4 @@ $RECYCLE.BIN/
 .agents/temp/
 .agents/logs/
 .agents/history/
+ultimos_procesados.json
