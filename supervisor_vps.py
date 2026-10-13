@@ -53,7 +53,8 @@ stream_handler.setFormatter(formatter)
 
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[file_handler, stream_handler]
+    handlers=[file_handler, stream_handler],
+    force=True
 )
 logging.getLogger("mysql.connector").setLevel(logging.WARNING)
 logging.getLogger("stem").setLevel(logging.WARNING)
@@ -75,8 +76,9 @@ def main():
     parser.add_argument("--delay-min", type=float, default=1.5, help="Pausa mínima de cortesía entre lotes (default: 1.5s)")
     parser.add_argument("--delay-max", type=float, default=2.5, help="Pausa máxima de cortesía entre lotes (default: 2.5s)")
     parser.add_argument("--visible", action="store_true", help="Forzar navegadores visibles (por defecto headless si usa browser)")
-    parser.add_argument("--forzar-horario", action="store_true", help="Ignorar restricción de horario comercial oficial (solo pruebas y excepciones)")
-    parser.add_argument("--tor", action="store_true", help="Habilitar enrutamiento anónimo con Tor Stream Isolation (para scrapers Datuar, Claro, Movistar y Personal)")
+    parser.add_argument("--forzar-horario", action="store_true", default=False, help="Ignorar restricción de horario comercial oficial (solo pruebas y excepciones)")
+    parser.add_argument("--tor", dest="tor", action="store_true", default=None, help="Habilitar enrutamiento anónimo con Tor Stream Isolation (para scrapers Datuar, Claro, Movistar y Personal)")
+    parser.add_argument("--no-tor", dest="tor", action="store_false", help="Deshabilitar Tor y conectar de forma directa a alta velocidad")
     parser.add_argument("--proxy-pool", action="store_true", help="Habilitar pool de proxies públicos rotativos de alta velocidad (para scrapers Claro, Movistar y Personal)")
     parser.add_argument("--solo-sin-coincidencia", action="store_true", default=False, help="Filtrar solo registros que no tengan coincidencia en ninguna de las 3 compañías (Claro, Personal, Movistar)")
     parser.add_argument("--queue", choices=["registro_no_llame", "cola_automatizacion"], default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Origen de cola: 'registro_no_llame' o 'cola_automatizacion' (default: según config/env)")
@@ -134,8 +136,8 @@ def main():
     scraper_kwargs = {}
     if "browser" in scraper_name:
         scraper_kwargs["headless"] = not args.visible
-    if args.tor:
-        scraper_kwargs["use_tor"] = True
+    if args.tor is not None:
+        scraper_kwargs["use_tor"] = args.tor
     if args.proxy_pool:
         scraper_kwargs["use_proxy_pool"] = True
 

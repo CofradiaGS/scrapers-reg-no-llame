@@ -11,9 +11,9 @@ Para resolver esto, el sistema incorpora el **Watchdog Sweeper**, un hilo centin
 ## 1. Arquitectura Hexagonal del Sweeper
 
 Siguiendo los principios de la arquitectura de Puertos y Adaptadores del repositorio, el Watchdog Sweeper desacopla la periodicidad temporal de la lógica de recuperación:
-- **Hilo Centinela (Capa de Runtime):** Método [`_watchdog_sweeper_loop`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) en [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31).
-- **Caso de Uso de Aplicación:** [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9) en [`core/use_cases/cleanup_orphans_use_case.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py).
-- **Adaptador de Infraestructura:** Método [`liberar_huerfanos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326) de [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36).
+- **Hilo Centinela (Capa de Runtime):** Método [`_watchdog_sweeper_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) en [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31).
+- **Caso de Uso de Aplicación:** [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9) en [`core/use_cases/cleanup_orphans_use_case.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py).
+- **Adaptador de Infraestructura:** Método [`liberar_huerfanos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326) de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36).
 
 ```mermaid
 sequenceDiagram
@@ -41,7 +41,7 @@ sequenceDiagram
 
 ## 2. Implementación del Hilo Centinela
 
-En las líneas 97-117 de [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117):
+En las líneas 97-117 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117):
 
 ```python
 def _watchdog_sweeper_loop(self, sweep_interval_sec: float = 300.0):
@@ -74,7 +74,7 @@ def _watchdog_sweeper_loop(self, sweep_interval_sec: float = 300.0):
 
 ## 3. Sentencia SQL Atómica de Rescate
 
-La recuperación se efectúa de manera puramente atómica a nivel del motor MySQL mediante la siguiente consulta optimizada en [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326):
+La recuperación se efectúa de manera puramente atómica a nivel del motor MySQL mediante la siguiente consulta optimizada en [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326):
 
 ```sql
 UPDATE `queue_registro_no_llame`

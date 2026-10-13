@@ -19,7 +19,7 @@ import config
 from core.ports.scraper_port import IScraperEnginePort
 from core.domain.entities import Linea, ScrapeResult, Titular, Servicio
 from core.domain.enums import StatusScraping
-from core.domain.exceptions import ScraperTransientError
+from core.domain.exceptions import ScraperTransientError, FueraDeHorarioComercialException
 from adapters.scrapers.base_scraper import BaseScraperAdapter
 from adapters.scrapers.claro.claro_adapter import ClaroAdapter
 from adapters.scrapers.personal.personal_adapter import PersonalAdapter
@@ -39,25 +39,46 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         worker_slot: Optional[int] = None,
         delay_min: Optional[float] = None,
         delay_max: Optional[float] = None,
+        forzar_horario: bool = False,
         **kwargs
     ):
         self.worker_slot = worker_slot or kwargs.get("worker_slot")
         self.delay_min = delay_min or 0.1
         self.delay_max = delay_max or 0.3
+        self._forzar_horario = forzar_horario or kwargs.get("forzar_horario", False)
+        self._politica_horario = config.obtener_politica_horario_para_scraper("telcos")
+
+        self.use_tor = use_tor if use_tor is not None else kwargs.get("tor", config.TOR_ENABLED)
+        self.proxy = kwargs.get("proxy")
+        if self.use_tor and not self.proxy and not use_proxy_pool:
+            from adapters.network.tor_controller import TorController
+            self.proxy = TorController.get_proxy_for_worker(self.worker_slot)
 
         adapter_kwargs = {
             "base_url": base_url,
-            "use_tor": use_tor,
+            "proxy": self.proxy,
+            "use_tor": self.use_tor,
             "use_proxy_pool": use_proxy_pool,
             "worker_slot": self.worker_slot,
             "delay_min": self.delay_min,
             "delay_max": self.delay_max,
+            "forzar_horario": self._forzar_horario,
             **kwargs
         }
+        adapter_kwargs["proxy"] = self.proxy
 
         self.claro = ClaroAdapter(**adapter_kwargs)
         self.personal = PersonalAdapter(**adapter_kwargs)
         self.movistar = MovistarAdapter(**adapter_kwargs)
+
+    def _validar_horario(self) -> None:
+        """Verifica si la consulta está dentro de la ventana comercial permitida."""
+        if not self._forzar_horario and not self._politica_horario.esta_en_horario():
+            estado = self._politica_horario.obtener_estado()
+            raise FueraDeHorarioComercialException(
+                f"Consulta rechazada: Telcos (Cobro Express) opera únicamente en horario comercial ({estado['descripcion']}). "
+                "Para forzar la ejecución en pruebas use el flag 'forzar_horario=True' o '--forzar-horario'."
+            )
 
     @property
     def nombre(self) -> str:
@@ -93,6 +114,8 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         Claro (si DNI) ➔ Personal ➔ Movistar ➔ Sin coincidencias.
         Enriquece determinísticamente el bloque ENACOM y acumula la historia completa.
         """
+        self._validar_horario()
+
         if not linea.es_valida:
             return ScrapeResult(
                 ani=linea.ani,
@@ -132,7 +155,7 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
                     "ultima_modificacion": ahora_iso
                 }
         else:
-            # Línea sin DNI: se documenta omisión de Claro y avanza directo a Personal
+            # Línea sin DNI: Claro se omite en la red pero se deja tal cual cuando da sin coincidencia estándar
             datos_acumulados["claro"] = {
                 "status": "sin_coincidencia",
                 "fuente": "claro",
@@ -142,10 +165,15 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
                 "servicio": {},
                 "fechas": {},
                 "detalles": {
-                    "motivo": "Omitido: Claro Cobro Express exige DNI disponible y la línea no posee DNI",
-                    "ani_consultado": linea.ani
+                    "http_status": 200,
+                    "dni_consultado": "",
+                    "ani_consultado": linea.ani,
+                    "items_count": 0
                 },
-                "raw": {},
+                "raw": {
+                    "status_code": 200,
+                    "items": []
+                },
                 "ultima_modificacion": ahora_iso
             }
 

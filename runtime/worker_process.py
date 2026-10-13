@@ -16,6 +16,7 @@ import logging
 from typing import Optional, Dict, Any
 from multiprocessing import Queue, Event
 
+import config
 from core.use_cases.process_batch_use_case import ProcesarLoteUseCase
 from core.domain.exceptions import FueraDeHorarioComercialException
 from adapters.queue.mysql_vps_adapter import MySQLQueueAdapter
@@ -59,6 +60,7 @@ def worker_lifecycle_process(
     consultas_realizadas = 0
 
     try:
+        q_type = str(getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
         # 1. Adaptador de Cola (IPC Despachador hacia Supervisor si está provisto, o MySQL directo)
         if db_request_queue is not None and db_response_queue is not None:
             from adapters.queue.ipc_adapter import IPCWorkerQueueAdapter
@@ -69,7 +71,6 @@ def worker_lifecycle_process(
             )
             w_log.info(f"[{worker_tag}] Conectado a Supervisor mediante IPC (0 sockets remotos directos a BD).")
         else:
-            q_type = str(getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
             if q_type == "cola_automatizacion":
                 from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
                 cola_repo = ColaAutomatizacionAdapter(
@@ -133,7 +134,7 @@ def worker_lifecycle_process(
         except Exception as e_enacom:
             w_log.warning(f"[{worker_tag}] No se pudo inicializar EnacomBlockAdapter: {e_enacom}")
 
-        cadena_worker = [scraper_name] if scraper_name == "telcos" else None
+        cadena_worker = None
         use_case = ProcesarLoteUseCase(
             cola_repo=cola_repo,
             scraper_engine=scraper_engine,

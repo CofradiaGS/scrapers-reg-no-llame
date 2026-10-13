@@ -69,6 +69,64 @@ class TorController:
         ident = session_id or uuid.uuid4().hex[:12]
         return f"socks5h://{ident}:tor@127.0.0.1:{self.socks_port}"
 
+    _cached_alive_ports: list = []
+    _cached_ports_time: float = 0.0
+
+    @classmethod
+    def get_alive_tor_ports(cls) -> list[int]:
+        """
+        Descubre los puertos SOCKS de Tor activos y disponibles en la máquina.
+        Cachea el resultado para no incurrir en sondeos repetitivos.
+        """
+        now = time.time()
+        if cls._cached_alive_ports and (now - cls._cached_ports_time < 120.0):
+            return cls._cached_alive_ports
+
+        base_socks = int(config.TOR_SOCKS_PORT_BASE)
+        alive = []
+        for i in range(20):
+            p = base_socks + (i * 2)
+            s = socket.socket()
+            s.settimeout(0.15)
+            try:
+                if s.connect_ex(("127.0.0.1", p)) == 0:
+                    alive.append(p)
+            except Exception:
+                pass
+            finally:
+                s.close()
+
+        if not alive:
+            alive = [base_socks]
+
+        cls._cached_alive_ports = alive
+        cls._cached_ports_time = now
+        return alive
+
+    @classmethod
+    def resolve_ports_for_worker(cls, worker_slot: Optional[int] = None) -> tuple[int, int]:
+        """
+        Calcula y resuelve los puertos (socks_port, control_port) para un worker slot.
+        Si hay un pool multi-instancia de Tor activo (puertos 9050, 9052, 9054...),
+        distribuye equitativamente los worker slots entre las instancias activas para
+        eliminar totalmente la saturación y colisiones.
+        Si no hay pool y solo corre el puerto base, retorna (TOR_SOCKS_PORT_BASE, TOR_CONTROL_PORT_BASE).
+        """
+        alive = cls.get_alive_tor_ports()
+        slot_idx = (worker_slot - 1) if (worker_slot and worker_slot > 0) else 0
+        chosen_socks = alive[slot_idx % len(alive)]
+        chosen_ctrl = chosen_socks + 1
+        return chosen_socks, chosen_ctrl
+
+    @classmethod
+    def get_proxy_for_worker(cls, worker_slot: Optional[int] = None) -> str:
+        """
+        Retorna la URL SOCKS5h limpia correspondiente al worker slot.
+        Nunca inyecta UUIDs aleatorios destructivos que fuercen construcción compulsiva de circuitos en Tor.
+        """
+        socks_port, _ = cls.resolve_ports_for_worker(worker_slot)
+        return f"socks5h://127.0.0.1:{socks_port}"
+
     def is_port_open(self, port: int) -> bool:
         """Comprueba si un socket local responde rápidamente."""
         s = socket.socket()
@@ -180,7 +238,7 @@ class TorController:
                     f.write("DormantCanceledByStartup 1\n")
                     # No restringir ExitNodes a {ar},{cl},{uy},{br}: la pasarela no aplica geo-bloqueo
                     # y el pool sudamericano (<15 nodos) colapsa por congestión bajo 20 workers paralelos.
-                    f.write("CircuitBuildTimeout 15\n")
+                    f.write("CircuitBuildTimeout 30\n")
                     f.write("KeepalivePeriod 60\n")
                     f.write("MaxCircuitDirtiness 300\n")
                     f.write("NumEntryGuards 8\n")
@@ -235,6 +293,7 @@ class TorController:
                         logger.info(f"Bootstrap: {progress}% — {info[:80]}")
                         if progress >= 100 and self.is_port_open(self.socks_port):
                             logger.info(f"Tor listo y bootstrapped al 100% en {self.get_proxy_url()}.")
+                            self._warmup_circuits()
                             return True
                     except Exception as poll_err:
                         logger.debug(f"Poll error (ignorado): {poll_err}")
@@ -246,6 +305,22 @@ class TorController:
 
         logger.warning(f"Tor no completó bootstrap en {timeout_sec}s.")
         return False
+
+    def _warmup_circuits(self) -> None:
+        """Precalienta el pool de circuitos de Tor antes de admitir tráfico de workers concurrentes."""
+        logger.info("🔥 [TOR WARMUP] Precalentando circuitos iniciales de Tor antes de liberar workers...")
+        t0 = time.time()
+        try:
+            proxy = self.get_proxy_url()
+            resp = requests.get(
+                "https://pagosce.cobroexpress.com.ar",
+                proxies={"http": proxy, "https": proxy},
+                timeout=(20.0, 10.0),
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            )
+            logger.info(f"✅ [TOR WARMUP] Circuito inicial verificado con éxito (HTTP {resp.status_code}) en {time.time()-t0:.2f}s.")
+        except Exception as e:
+            logger.info(f"ℹ️ [TOR WARMUP] Sondeo inicial concluido ({type(e).__name__}) en {time.time()-t0:.2f}s. Red Tor lista.")
 
     def rotate_ip(self) -> bool:
         """

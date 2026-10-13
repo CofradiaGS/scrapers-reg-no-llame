@@ -1,17 +1,17 @@
 # Adaptador de Cola: Cola Automatización (VPS Central)
 
 > **Capa 03: Base de Datos y Colas** | Módulo de Extensión Hexagonal  
-> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
-> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
+> **Puerto Implementado**: [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py)  
+> **Archivo de Código**: [`adapters/queue/cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py)
 
 ---
 
 ## 1. Propósito y Visión General
 
-El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
+El adaptador [`ColaAutomatizacionAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) permite que la arquitectura hexagonal multi-scraper consuma y persista tareas directamente desde la tabla central `cola_automatizacion` de la base de datos MySQL VPS (`bases`).
 
 Este adaptador desacopla por completo la fuente de datos del dominio de la aplicación:
-* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
+* **Consumo Transparente**: Traduce los registros de `cola_automatizacion` a instancias puras de [`RegistroCola`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L131) y [`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L9).
 * **Compatibilidad Retrospectiva**: Formatea la columna `resultado` (tipo `JSON`) respetando la estructura que esperan los consumidores y dashboards legados del proyecto `worker_package`.
 * **Enriquecimiento sin Pérdidas**: Conserva en el JSON todas las capas de datos extendidos que extraen los motores modernos (`tramite`, `fechas`, `detalles_extendidos`, `raw`), evitando pérdida de precisión técnica.
 * **Telemetría e Integración**: Emite latidos de vida en `worker_heartbeats` y deltas de producción en `stats_historial`.
@@ -104,6 +104,39 @@ Al reservarse:
 1. El estado pasa inmediatamente a `en_proceso`.
 2. Se registra `fecha_inicio = NOW()`.
 3. Se asigna `target_pc = self.pc_id` para trazabilidad de nodo.
+
+### 3.1 Protocolo Especial en Dos Fases para Telcos (`canon == 'telcos'`)
+Para optimizar las consultas y evitar sobrecargas de `filesort` en tablas de millones de registros, [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py) aplica una estrategia de reserva en dos fases secuenciales:
+
+1. **Fase A (Con DNI)**:
+   ```sql
+   SELECT id, datos, numero_de_linea, reintentos
+   FROM {self.table_name}
+   WHERE auto_id = %s
+     AND estado = 'pendiente'
+     AND (target_pc = %s OR target_pc IS NULL OR target_pc = '')
+     AND (dni IS NOT NULL AND dni != '')
+   ORDER BY id ASC
+   LIMIT %s
+   FOR UPDATE SKIP LOCKED;
+   ```
+2. **Fase B (Sin DNI - Relleno)**:
+   Si la cantidad de registros obtenidos en Fase A es inferior a `batch_size`, se ejecuta una consulta complementaria:
+   ```sql
+   SELECT id, datos, numero_de_linea, reintentos
+   FROM {self.table_name}
+   WHERE auto_id = %s
+     AND estado = 'pendiente'
+     AND (target_pc = %s OR target_pc IS NULL OR target_pc = '')
+     AND (dni IS NULL OR dni = '')
+   ORDER BY id ASC
+   LIMIT %s
+   FOR UPDATE SKIP LOCKED;
+   ```
+Ambos subconjuntos se unen y se actualizan a `en_proceso` de forma atómica en la misma transacción. Esto asegura que el worker procese prioritariamente los registros que poseen DNI (aprovechando la cascada completa Claro ➔ Personal ➔ Movistar) y consume los registros sin DNI solo cuando los primeros se agotan.
+
+Para el resto de los scrapers (`iris`, `claro`, `datuar`, etc.), se mantiene la consulta estándar única sin filtro de DNI.
+
 
 ---
 
@@ -275,7 +308,57 @@ El campo `resultado` (JSON) en `cola_automatizacion` almacena de forma íntegra 
 }
 ```
 
-### 4.3 Política de Separación de Responsabilidades (`error_msg` vs `resultado`)
+### 4.4 Enriquecimiento Multi-Scraper (`datuar`, `cuitonline`, `bcra`)
+Cuando la cadena de procesamiento incluye motores de identidad, fiscal y bancario, sus bloques se integran de forma limpia y tipificada en la raíz del JSON `resultado`:
+
+```json
+{
+  "enacom": { "operador_oficial": "TELEFONICA MOVILES ARGENTINA S.A.", "es_celular": true },
+  "iris": { ... },
+  "datuar": {
+    "nombre_completo": "PEREZ, Juan Carlos",
+    "dni": "30112233",
+    "cuil": "20301122331",
+    "edad": 42,
+    "genero": "Masculino",
+    "provincia": "Buenos Aires",
+    "ciudad": "La Plata",
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  },
+  "cuitonline": {
+    "cuit": "20-30112233-1",
+    "cuit_limpio": "20301122331",
+    "denominacion": "PEREZ JUAN CARLOS",
+    "condicion_afip": "Monotributista",
+    "tipo_persona": "Persona Física",
+    "genero": "Masculino",
+    "direccion": "AV CORRIENTES 1234",
+    "provincia": "Buenos Aires",
+    "localidad": "La Plata",
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  },
+  "bcra": {
+    "cuit": "20301122331",
+    "denominacion": "PEREZ JUAN CARLOS",
+    "periodo": "202408",
+    "peor_situacion": 2,
+    "cantidad_entidades": 2,
+    "operaciones_en_cartera": 2,
+    "deuda_total_pesos": 200500.0,
+    "deuda_total_miles": 200.5,
+    "sin_deuda": false,
+    "entidades": [ ... ],
+    "status": "coincidencia",
+    "ultima_modificacion": "2026-10-04 16:30:00"
+  }
+}
+```
+
+Asimismo, el DNI enriquecido se propaga automáticamente a la columna relacional indexada `dni` de la tabla `cola_automatizacion` si dicha columna se encontraba vacía.
+
+### 4.5 Política de Separación de Responsabilidades (`error_msg` vs `resultado`)
 
 Para garantizar que los dashboards, reportes y consultas SQL no confundan tareas fallidas con tareas que tienen datos procesados (ej. `WHERE resultado IS NOT NULL`), se aplica una separación estricta de responsabilidades:
 
@@ -348,7 +431,7 @@ flowchart TD
 ## 7. Verificación y Pruebas
 
 El adaptador cuenta con una suite de pruebas unitarias y de integración en:
-* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
+* [`tests/test_cola_automatizacion_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/tests/test_cola_automatizacion_adapter.py)
 
 Para ejecutar la verificación:
 ```powershell

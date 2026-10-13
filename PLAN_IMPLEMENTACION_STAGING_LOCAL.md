@@ -153,7 +153,7 @@ FOR UPDATE SKIP LOCKED;
 
 UPDATE queue_registro_no_llame
 SET estado = 'procesando',
-    fecha_modificacion = NOW()
+    updated_at = CURRENT_TIMESTAMP
 WHERE id IN (%s, %s, ...);
 ```
 
@@ -178,9 +178,8 @@ SET estado = %s,
     fuente = %s,
     datos_json = %s,
     dni = CASE WHEN (dni IS NULL OR dni = '') AND %s IS NOT NULL THEN %s ELSE dni END,
-    descripcion = %s,
-    latencia = %s,
-    fecha_modificacion = NOW()
+    descripcion_scraper = %s,
+    updated_at = CURRENT_TIMESTAMP
 WHERE id = %s;
 ```
 

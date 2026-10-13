@@ -48,7 +48,7 @@ class SincronizarPullMatutinoUseCase:
         :param scraper_actual: Etapa requerida para queue_registro_no_llame.
         :return: Resumen de la operación.
         """
-        pendientes = self.local.contar_pendientes(tipo_cola=tipo_cola)
+        pendientes = self.local.contar_pendientes(tipo_cola=tipo_cola, scraper_actual=scraper_actual)
 
         if not forzar and pendientes > umbral_minimo:
             logger.debug(

@@ -6,7 +6,7 @@ Este documento detalla el diseño, la especificación de protocolo, la arquitect
 
 ## 1. Ciclo de Vida del Pipeline y Regla de No-Cortocircuito
 
-En el sistema, Datuar opera como un **eslabón de enriquecimiento no-terminal** formalizado en [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L130-L195):
+En el sistema, Datuar opera como un **eslabón de enriquecimiento no-terminal** formalizado en [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L130-L195):
 
 ```text
 CADENA_DEFAULT: ["iris", "datuar", "claro", "movistar", "personal"]
@@ -35,9 +35,9 @@ flowchart TD
 ```
 
 ### Reglas de Pipeline para Datuar
-1. **Paso No-Terminal**: A diferencia de las empresas de telecomunicaciones (Claro, Movistar, Personal), [`DatuarAdapter.consultar_linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) **NUNCA cortocircuita** la línea a `finalizado`. Dé o no dé resultado positivo (encuentre el nombre o no), [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L138) avanza siempre a `scraper_actual = 'claro'` y `estado = 'pendiente'`.
-2. **Bypass Inteligente para Líneas sin DNI**: Cuando [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) no encuentra Port Out ni datos de titular, la línea no posee DNI. Dado que tanto Datuar como Claro exigen DNI para consultar, [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L159) deriva automáticamente a `scraper_actual = 'movistar'`, saltando Datuar y Claro para ahorrar dos ciclos completos de transacciones en base de datos.
-3. **Persistencia Acumulativa**: Los datos extraídos por Datuar se preservan de forma atómica en `datos_json["datuar"]` y enriquecen la entidad [`Titular`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L43-L67).
+1. **Paso No-Terminal**: A diferencia de las empresas de telecomunicaciones (Claro, Movistar, Personal), [`DatuarAdapter.consultar_linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) **NUNCA cortocircuita** la línea a `finalizado`. Dé o no dé resultado positivo (encuentre el nombre o no), [`ReglaPipeline.resolver_siguiente_etapa`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L138) avanza siempre a `scraper_actual = 'claro'` y `estado = 'pendiente'`.
+2. **Bypass Inteligente para Líneas sin DNI**: Cuando [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) no encuentra Port Out ni datos de titular, la línea no posee DNI. Dado que tanto Datuar como Claro exigen DNI para consultar, [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L159) deriva automáticamente a `scraper_actual = 'movistar'`, saltando Datuar y Claro para ahorrar dos ciclos completos de transacciones en base de datos.
+3. **Persistencia Acumulativa**: Los datos extraídos por Datuar se preservan de forma atómica en `datos_json["datuar"]` y enriquecen la entidad [`Titular`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L43-L67).
 
 ---
 
@@ -83,6 +83,8 @@ sequenceDiagram
             else 200 OK (Sin atributos / No registrado)
                 API-->>Adapter: HTML vacío de resultados
                 Adapter-->>CasoUso: ScrapeResult(SIN_COINCIDENCIA, 'DNI no registrado')
+            else 200 OK con '0 resultados' (Bloqueo IP de Tor)
+                Adapter->>Adapter: Rotación inmediata de circuito Tor y reintento
             else 429 Too Many Requests
                 Adapter->>Adapter: Rotación de circuito Tor e intento con backoff 1.5s
             end
@@ -92,9 +94,22 @@ sequenceDiagram
 
 ---
 
-## 3. Caché Local SQLite de Alta Velocidad (`datuar_cache.sqlite`)
+## 3. Protocolo de Evasión Tor y Auto-Detección de Puertos
 
-Para eliminar peticiones redundantes a la web cuando un mismo DNI aparece en múltiples líneas o reintentos, [`DatuarAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) implementa una base de datos local SQLite con soporte completo de atributos de identidad y demografía:
+Datuar impone bloqueos perimetrales por IP de salida cuando detecta ráfagas masivas. [`DatuarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) incorpora:
+
+1. **Auto-Detección de Puerto Tor (`detectar_puerto_tor`)**:
+   - Sondea dinámicamente los puertos locales `[9058, 9050, 9052, 9054, 9056]` y selecciona automáticamente aquel que responde y cuenta con salida exitosa hacia Datuar.
+2. **Rotación Periódica Preventiva (`tor_rotate_every = 25`)**:
+   - Cada 25 peticiones exitosas, renueva el circuito Socks5 mediante un identificador de flujo único (`Stream Isolation`), evitando la saturación del nodo de salida.
+3. **Detección de Bloqueo Silencioso ('0 resultados')**:
+   - Cuando un nodo de Tor está quemado, Datuar no retorna HTTP 429 sino HTTP 200 con `"0 resultados"`. El adaptador intercepta esta condición, fuerza la rotación instantánea del circuito y reintenta de inmediato (hasta 4 intentos).
+
+---
+
+## 4. Caché Local SQLite de Alta Velocidad (`datuar_cache.sqlite`)
+
+Para eliminar peticiones redundantes a la web cuando un mismo DNI aparece en múltiples líneas o reintentos, [`DatuarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) implementa una base de datos local SQLite con soporte completo de atributos de identidad y demografía:
 
 ```sql
 CREATE TABLE IF NOT EXISTS cache (
@@ -120,7 +135,7 @@ CREATE TABLE IF NOT EXISTS cache (
 
 ## 4. Arquitectura de Red y Tor Stream Isolation
 
-[`DatuarAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) soporta tanto conexión directa ultrarrápida como enrutamiento seguro por **Tor Stream Isolation**:
+[`DatuarAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/datuar/datuar_adapter.py) soporta tanto conexión directa ultrarrápida como enrutamiento seguro por **Tor Stream Isolation**:
 * **Aislamiento por Worker**: Credenciales dinámicas `socks5h://w{slot}_{hash}:tor@127.0.0.1:9050` sobre el demonio único de Tor.
 * **Mitigación Rate-Limit**: Ante un código HTTP 429, regenera las credenciales del socket SOCKS5h en 0 ms para que la siguiente petición salga por un nuevo circuito y dirección IP.
 
@@ -128,7 +143,7 @@ CREATE TABLE IF NOT EXISTS cache (
 
 ## 5. Registro y Factoría Central
 
-El adaptador se encuentra registrado en [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py):
+El adaptador se encuentra registrado en [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py):
 
 ```python
 from adapters.scrapers.datuar.datuar_adapter import DatuarAdapter

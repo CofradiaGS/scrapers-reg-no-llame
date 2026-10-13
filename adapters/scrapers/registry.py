@@ -15,7 +15,9 @@ from adapters.scrapers.movistar.movistar_adapter import MovistarAdapter
 from adapters.scrapers.personal.personal_adapter import PersonalAdapter
 from adapters.scrapers.datuar.datuar_adapter import DatuarAdapter
 from adapters.scrapers.cuitonline.cuitonline_adapter import CuitOnlineAdapter
+from adapters.scrapers.bcra.bcra_adapter import BcraAdapter
 from adapters.scrapers.telcos.telco_cascade_adapter import TelcoCascadeAdapter
+from adapters.scrapers.enacom_web.enacom_web_adapter import EnacomWebAdapter
 
 class ScraperRegistry:
     _registry: Dict[str, Type[IScraperEnginePort]] = {
@@ -25,6 +27,12 @@ class ScraperRegistry:
         "datuar": DatuarAdapter,
         "cuitonline": CuitOnlineAdapter,
         "cuit_online": CuitOnlineAdapter,
+        "bcra": BcraAdapter,
+        "bcra_central_deudores": BcraAdapter,
+        "bcra_api": BcraAdapter,
+        "enacom_web": EnacomWebAdapter,
+        "enacom": EnacomWebAdapter,
+        "enacom_numeracion": EnacomWebAdapter,
         "claro": ClaroAdapter,
         "claro_cobro_express": ClaroAdapter,
         "claro_fast": ClaroAdapter,

@@ -147,6 +147,7 @@ class RegistroCola:
     fuente: Optional[str] = None
     datos_existentes: Dict[str, Any] = field(default_factory=dict)
     dni: Optional[str] = None
+    tipo_cola: Optional[str] = None
 
     def __post_init__(self):
         if self.dni and self.linea and not self.linea.dni:
@@ -164,8 +165,8 @@ class ReglaPipeline:
     para el modelo de piscina autónoma distribuida multi-PC.
     """
     TELCOS = ("claro", "personal", "movistar")
-    REQUIEREN_DNI = ("claro", "datuar", "cuitonline")
-    CADENA_DEFAULT = ["iris", "claro", "personal", "movistar", "datuar", "cuitonline"]
+    REQUIEREN_DNI = ("claro", "datuar", "cuitonline", "bcra")
+    CADENA_DEFAULT = ["iris", "telcos", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
 
     @classmethod
     def es_reciente(cls, fecha_str: Optional[str], max_dias: int = 7) -> bool:
@@ -195,6 +196,8 @@ class ReglaPipeline:
         if dni_directo:
             clean = "".join(filter(str.isdigit, str(dni_directo))).strip()
             if clean:
+                if len(clean) == 11 and clean.startswith(("20", "27", "23", "24")):
+                    return str(int(clean[2:10]))
                 return clean
         if not datos_json or not isinstance(datos_json, dict):
             return None
@@ -217,6 +220,11 @@ class ReglaPipeline:
             doc = datuar.get("dni") or datuar.get("detalles", {}).get("dni")
             if doc:
                 return str(doc).strip()
+            cuil_val = datuar.get("cuil") or datuar.get("detalles", {}).get("cuil")
+            if cuil_val:
+                c_clean = "".join(filter(str.isdigit, str(cuil_val)))
+                if len(c_clean) == 11 and c_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(c_clean[2:10]))
 
         # 3. Namespace cuitonline
         cuit = datos_json.get("cuitonline", {})
@@ -224,12 +232,88 @@ class ReglaPipeline:
             doc = cuit.get("dni") or cuit.get("detalles", {}).get("dni")
             if doc:
                 return str(doc).strip()
+            cuit_val = cuit.get("cuit_limpio") or cuit.get("cuit") or cuit.get("detalles", {}).get("cuit_limpio") or cuit.get("detalles", {}).get("cuit")
+            if cuit_val:
+                cuit_clean = "".join(filter(str.isdigit, str(cuit_val)))
+                if len(cuit_clean) == 11 and cuit_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(cuit_clean[2:10]))
 
-        # 4. Raíz
+        # 4. Namespace bcra
+        bcra_ns = datos_json.get("bcra", {})
+        if isinstance(bcra_ns, dict):
+            doc = bcra_ns.get("dni") or bcra_ns.get("detalles", {}).get("dni")
+            if doc:
+                return str(doc).strip()
+            # Derivar DNI desde CUIT de 11 dígitos si aplica (caracteres 2 a 10)
+            cuit_val = bcra_ns.get("cuit") or bcra_ns.get("detalles", {}).get("cuit")
+            if cuit_val:
+                cuit_clean = "".join(filter(str.isdigit, str(cuit_val)))
+                if len(cuit_clean) == 11 and cuit_clean.startswith(("20", "27", "23", "24")):
+                    return str(int(cuit_clean[2:10]))
+
+        # 5. Raíz
         if datos_json.get("dni"):
             return str(datos_json["dni"]).strip()
 
         return None
+
+    @classmethod
+    def extraer_cuit(cls, datos_json: Optional[Dict[str, Any]], cuit_directo: Optional[str] = None) -> Optional[str]:
+        """Extrae el CUIT/CUIL verificado de 11 dígitos desde cualquier namespace de datos_json."""
+        if cuit_directo:
+            clean = "".join(filter(str.isdigit, str(cuit_directo))).strip()
+            if len(clean) == 11:
+                return clean
+        if not datos_json or not isinstance(datos_json, dict):
+            return None
+
+        # 1. Namespace bcra
+        bcra_ns = datos_json.get("bcra", {})
+        if isinstance(bcra_ns, dict):
+            c = bcra_ns.get("cuit") or bcra_ns.get("detalles", {}).get("cuit")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 2. Namespace cuitonline
+        cuit_ns = datos_json.get("cuitonline", {})
+        if isinstance(cuit_ns, dict):
+            c = cuit_ns.get("cuit_limpio") or cuit_ns.get("cuit") or cuit_ns.get("detalles", {}).get("cuit_limpio") or cuit_ns.get("detalles", {}).get("cuit")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 3. Namespace datuar
+        datuar = datos_json.get("datuar", {})
+        if isinstance(datuar, dict):
+            c = datuar.get("cuil") or datuar.get("detalles", {}).get("cuil")
+            if c:
+                clean = "".join(filter(str.isdigit, str(c)))
+                if len(clean) == 11:
+                    return clean
+
+        # 4. Namespace iris
+        iris = datos_json.get("iris", {})
+        if isinstance(iris, dict):
+            titular = iris.get("titular", {})
+            if isinstance(titular, dict):
+                c = titular.get("cuil") or titular.get("cuit")
+                if c:
+                    clean = "".join(filter(str.isdigit, str(c)))
+                    if len(clean) == 11:
+                        return clean
+
+        # 5. Raíz
+        c_root = datos_json.get("cuit") or datos_json.get("cuil")
+        if c_root:
+            clean = "".join(filter(str.isdigit, str(c_root)))
+            if len(clean) == 11:
+                return clean
+
+        return None
+
 
     @classmethod
     def es_elegible_para_scraper(
@@ -259,8 +343,7 @@ class ReglaPipeline:
            No ejecutado en los últimos 7 días.
            EXIGE haber pasado por Personal en los últimos 7 días.
         5. DATUAR: Exige DNI disponible. No ejecutado en los últimos 7 días.
-        6. CUITONLINE: Exige DNI disponible. No ejecutado en los últimos 7 días.
-           EXIGE haber pasado por Datuar en los últimos 7 días.
+        6. CUITONLINE: Exige DNI disponible. No requiere paso previo por Datuar.
         7. FLAG solo_sin_coincidencia: Si es True en telcos, descarta registros con coincidencia en cualquiera
            de las 3 telcos (o status raíz), independientemente de la fecha.
         """
@@ -277,6 +360,8 @@ class ReglaPipeline:
             nombre = "cuitonline"
         elif "datuar" in nombre:
             nombre = "datuar"
+        elif "bcra" in nombre:
+            nombre = "bcra"
         elif "telco" in nombre:
             nombre = "telcos"
 
@@ -382,13 +467,20 @@ class ReglaPipeline:
         if nombre == "cuitonline":
             if not dni_activo:
                 return False, "CuitOnline requiere DNI disponible"
-            # CuitOnline NO tiene regla de 7 días: solo exige haber pasado previamente por Datuar
-            d_data = datos.get("datuar", {})
-            if not d_data or not isinstance(d_data, dict) or not d_data.get("status"):
-                return False, "CuitOnline exige haber pasado previamente por Datuar"
             return True, "Apto para CuitOnline"
 
+        if nombre == "bcra":
+            datuar_data = datos.get("datuar", {})
+            paso_datuar = isinstance(datuar_data, dict) and bool(datuar_data.get("status"))
+            cuit_activo = cls.extraer_cuit({"datuar": datuar_data}) if paso_datuar else None
+            if not cuit_activo:
+                cuit_activo = cls.extraer_cuit(datos)
+            if not paso_datuar or not cuit_activo:
+                return False, "BCRA requiere haber pasado previamente por Datuar y contar con el CUIT extraído"
+            return True, "Apto para BCRA Central de Deudores"
+
         return False, f"Scraper desconocido: {nombre}"
+
 
     @classmethod
     def resolver_siguiente_etapa(
@@ -419,7 +511,7 @@ class ReglaPipeline:
         3. Precedencia y Temporalidad de 7 Días (TTL):
            - Personal con DNI exige haber pasado por Claro en los últimos 7 días.
            - Movistar ('de nadie') solo necesita ANI y exige haber pasado por Personal en los últimos 7 días.
-           - CuitOnline NUNCA se ejecuta si no pasó previamente por Datuar en los últimos 7 días.
+           - CuitOnline solo exige contar con DNI disponible (no depende de Datuar).
         4. Fin de cadena:
            - Si no quedan scrapers aplicables -> ('finalizado', 'completado'|'no_coincidencia').
         """
@@ -436,10 +528,14 @@ class ReglaPipeline:
             sc_canonico = "iris"
         elif "telco" in sc_canonico:
             sc_canonico = "telcos"
-        datos[sc_canonico] = {
-            "status": resultado.status.value,
-            "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
+        if sc_canonico in datos and isinstance(datos[sc_canonico], dict):
+            datos[sc_canonico]["status"] = resultado.status.value
+            datos[sc_canonico]["ultima_modificacion"] = resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            datos[sc_canonico] = {
+                "status": resultado.status.value,
+                "ultima_modificacion": resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
 
         # Determinar si hay DNI activo
         tiene_dni = bool(
@@ -499,11 +595,11 @@ class ReglaPipeline:
 
         for candidato in pipeline[idx + 1:]:
             # Si el candidato es una telco y ya corrió telcos, saltearlo
-            if (scraper_actual == "telcos" or sc_canonico == "telcos") and candidato in cls.TELCOS:
+            if (scraper_actual == "telcos" or sc_canonico == "telcos") and (candidato in cls.TELCOS or candidato == "telcos"):
                 continue
 
-            # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante
-            if telco_coincidio and candidato in cls.TELCOS:
+            # Si ya encontramos la telco ganadora, saltear cualquier otra telco restante o el motor telcos
+            if telco_coincidio and (candidato in cls.TELCOS or candidato == "telcos"):
                 continue
 
             # Si el candidato requiere DNI obligatoriamente y NO tenemos DNI, saltearlo
@@ -527,10 +623,16 @@ class ReglaPipeline:
                 continue
 
             # Dependencia de Identidad (NO aplica regla de 7 días):
-            # 3. CuitOnline requiere haber pasado por Datuar previamente
-            paso_datuar = ("datuar" in pasados or (isinstance(datos.get("datuar"), dict) and datos["datuar"].get("status")))
-            if candidato == "cuitonline" and not paso_datuar:
-                continue
+            # 3. CuitOnline solo exige tener DNI (filtrado previamente por REQUIEREN_DNI arriba).
+            
+            # 4. BCRA exige haber pasado previamente por Datuar y contar con el CUIT/CUIL extraído
+            if candidato == "bcra":
+                datuar_data = datos.get("datuar", {})
+                paso_datuar = ("datuar" in pasados or (isinstance(datuar_data, dict) and bool(datuar_data.get("status"))))
+                cuit_datuar = cls.extraer_cuit({"datuar": datuar_data}) if isinstance(datuar_data, dict) else None
+                cuit_disponible = bool(cuit_datuar or cls.extraer_cuit(datos))
+                if not (paso_datuar and cuit_disponible):
+                    continue
 
             # Candidato válido encontrado
             return (candidato, EstadoRegistro.PENDIENTE.value)

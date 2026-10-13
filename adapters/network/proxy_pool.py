@@ -163,7 +163,8 @@ class ProxyPoolManager:
                 self.test_target,
                 headers=headers,
                 proxies=proxies,
-                timeout=self.timeout
+                timeout=self.timeout,
+                verify=False
             )
             lat = round(time.time() - t0, 2)
             if resp.status_code in (200, 400, 404):  # Respondió el servidor destino

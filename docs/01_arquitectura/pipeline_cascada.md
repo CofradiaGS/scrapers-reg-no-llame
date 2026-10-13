@@ -62,12 +62,13 @@ flowchart TD
 
 ## 2. La Regla de Cortocircuito (Short-Circuit) y Eslabones No-Terminales
 
-### 2.1. Eslabones de Enriquecimiento No-Terminales (`iris`, `datuar`, `cuitonline`)
+### 2.1. Eslabones de Enriquecimiento No-Terminales (`iris`, `datuar`, `cuitonline`, `bcra`)
 1. **IRIS**: Consulta la base de portabilidad numérica corporativa (trámites de cambio de compañía, SPN y port-out). Extrae el DNI del titular cuando existe Port-Out.
-2. **Datuar**: Enriquece nombres, apellidos, demografía y geolocalización a partir del DNI. **NUNCA cortocircuita**, dé o no dé resultado.
+2. **Datuar**: Enriquece nombres, apellidos, demografía y geolocalización a partir del DNI. Extrae de forma certera el **CUIL/CUIT verificado** (`data-cdu`). **NUNCA cortocircuita**, dé o no dé resultado.
 3. **CuitOnline**: Extrae y normaliza el CUIT verificado, denominación fiscal y situación impositiva ante AFIP (IVA, Ganancias). **NUNCA cortocircuita**, dé o no dé resultado.
+4. **BCRA**: Consulta la Central de Deudores del Sistema Financiero. **Exige haber pasado previamente por Datuar y disponer de su CUIT/CUIL extraído** para evitar búsquedas especulativas o asignaciones erróneas. **NUNCA cortocircuita**.
 
-Todos los eslabones de enriquecimiento avanzan siempre a la siguiente etapa de validación telco con estado `pendiente`.
+Todos los eslabones de enriquecimiento avanzan siempre a la siguiente etapa de validación telco o finalización con estado `pendiente`.
 
 ### 2.2. Cortocircuito en Compañías Telco (Claro, Movistar, Personal)
 A diferencia de los motores de enriquecimiento, los scrapers de operadoras comerciales consultan directamente la titularidad activa del cliente en la red del operador.
@@ -81,7 +82,7 @@ A diferencia de los motores de enriquecimiento, los scrapers de operadoras comer
 
 ## 3. Implementación en Código de Dominio y Ventana Temporal (TTL 7 Días)
 
-La lógica de esta regla reside en la clase [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
+La lógica de esta regla reside en la clase [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
 
 ```python
 class ReglaPipeline:
@@ -168,11 +169,8 @@ class ReglaPipeline:
             if candidato == "movistar" and not paso_reciente("personal"):
                 continue
 
-            # Dependencia de Identidad (NO aplica regla de 7 días):
-            # 3. CuitOnline requiere haber pasado por Datuar previamente
-            paso_datuar = ("datuar" in pasados or (isinstance(datos.get("datuar"), dict) and datos["datuar"].get("status")))
-            if candidato == "cuitonline" and not paso_datuar:
-                continue
+            # Requisitos de Identidad:
+            # 3. CuitOnline solo exige disponer de DNI (filtrado por REQUIEREN_DNI arriba, sin dependencia de Datuar)
 
             return (candidato, EstadoRegistro.PENDIENTE.value)
 
@@ -201,9 +199,9 @@ La siguiente tabla resume las combinaciones de entrada y salida calculadas por l
 | `personal` | `SIN_COINCIDENCIA` | - | `movistar` | `pendiente` | No pertenece a Personal; se delega a Movistar. |
 | `movistar` | `COINCIDENCIA` | Sin DNI | **`finalizado`** | **`completado`** | Titularidad Movistar confirmada. Sin DNI; concluye de inmediato. |
 | `movistar` | `COINCIDENCIA` | Con DNI | `datuar` | `pendiente` | Titularidad Movistar confirmada. Con DNI previo; avanza a Datuar. |
-| `movistar` | `SIN_COINCIDENCIA` | - | **`finalizado`** | **`no_coincidencia`** | Fin del pipeline telco sin coincidencia. |
-| `datuar` | `COINCIDENCIA` / `SIN_COINCIDENCIA` | Con DNI | `cuitonline` | `pendiente` | Motor no-terminal. Deriva obligatoriamente a CuitOnline para constancia fiscal. |
-| `cuitonline`| `COINCIDENCIA` / `SIN_COINCIDENCIA` | Con DNI | **`finalizado`** | **`completado`** | Fin de la cadena con perfil de identidad completo. |
+| `datuar` | `COINCIDENCIA` / `SIN_COINCIDENCIA` | Con DNI | `cuitonline` | `pendiente` | Motor no-terminal. Deriva a CuitOnline para constancia fiscal. Extrae el CUIT/CUIL verificado. |
+| `cuitonline`| `COINCIDENCIA` / `SIN_COINCIDENCIA` | Con DNI | `bcra` / `finalizado` | `pendiente` / `completado` | Si cuenta con paso previo por Datuar y CUIT extraído, avanza a BCRA. Si no, finaliza la cadena. |
+| `bcra` | `COINCIDENCIA` / `SIN_COINCIDENCIA` | Con CUIT de Datuar | **`finalizado`** | **`completado`** | Fin de la cadena con auditoría crediticia y perfil patrimonial completo. |
 
 ---
 
@@ -223,9 +221,9 @@ Garantizar que los workers de compañías auditen **exclusivamente registros sin
 
 ## 5. Fusión Acumulativa de Datos JSON (`datos_json`)
 
-A medida que una línea recorre los distintos eslabones de la cadena, cada scraper encapsula sus datos bajo su propia clave (*namespace*) llamando a [`resultado.to_namespace_dict()`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L97-L111).
+A medida que una línea recorre los distintos eslabones de la cadena, cada scraper encapsula sus datos bajo su propia clave (*namespace*) llamando a [`resultado.to_namespace_dict()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L97-L111).
 
-El caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L81-L84) toma el diccionario existente en la base de datos y ejecuta:
+El caso de uso [`ProcesarLoteUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L81-L84) toma el diccionario existente en la base de datos y ejecuta:
 ```python
 datos_acumulados = dict(reg.datos_existentes or {})
 datos_acumulados.update(resultado.to_namespace_dict())
@@ -338,7 +336,7 @@ WHERE fuente LIKE '%"iris"%'
 ---
 
 ## 7. Referencias Cruzadas
-- [Regla del Pipeline en Dominio](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Regla del Pipeline en Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Esquema de Base de Datos y Colas](../03_base_de_datos_y_colas/esquema_ddl_vps.md)
