@@ -174,22 +174,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             else:
                 # Caso queue_registro_no_llame
                 s_nombre = scraper_actual or "iris"
-<<<<<<< HEAD
                 if "iris" in (s_nombre or "").lower():
                     s_nombre = "iris"
-                query_find = f"""
-                    SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
-                    FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
-                    WHERE scraper_actual = %s 
-                      AND estado = 'pendiente'
-                      AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')
-                    ORDER BY id ASC
-                    LIMIT %s
-                    FOR UPDATE SKIP LOCKED;
-                """
-                cursor.execute(query_find, (s_nombre, limit))
-                filas = cursor.fetchall()
-=======
                 if s_nombre == "enacom_web":
                     query_find = f"""
                         SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
@@ -257,7 +243,6 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     """
                     cursor.execute(query_find, (s_nombre, limit))
                     filas = cursor.fetchall()
->>>>>>> 585e568b4a3079796f6eb0f19ddb4a5df61b7dff
 
                 if not filas:
                     conn.rollback()
@@ -265,20 +250,12 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
 
                 ids = [f["id"] for f in filas]
                 placeholders = ", ".join(["%s"] * len(ids))
-<<<<<<< HEAD
-                query_update = f"""
-                    UPDATE {config.VPS_DB_TABLE}
-                    SET estado = 'procesando',
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id IN ({placeholders});
-                """
-                cursor.execute(query_update, ids)
-=======
                 if s_nombre == "enacom_web":
                     query_update = f"""
                         UPDATE {config.VPS_DB_TABLE}
                         SET estado = 'procesando',
                             scraper_actual = 'enacom_web',
+                            fecha_procesado = NOW(),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id IN ({placeholders});
                     """
@@ -288,11 +265,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         UPDATE {config.VPS_DB_TABLE}
                         SET estado = 'procesando',
                             scraper_actual = %s,
+                            fecha_procesado = NOW(),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id IN ({placeholders});
                     """
                     cursor.execute(query_update, [s_nombre] + ids)
->>>>>>> 585e568b4a3079796f6eb0f19ddb4a5df61b7dff
                 conn.commit()
 
                 resultado = []
@@ -676,15 +653,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     else:
                         res_str = str(res_json or "{}")
 
-                    dni_val = str(item.get("dni") or "").strip() or None
-<<<<<<< HEAD
-                    desc = str(item.get("descripcion") or "")[:195]
-=======
                     if not dni_val and isinstance(res_json, dict):
                         from core.domain.entities import ReglaPipeline
                         dni_val = ReglaPipeline.extraer_dni(res_json)
-                    desc = str(item.get("descripcion") or item.get("descripcion_scraper") or "")[:200]
->>>>>>> 585e568b4a3079796f6eb0f19ddb4a5df61b7dff
+                    desc = str(item.get("descripcion") or item.get("descripcion_scraper") or "")[:195]
                     id_vps = item["id_vps"]
 
                     params.append((

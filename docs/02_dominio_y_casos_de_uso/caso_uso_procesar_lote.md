@@ -211,10 +211,6 @@ El parámetro opcional `should_stop: Optional[Callable[[], bool]] = None` recibe
   4. Los 8 registros restantes (`unprocessed_ids`) se liberan a la cola en una sola llamada SQL (`cola.revertir_a_pendiente`), cambiando su estado de `procesando` a `pendiente`.
   5. Ningún registro queda bloqueado ni perdido en el limbo.
 
-<<<<<<< Updated upstream
-### 4.4. Actualización Obligatoria de `updated_at` en MySQL
-Toda operación que altere el estado o los datos de un registro en `queue_registro_no_llame` debe actualizar sin excepción la columna relacional `updated_at`. En el adaptador [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L197-L203):
-=======
 ### 4.4. Tratamiento de Pausa Operativa y Fin de Horario Comercial
 El parámetro opcional `should_pause: Optional[Callable[[], bool]] = None` recibe el callback `pause_event.is_set` del supervisor.
 - Si el reloj cruza las 21:00:00 (límite de horario comercial de IRIS) o se activa una pausa del supervisor en mitad de un lote:
@@ -225,13 +221,10 @@ El parámetro opcional `should_pause: Optional[Callable[[], bool]] = None` recib
 
 ### 4.5. Actualización Obligatoria de `updated_at` en MySQL
 Toda operación que altere el estado o los datos de un registro en `queue_registro_no_llame` debe actualizar sin excepción la columna relacional `updated_at`. En el adaptador [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L197-L203):
->>>>>>> Stashed changes
 - Al persistir resultados (`persistir_resultados`): `SET estado = %s, scraper_actual = %s, fuente = %s, datos_json = %s, updated_at = CURRENT_TIMESTAMP`.
 - Al revertir a pendiente (`revertir_a_pendiente`): `SET estado = 'pendiente', updated_at = CURRENT_TIMESTAMP`.
 - Al reclamar lote o liberar huérfanos: `updated_at = CURRENT_TIMESTAMP`.
 
-<<<<<<< Updated upstream
-=======
 ### 4.6. Tratamiento de Errores Transitorios y Bloqueos de IP (`ScraperTransientError`, HTTP 403 y Timeouts)
 Ante bloqueos perimetrales WAF (`HTTP 403 Forbidden`), saturación de peticiones (`HTTP 429 Too Many Requests`) o caídas transitorias de red/circuitos Tor (`HTTPSConnectionPool`, `ConnectTimeoutError`):
 1. Los adaptadores de scraper (`claro`, `movistar`, `personal`) renuevan de inmediato su circuito proxy/Tor y lanzan [`ScraperTransientError`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py).
@@ -239,8 +232,6 @@ Ante bloqueos perimetrales WAF (`HTTP 403 Forbidden`), saturación de peticiones
 3. El bucle de ejecución se interrumpe inmediatamente (`break`) sin marcar la línea actual como error ni escribir `resultado: null`.
 4. El lote remanente en `unprocessed_ids` se libera íntegramente mediante `self.cola.revertir_a_pendiente(unprocessed_ids)`.
 5. Esto previene que problemas transitorios de infraestructura degraden registros válidos a estado `error`, garantizando que sean reintentados transparentemente bajo un nuevo circuito Tor.
-
->>>>>>> Stashed changes
 ---
 
 ## 5. Referencias Cruzadas

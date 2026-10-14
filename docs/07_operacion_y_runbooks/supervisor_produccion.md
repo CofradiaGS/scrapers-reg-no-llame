@@ -104,11 +104,7 @@ El hilo `_circuit_breaker_loop` realiza cada 25 segundos una petición HTTP de s
 * Cuando el sondeo detecta un código HTTP 200, se ejecuta `self.pause_event.clear()` y los workers reanudan de inmediato el procesamiento.
 
 ### 3.4. Watchdog Sweeper de Huérfanos
-<<<<<<< Updated upstream
-El hilo centinela `_watchdog_sweeper_loop` despierta cada 300 segundos (5 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py):
-=======
 El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
->>>>>>> Stashed changes
 ```sql
 UPDATE `queue_registro_no_llame`
 SET estado = 'pendiente',
