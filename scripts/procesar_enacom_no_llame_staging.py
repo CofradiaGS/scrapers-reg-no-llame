@@ -85,10 +85,13 @@ def handle_signal(sig, frame):
     os._exit(0)
 
 
+os.environ.setdefault("NODE_OPTIONS", "--max-old-space-size=512")
+
 # Registro de adaptadores aislados por hilo de ejecución (Thread-Local)
 _thread_local = threading.local()
 _active_adapters = []
 _active_adapters_lock = threading.Lock()
+_browser_init_lock = threading.Lock()
 _last_proxy_wait_log = 0.0
 _last_proxy_wait_lock = threading.Lock()
 
@@ -97,6 +100,7 @@ def obtener_adapter_worker(proxy_manager: Optional[BurstProxyManager] = None) ->
     """
     Instancia y retorna un EnacomWebAdapter aislado en el hilo actual de ejecución.
     BLINDAJE TOTAL: Si proxy_manager está activo, NUNCA permite peticiones directas desde la IP local.
+    Arranque escalonado con Mutex para evitar picos de memoria (Thundering Herd de Chromium).
     """
     if stop_requested.is_set():
         return None
@@ -121,22 +125,28 @@ def obtener_adapter_worker(proxy_manager: Optional[BurstProxyManager] = None) ->
             if stop_requested.is_set() or not proxy_init:
                 return None
 
-        try:
-            ad = EnacomWebAdapter(headless=True, proxy=proxy_init)
-            ad.iniciar()
-            _thread_local.adapter = ad
-            with _active_adapters_lock:
-                _active_adapters.append(ad)
-            logger.info(f"Worker Chromium conectado exitosamente vía proxy AR: {proxy_init or 'Directo'}")
-        except Exception as e:
-            logger.warning(f"Error al inicializar adapter ({proxy_init or 'directo'}): {e}")
-            if proxy_init and proxy_manager:
-                proxy_manager.report_proxy_result(proxy_init, False, reason="Init failed")
+        # ARRANQUE ESCALONADO CON MUTEX: Evita Thundering Herd de múltiples navegadores levantándose a la vez
+        with _browser_init_lock:
+            if stop_requested.is_set():
+                return None
             try:
-                ad.cerrar()
-            except Exception:
-                pass
-            return None
+                ad = EnacomWebAdapter(headless=True, proxy=proxy_init)
+                ad.iniciar()
+                _thread_local.adapter = ad
+                with _active_adapters_lock:
+                    _active_adapters.append(ad)
+                logger.info(f"Worker Chromium conectado exitosamente vía proxy AR: {proxy_init or 'Directo'}")
+                # Pausa escalonada anti-pico para permitir que Chromium y Node.js estabilicen el heap
+                time.sleep(1.5)
+            except Exception as e:
+                logger.warning(f"Error al inicializar adapter ({proxy_init or 'directo'}): {e}")
+                if proxy_init and proxy_manager:
+                    proxy_manager.report_proxy_result(proxy_init, False, reason="Init failed")
+                try:
+                    ad.cerrar()
+                except Exception:
+                    pass
+                return None
     return getattr(_thread_local, "adapter", None)
 
 
@@ -276,15 +286,15 @@ def procesar_registro_robusto(
             resultado = adapter.consultar_linea(linea)
             latencia = round(time.time() - t0, 3)
 
-            # ÉXITO ROTUNDO: ENACOM identificó el prestador
-            if resultado.status == StatusScraping.COINCIDENCIA and resultado.operador:
+            # 1. ÉXITO ROTUNDO: ENACOM identificó el prestador (sea actual u original)
+            if resultado.status == StatusScraping.COINCIDENCIA and (resultado.operador or resultado.operador_receptor):
                 detalles = resultado.detalles if isinstance(resultado.detalles, dict) else {}
-                prestador_act = detalles.get("prestador_actual") or detalles.get("prestador_original") or resultado.operador
+                prestador_act = detalles.get("prestador_actual") or detalles.get("prestador_original") or resultado.operador_receptor or resultado.operador
                 orig = detalles.get("prestador_original") or resultado.operador
                 es_portado = detalles.get("es_portado", False)
 
                 desc_str = f"ENACOM: {prestador_act}"
-                if es_portado:
+                if es_portado and orig and orig.lower() != str(prestador_act).lower():
                     desc_str += f" (Portado desde {orig})"
 
                 # Preparar enriquecimiento de datos acumulativos
@@ -317,14 +327,45 @@ def procesar_registro_robusto(
                     "tiempo_total": round(time.time() - t_inicio, 2)
                 }
 
-            # Si el resultado fue ERROR o límite de tasa
+            # 2. SIN COINCIDENCIA CONFIRMADA: ENACOM certificó oficialmente que la línea no está asignada
+            if resultado.status == StatusScraping.SIN_COINCIDENCIA:
+                desc_str = f"ENACOM: {resultado.descripcion or 'Línea no asignada'}"
+                datos_actualizados = dict(datos_previos) if isinstance(datos_previos, dict) else {}
+                ns_enacom = resultado.to_namespace_dict()
+                datos_actualizados.update(ns_enacom)
+
+                fuente_actual = datos_actualizados.get("fuente") or []
+                if isinstance(fuente_actual, str):
+                    try:
+                        fuente_actual = json.loads(fuente_actual)
+                    except Exception:
+                        fuente_actual = [fuente_actual]
+                if not isinstance(fuente_actual, list):
+                    fuente_actual = []
+                if "enacom_web" not in fuente_actual:
+                    fuente_actual.append("enacom_web")
+
+                return {
+                    "id": reg_id,
+                    "ani": ani,
+                    "status": "completado",
+                    "scraper_actual": "finalizado",
+                    "fuente": fuente_actual,
+                    "datos": datos_actualizados,
+                    "descripcion": desc_str[:200],
+                    "latencia": latencia,
+                    "intentos": intento,
+                    "tiempo_total": round(time.time() - t_inicio, 2)
+                }
+
+            # 3. Si el resultado fue ERROR o límite de tasa real
             desc_baja = (resultado.descripcion or "").lower()
             detalles_err = resultado.detalles if isinstance(resultado.detalles, dict) else {}
             tipo_err = detalles_err.get("error_tipo", "")
 
-            es_limite_diario = ("100" in desc_baja or "diaria" in desc_baja or tipo_err == "limite_diario")
-            es_limite_minuto = ("5" in desc_baja or "minuto" in desc_baja or tipo_err == "limite_minuto")
-            es_seguridad = ("seguridad" in desc_baja or "captcha" in desc_baja or tipo_err == "seguridad_recaptcha")
+            es_limite_diario = (tipo_err == "limite_diario" or "100 consultas" in desc_baja or "límite diario" in desc_baja)
+            es_limite_minuto = (tipo_err == "limite_minuto" or "5 consultas" in desc_baja or "límite por minuto" in desc_baja)
+            es_seguridad = (tipo_err == "seguridad_recaptcha" or "seguridad" in desc_baja or "recaptcha" in desc_baja)
             es_fallo_ip = es_limite_diario or es_limite_minuto or es_seguridad or resultado.status == StatusScraping.ERROR
 
             if es_fallo_ip:
@@ -400,13 +441,14 @@ def push_a_vps(push_uc: SincronizarPushNocturnoUseCase, forzar: bool = False) ->
 
 def main():
     parser = argparse.ArgumentParser(description="Procesador Industrial ENACOM Web - Registro No Llame (Staging 5.000 / Anti-Errores)")
-    parser.add_argument("--workers", type=int, default=5, help="Cantidad de workers/navegadores concurrentes (default: 5)")
+    parser.add_argument("--workers", type=int, default=2, help="Cantidad de workers/navegadores concurrentes (default: 2)")
     parser.add_argument("--batch-size", type=int, default=100, help="Tamaño de micro-lote por ciclo de trabajo (default: 100)")
     parser.add_argument("--pull-limit", type=int, default=5000, help="Líneas a descargar del VPS por bloque masivo (default: 5000)")
     parser.add_argument("--watermark-min", type=int, default=1000, help="Umbral mínimo en SQLite antes de disparar pull de recarga (default: 1000)")
     parser.add_argument("--push-interval", type=int, default=500, help="Cada cuántas consultas confirmadas evaluar push al VPS (default: 500)")
     parser.add_argument("--proxy", type=str, default=None, help="Proxy único a usar prioritariamente (ej: http://ip:puerto o socks5://ip:puerto)")
     parser.add_argument("--proxy-file", type=str, default=None, help="Ruta a archivo .txt con lista de proxies (uno por línea)")
+    parser.add_argument("--limit", type=int, default=None, help="Cantidad máxima de líneas a procesar en esta sesión (ej: --limit 200)")
     parser.add_argument("--no-proxy", action="store_true", help="Forzar salida por IP local directa (solo testing)")
     parser.add_argument("--force-push", action="store_true", help="Forzar subida al VPS ignorando la ventana nocturna 00:00-08:00 (solo testing)")
     args = parser.parse_args()
@@ -417,7 +459,8 @@ def main():
     print("=" * 80)
     print("🚀 MOTOR INDUSTRIAL ENACOM WEB - REGISTRO NO LLAME")
     print("Arquitectura: SQLite Staging 5.000 en WAL | Cero Errores | Watermark Pull Automático")
-    print(f"Configuración: {args.workers} Workers | Micro-Lote: {args.batch_size} | Recarga VPS: 5.000 (Umbral < {args.watermark_min})")
+    limit_str = f"Meta: {args.limit} registros" if args.limit else "Modo Continuo 24/7"
+    print(f"Configuración: {args.workers} Workers | Micro-Lote: {args.batch_size} | {limit_str}")
     print("=" * 80)
 
     # 1. Repositorios Hexagonales
@@ -426,18 +469,24 @@ def main():
     pull_uc = SincronizarPullMatutinoUseCase(remote_repo=vps_sync, local_repo=sqlite_repo)
     push_uc = SincronizarPushNocturnoUseCase(remote_repo=vps_sync, local_repo=sqlite_repo)
 
-    # 2. Configuración de Harvester de Proxies de Argentina (MODO POR DEFECTO: ESCUDO IP)
+    # 2. Configuración de Proxies: Smartproxy Residencial Prioritario vs Harvester Público
     proxy_manager = None
+    proxy_target = args.proxy or getattr(config, "ENACOM_PROXY", None)
+
     if args.no_proxy:
         logger.warning("⚠️  [MODO DIRECTO FORZADO] --no-proxy activado: Las peticiones saldrán por tu IP local.")
+    elif proxy_target:
+        clean_repr = proxy_target.split("@")[-1] if "@" in proxy_target else proxy_target
+        logger.info(f"🔑 [SMARTPROXY RESIDENCIAL ACTIVO] Enrutando tráfico ENACOM vía Smartproxy ({clean_repr})")
+        proxy_manager = BurstProxyManager.get_instance()
+        proxy_manager.set_static_proxy(proxy_target)
+        proxy_manager.start()
     else:
         logger.info("🛡️  [ESCUDO IP ACTIVO] Harvester de proxies de Argentina iniciado. 0 consultas saldrán por tu IP local.")
         proxy_manager = BurstProxyManager.get_instance()
         proxy_manager.start()
 
-        if args.proxy:
-            proxy_manager.set_static_proxy(args.proxy)
-        elif args.proxy_file:
+        if args.proxy_file:
             if os.path.exists(args.proxy_file):
                 with open(args.proxy_file, "r", encoding="utf-8", errors="ignore") as pf:
                     lineas = [l.strip() for l in pf if l.strip()]
@@ -453,11 +502,15 @@ def main():
 
     try:
         while not stop_requested.is_set():
+            if args.limit and total_confirmadas >= args.limit:
+                logger.info(f"🎯 [META ALCANZADA] Se procesaron {total_confirmadas} registros de la meta ({args.limit}). Finalizando sesión.")
+                break
+
             # A. Control de Watermark: Comprobar nivel de agua en SQLite Local para enacom_web
             pendientes = sqlite_repo.contar_pendientes(tipo_cola="registro_no_llame", scraper_actual="enacom_web")
             logger.info(f"💧 [WATERMARK STATUS] Tareas pendientes en SQLite local (enacom_web): {pendientes:,} / {args.pull_limit:,}")
 
-            if pendientes < args.watermark_min:
+            if (not args.limit or pendientes < args.limit) and pendientes < args.watermark_min:
                 logger.info(
                     f"🔄 [WATERMARK PULL ACTIVADO] Pendientes locales ({pendientes:,}) < Umbral ({args.watermark_min:,}). "
                     f"Descargando bloque de {args.pull_limit:,} líneas del VPS..."
@@ -474,8 +527,15 @@ def main():
                     break
 
             # B. Reclamar micro-lote local a 0 ms de latencia
+            tamanio_lote = args.batch_size
+            if args.limit:
+                restantes = args.limit - total_confirmadas
+                if restantes <= 0:
+                    break
+                tamanio_lote = min(args.batch_size, restantes)
+
             registros = sqlite_repo.reservar_lote(
-                batch_size=args.batch_size,
+                batch_size=tamanio_lote,
                 scraper_nombre="enacom_web"
             )
             if not registros:

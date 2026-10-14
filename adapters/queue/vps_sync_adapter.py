@@ -651,6 +651,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     else:
                         res_str = str(res_json or "{}")
 
+                    dni_val = item.get("dni")
                     if not dni_val and isinstance(res_json, dict):
                         from core.domain.entities import ReglaPipeline
                         dni_val = ReglaPipeline.extraer_dni(res_json)

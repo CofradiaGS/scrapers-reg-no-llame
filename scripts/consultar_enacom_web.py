@@ -24,6 +24,7 @@ if hasattr(sys.stderr, "reconfigure"):
 # Asegurar path raíz del proyecto
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
+import config
 from core.domain.entities import Linea, StatusScraping
 from adapters.scrapers.registry import ScraperRegistry
 
@@ -36,6 +37,8 @@ def main():
     parser.add_argument("--no-headless", action="store_false", dest="headless", help="Abrir ventana visible del navegador")
     parser.add_argument("--proxy", help="URL del servidor proxy (ej: http://ip:puerto o socks5://ip:puerto)")
     parser.add_argument("--tor", action="store_true", help="Enrutar a través de Tor SOCKS5 local (socks5://127.0.0.1:9050)")
+
+    parser.add_argument("--limit", type=int, default=None, help="Límite máximo de líneas a consultar")
 
     args = parser.parse_args()
 
@@ -51,6 +54,9 @@ def main():
             print(f"❌ Error: Archivo no encontrado: {args.file}")
             sys.exit(1)
 
+    if args.limit and args.limit > 0:
+        numeros = numeros[:args.limit]
+
     if not numeros:
         print("⚠️ Debe especificar al menos una línea telefónica o un archivo --file.")
         print("Ejemplo: python scripts/consultar_enacom_web.py 1161234567")
@@ -61,11 +67,12 @@ def main():
 
     print("=" * 75)
     print("📡 CONSULTOR OFICIAL DE NUMERACIÓN Y PORTABILIDAD ENACOM")
-    print(f"🎯 Total de líneas a verificar: {len(numeros)}")
-    print(f"🌐 Enrutamiento: {'Tor SOCKS5' if args.tor else (args.proxy or 'Conexión Directa')}")
+    proxy_target = args.proxy or getattr(config, "ENACOM_PROXY", None)
+    clean_proxy = proxy_target.split("@")[-1] if (proxy_target and "@" in proxy_target) else proxy_target
+    print(f"🌐 Enrutamiento: {'Tor SOCKS5' if args.tor else (f'Smartproxy / Proxy ({clean_proxy})' if proxy_target else 'Conexión Directa')}")
     print("=" * 75)
 
-    adapter = ScraperRegistry.obtener("enacom_web", headless=args.headless, proxy=args.proxy, use_tor=args.tor)
+    adapter = ScraperRegistry.obtener("enacom_web", headless=args.headless, proxy=proxy_target, use_tor=args.tor)
 
     try:
         for idx, ani in enumerate(numeros, 1):

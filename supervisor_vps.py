@@ -152,6 +152,12 @@ def main():
             scraper_kwargs["user"] = getattr(config, "IRIS_COLA_AUTO_USER", "emartina")
             scraper_kwargs["password"] = getattr(config, "IRIS_COLA_AUTO_PASS", "Inicio-2026")
 
+    # Inyectar proxy residencial exclusivo para ENACOM si está configurado en .env
+    if "enacom" in scraper_name:
+        enacom_proxy = getattr(config, "ENACOM_PROXY", None)
+        if enacom_proxy:
+            scraper_kwargs["proxy"] = enacom_proxy
+
     supervisor = SupervisorIndustrial(
         scraper_name=scraper_name,
         workers=args.workers,

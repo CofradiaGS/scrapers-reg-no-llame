@@ -103,6 +103,10 @@ CUITONLINE_TIMEOUT = int(os.getenv("CUITONLINE_TIMEOUT", "15"))
 CUITONLINE_DELAY_MIN = float(os.getenv("CUITONLINE_DELAY_MIN", "0.2"))
 CUITONLINE_DELAY_MAX = float(os.getenv("CUITONLINE_DELAY_MAX", "0.6"))
 
+# Configuración Proxy Residencial Exclusivo para Scraper ENACOM Web (Smartproxy / Decodo)
+# Aislado estrictamente de Claro, Movistar, Personal y Cobro Express
+ENACOM_PROXY = os.getenv("ENACOM_PROXY", None)
+
 
 def _detectar_tor_path() -> str:
     env_val = os.getenv("TOR_PATH")

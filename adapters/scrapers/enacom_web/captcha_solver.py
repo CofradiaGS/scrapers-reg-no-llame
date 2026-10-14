@@ -13,6 +13,8 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import numpy as np
 
+import threading
+
 try:
     import cv2
 except (ImportError, ModuleNotFoundError):
@@ -27,6 +29,28 @@ except (ImportError, ModuleNotFoundError):
     win_imaging = None
     win_storage = None
 
+# Singleton de OcrEngine y Lock para serializar el procesamiento OCR en Windows
+_ocr_engine_instance = None
+_ocr_lock = threading.Lock()
+_ocr_executor = None
+
+
+def _get_ocr_engine():
+    global _ocr_engine_instance
+    if _ocr_engine_instance is None and win_ocr is not None:
+        try:
+            _ocr_engine_instance = win_ocr.OcrEngine.try_create_from_user_profile_languages()
+        except Exception:
+            _ocr_engine_instance = None
+    return _ocr_engine_instance
+
+
+def _get_ocr_executor() -> ThreadPoolExecutor:
+    global _ocr_executor
+    if _ocr_executor is None:
+        _ocr_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="EnacomOCR")
+    return _ocr_executor
+
 
 class EnacomCaptchaSolver:
     """Extractor y resolutor OCR para los captchas alfanuméricos de ENACOM."""
@@ -37,7 +61,6 @@ class EnacomCaptchaSolver:
                 "EnacomCaptchaSolver requiere 'opencv-python' y 'winsdk'. "
                 "Instálelas con: pip install opencv-python winsdk"
             )
-        self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="EnacomOCR")
 
     def clean_image_bytes(self, img_bytes: bytes) -> np.ndarray:
         """
@@ -73,20 +96,26 @@ class EnacomCaptchaSolver:
         return resized
 
     async def _recognize_async(self, file_path: str) -> str:
-        """Invoca el motor OCR nativo de Windows 10/11."""
+        """Invoca el motor OCR nativo de Windows 10/11 protegiendo la memoria COM."""
         abs_path = os.path.abspath(file_path)
         storage_file = await win_storage.StorageFile.get_file_from_path_async(abs_path)
         stream = await storage_file.open_async(win_storage.FileAccessMode.READ)
-        decoder = await win_imaging.BitmapDecoder.create_async(stream)
-        bitmap = await decoder.get_software_bitmap_async()
-        engine = win_ocr.OcrEngine.try_create_from_user_profile_languages()
-        if not engine:
-            return ""
-        result = await engine.recognize_async(bitmap)
-        raw_text = result.text or ""
-        # Limpieza de caracteres espurios, espacios o guiones
-        clean_text = re.sub(r"[^a-zA-Z0-9]", "", raw_text)
-        return clean_text
+        try:
+            decoder = await win_imaging.BitmapDecoder.create_async(stream)
+            bitmap = await decoder.get_software_bitmap_async()
+            engine = _get_ocr_engine()
+            if not engine:
+                return ""
+            result = await engine.recognize_async(bitmap)
+            raw_text = result.text or ""
+            # Limpieza de caracteres espurios, espacios o guiones
+            clean_text = re.sub(r"[^a-zA-Z0-9]", "", raw_text)
+            return clean_text
+        finally:
+            try:
+                stream.close()
+            except Exception:
+                pass
 
     def _sync_recognize(self, file_path: str) -> str:
         return asyncio.run(self._recognize_async(file_path))
@@ -99,12 +128,18 @@ class EnacomCaptchaSolver:
         os.close(fd)
         try:
             cv2.imwrite(temp_path, cleaned_mat)
-            future = self._executor.submit(self._sync_recognize, temp_path)
-            solved_text = future.result(timeout=5.0)
-            return solved_text.strip()
+            with _ocr_lock:
+                executor = _get_ocr_executor()
+                future = executor.submit(self._sync_recognize, temp_path)
+                solved_text = future.result(timeout=6.0)
+                return solved_text.strip()
+        except Exception:
+            # Falla controlada si el subsistema COM de Windows está sin memoria (0x8007000e)
+            return ""
         finally:
             if os.path.exists(temp_path):
                 try:
                     os.remove(temp_path)
                 except OSError:
                     pass
+

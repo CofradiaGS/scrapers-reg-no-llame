@@ -183,6 +183,57 @@ Para la auditoría industrial de líneas marcadas como `no_coincidencia` en `que
 * **Tolerancia Cero a Errores**: Como prácticamente el 100% de las líneas activas en Argentina tienen asignación en ENACOM, las fallas de red, caídas de proxy o errores OCR se reintentan hasta 4 veces con rotación inmediata de proxy hacia IPs no intentadas. Si una línea no logra certificarse tras agotar los 4 proxies distintos, se revierte a `pendiente` en SQLite local mediante `revertir_a_pendiente()`; **jamás se sube un registro con error o incompleto al VPS**.
 * **Subida Protegida por Semáforo Distribuido en Ventana Exclusiva (00:00 a 08:00 hs)**: Gestionada por [`SincronizarPushNocturnoUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_push_use_case.py). Durante el día (08:00 a 23:59 hs), los resultados se acumulan de forma 100% segura en SQLite local. Únicamente dentro de la ventana de 00:00 a 08:00 hs se habilita el push al VPS, adquiriendo el semáforo `vps_push_nocturno_semaphore` con `GET_LOCK` y subiendo los resultados en chunks de 5.000 registros (o el remanente si hay menos), liberando el semáforo con `RELEASE_LOCK` en el bloque `finally` e interrumpiendo limpiamente si se alcanza el fin de la ventana a las 08:00 AM.
 
+### 4.7. Configuración de Smartproxy Residencial (Argentina - 100 GB) Exclusivo para ENACOM
+
+Para operar de forma masiva y estable evitando los rate-limits de ENACOM (100 consultas/día por IP y 5 consultas/minuto), se integra el servicio de **Smartproxy Residencial (Decodo)** con geolocalización en Argentina, garantizando aislamiento estricto respecto al resto de scrapers:
+
+```mermaid
+flowchart LR
+    subgraph SmartproxyCloud ["Smartproxy / Decodo Residencial (100 GB)"]
+        GW["gate.smartproxy.com:7000\n(Sticky / Rotating AR)"]
+        PoolAR["Pool Residencial Argentina\n(Telecom, Fibertel, Telecentro)"]
+    end
+
+    subgraph ScrapersEcosystem ["Aislamiento de Infraestructura de Red"]
+        EnacomScraper["ENACOM Web Scraper\n(EnacomWebAdapter)"]
+        TelcosScraper["Scrapers Telcos (Claro/Mov/Pers)\n(ProxyPool Público / Tor)"]
+        CobroExpress["Scraper Cobro Express\n(COBRO_EXPRESS_PROXY)"]
+    end
+
+    EnacomScraper -->|"ENACOM_PROXY"| GW
+    GW --> PoolAR
+    TelcosScraper -.->|"No toca Smartproxy"| Tor["Tor / Pool Público"]
+    CobroExpress -.->|"No toca Smartproxy"| IPDirecta["Directo / Proxy Dedicado"]
+```
+
+#### Parámetros Técnicos de Conexión en `.env`
+
+| Variable de Entorno | Tipo | Ejemplo / Formato | Descripción |
+| :--- | :---: | :--- | :--- |
+| `ENACOM_PROXY` | `str` | `http://sp_user-country-ar:password@gate.smartproxy.com:7000` | Endpoint de Smartproxy con targeting exclusivo a Argentina (`country-ar`) y credenciales de autenticación |
+
+#### Modos de Sesión en Smartproxy para ENACOM
+
+1. **Sticky Session (Recomendado para ASP.NET + Captcha)**:
+   - Configura una sesión que mantiene la misma IP residencial durante 10 o 30 minutos (ej. `gate.smartproxy.com` en puertos asignados o parámetro `session-<id>`).
+   - Evita la invalidación del token de sesión ASP.NET (`__VIEWSTATE`) y reCAPTCHA v3 entre la descarga del formulario y el envío del resultado OCR.
+2. **Rotating Session**:
+   - Cada conexión TCP asigna una IP argentina diferente. Ideal si se usa [`EnacomWebAdapter.rotar_proxy()`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/enacom_web/enacom_web_adapter.py) por cada micro-lote de números.
+
+### 4.8. Optimización de Memoria y Concurrencia Industrial (Anti-Thundering Herd)
+
+En entornos de producción donde coexisten múltiples scrapers (ej. workers de IRIS, Cobro Express o Telcos), el lanzamiento simultáneo de navegadores Chromium headless puede saturar la memoria física (RAM) y el heap de JavaScript en el driver de Playwright (`node.exe`). Para garantizar estabilidad 24/7 y cero caídas por Out-Of-Memory (`0x8007000e`):
+
+1. **Límites de Heap en Node.js y Chromium**:
+   - Variable de entorno `NODE_OPTIONS="--max-old-space-size=512"` configurada preventivamente para acotar el uso de memoria del driver de Playwright.
+   - Argumento `--js-flags=--max-old-space-size=256` y flags de supresión de subprocesos inútiles (`--disable-gpu`, `--disable-dev-shm-usage`, `--no-sandbox`, `--mute-audio`, `--disable-software-rasterizer`) en los argumentos de lanzamiento de [`EnacomWebAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/enacom_web/enacom_web_adapter.py).
+2. **Arranque Escalonado con Mutex (Anti-Thundering Herd)**:
+   - En [`scripts/procesar_enacom_no_llame_staging.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/procesar_enacom_no_llame_staging.py), la función `obtener_adapter_worker()` serializa la creación de navegadores mediante `_browser_init_lock` con una pausa de 1.5s entre workers, impidiendo picos súbitos de asignación de memoria.
+3. **Singleton y Serialización de OCR en Windows Media (`winsdk`)**:
+   - [`EnacomCaptchaSolver`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/enacom_web/captcha_solver.py) reutiliza una única instancia de `OcrEngine` y serializa el reconocimiento bajo `_ocr_lock`, cerrando de inmediato los streams nativos COM para prevenir fugas de buffers no administrados.
+4. **Concurrencia Recomendada**:
+   - Para máquinas con 8 GB de RAM física donde ya corren otros scrapers, se recomienda operar con `--workers 2` o `--workers 3`. Con 2 workers se logran tiempos de respuesta de ~4.2s por consulta en paralelo manteniendo el uso de memoria por debajo de 350 MB.
+
 ---
 
 ## 5. Pruebas Unitarias y Certificación
