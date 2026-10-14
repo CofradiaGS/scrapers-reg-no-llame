@@ -1,8 +1,8 @@
 # Búsqueda por DNI y Extracción Multi-Lupa en IRIS Movistar
 
 > **Capa 04: Scrapers IRIS** | Módulo de Extracción Avanzada  
-> **Adaptador**: [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) | [`IrisHttpBot`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)  
-> **Parser Asociado**: [`parse_iris_detail`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/parser.py)
+> **Adaptador**: [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) | [`IrisHttpBot`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_bot.py)  
+> **Parser Asociado**: [`parse_iris_detail`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/parser.py)
 
 ---
 
@@ -13,7 +13,7 @@ Tradicionalmente, las consultas sobre el portal BPM de Movistar IRIS se ejecutab
 Dado que un titular puede registrar múltiples trámites históricos (Port Out, Port In, Altas o Cambios) y cada trámite puede involucrar múltiples números de teléfono, el motor implementa un **algoritmo de extracción exhaustiva multi-lupa**:
 1. Envía el DNI a través de la petición HTTP POST de búsqueda (`att$nroIdentificacion`).
 2. Identifica todas las filas presentes en la grilla de resultados (`grp$array1$detalle$0`, `grp$array1$detalle$1`, ...).
-3. Abre cada trámite pulsando la lupa correspondiente, extrae los detalles mediante [`parse_iris_detail`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/parser.py), recolecta todas las líneas telefónicas involucradas y retorna a la grilla presionando `att$button0` (Volver).
+3. Abre cada trámite pulsando la lupa correspondiente, extrae los detalles mediante [`parse_iris_detail`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/parser.py), recolecta todas las líneas telefónicas involucradas y retorna a la grilla presionando `att$button0` (Volver).
 4. Consolida el conjunto único de líneas descubiertas para ser inyectadas en las fases posteriores del pipeline (Claro, Personal y Movistar).
 
 ```mermaid
@@ -101,7 +101,7 @@ for idx, op in enumerate(filas_operaciones):
 
 ## 4. Estructura de Datos Consolidada
 
-El adaptador [`IrisHttpAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) retorna un [`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) enriquecido con el payload:
+El adaptador [`IrisHttpAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) retorna un [`ScrapeResult`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) enriquecido con el payload:
 
 ```json
 {

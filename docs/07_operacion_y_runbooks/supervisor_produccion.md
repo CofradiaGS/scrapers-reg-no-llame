@@ -1,6 +1,6 @@
 # Supervisor de Producción 24/7 (`supervisor_vps.py` / `runtime/supervisor.py`)
 
-El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
+El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
 
 ---
 
@@ -51,7 +51,7 @@ graph TD
 
 ## 2. Parámetros y Flags de Línea de Comandos
 
-La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
+La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
 
 | Flag / Opción | Tipo | Valor por Defecto | Opciones Válidas | Descripción Técnica |
 | :--- | :---: | :---: | :---: | :--- |
@@ -65,6 +65,15 @@ La interfaz de comandos de [supervisor_vps.py](file:///c:/Users/Usuario/Document
 | `--delay-max` | `float` | `2.5` | Segundos (float) | Pausa máxima aleatoria (jitter) entre lotes sucesivos de un worker. |
 | `--visible` | `flag` | `False` (Headless) | Booleano | Si se utiliza motor `browser`, abre ventanas reales de Chromium en pantalla para depuración visual. |
 | `--solo-sin-coincidencia` | `flag` | `False` | Booleano | **Auditoría Inicial Telco**: Filtra estrictamente líneas que no tengan coincidencia positiva previa en ninguna de las 3 compañías (`claro`, `personal`, `movistar`) ni en el status raíz legado. |
+| `--queue` | `str` | `"registro_no_llame"` | `registro_no_llame`, `cola_automatizacion` | Tabla/origen de la cola en el VPS central. |
+| `--auto-id` | `str` | `"iris_scraper"` | Identificador alfanumérico | Filtro de lote de campaña en `cola_automatizacion` (ej: `ce_bases_produccion`). |
+| `--pc-id` | `str` | `"PC-00"` | Identificador de nodo | Etiqueta de la máquina física/VM para distribución y trazabilidad. |
+| `--tor` / `--no-tor` | `flag` | `None` | Booleano | Enrutamiento anónimo dinámico mediante demonio Tor Stream Isolation (puertos 9050+). |
+| `--proxy-pool` | `flag` | `False` | Booleano | Enrutamiento mediante pool de proxies públicos rotativos de alta velocidad. |
+| `--local-staging` / `--no-local-staging` | `flag` | `True` | Booleano | Persistencia intermedia desacoplada en SQLite local WAL (`data/staging_local.db`). |
+| `--sync-now` | `flag` | `False` | Booleano | Fuerza la subida masiva inmediata de todas las tareas terminadas en SQLite al VPS en chunks de 5.000 filas con semáforo distribuido y finaliza. |
+| `--pull-now` | `flag` | `False` | Booleano | Fuerza la descarga masiva inmediata de 10.000 tareas pendientes desde el VPS a SQLite local con `SKIP LOCKED` y finaliza. |
+| `--force-push` | `flag` | `False` | Booleano | Habilita la subida continua diurna al VPS en chunks de a 5.000 registros mediante el semáforo distribuido ignorando la restricción de ventana nocturna (00:00 - 08:00 hs). |
 
 ---
 
@@ -98,7 +107,7 @@ El hilo `_circuit_breaker_loop` realiza cada 25 segundos una petición HTTP de s
 <<<<<<< Updated upstream
 El hilo centinela `_watchdog_sweeper_loop` despierta cada 300 segundos (5 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py):
 =======
-El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
+El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
 >>>>>>> Stashed changes
 ```sql
 UPDATE `queue_registro_no_llame`
@@ -174,7 +183,7 @@ Una vez finalizada la pasada inicial de auditoría, se puede **desactivar la ban
 
 ## 5. Rotación de Logs en Disco
 
-El supervisor implementa un manejador [`RotatingFileHandler`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L47) que escribe en `supervisor_247.log`:
+El supervisor implementa un manejador [`RotatingFileHandler`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L47) que escribe en `supervisor_247.log`:
 * **Tamaño máximo por archivo:** 20 MB (`maxBytes = 20 * 1024 * 1024`).
 * **Copias de respaldo (*backups*):** 5 archivos rotativos (`supervisor_247.log.1`, etc.).
 * **Límite total en disco:** 100 MB máximo garantizado.

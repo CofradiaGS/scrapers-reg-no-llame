@@ -61,7 +61,8 @@ class SupervisorIndustrial:
         stats_flush_interval: Optional[float] = None,
         watchdog_sweep_interval: Optional[float] = None,
         empty_queue_pause_max_sec: Optional[float] = None,
-        use_local_staging: Optional[bool] = None
+        use_local_staging: Optional[bool] = None,
+        force_push: bool = False
     ):
         self.scraper_name = scraper_name
         self.queue_type = (queue_type or getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
@@ -83,6 +84,7 @@ class SupervisorIndustrial:
             if use_local_staging is not None
             else getattr(config, "LOCAL_STAGING_ENABLED", True)
         )
+        self.force_push = force_push
         self.sync_scheduler: Optional[Any] = None
 
         # Asegurar que el flag forzar_horario se propague al motor del scraper
@@ -831,7 +833,7 @@ class SupervisorIndustrial:
                     auto_id=self.auto_id,
                     pc_id=self.pc_id
                 )
-                vps_remote_sync = VPSSyncAdapter(pool_size=1)
+                vps_remote_sync = VPSSyncAdapter(pool_size=4)
                 self.sync_scheduler = SyncSchedulerThread(
                     local_repo=self.db_adapter,
                     remote_repo=vps_remote_sync,
@@ -840,7 +842,8 @@ class SupervisorIndustrial:
                     pc_id=self.pc_id,
                     scraper_actual=self.scraper_name,
                     stop_event=self.stop_event,
-                    on_pull_success=self._on_sync_pull_success
+                    on_pull_success=self._on_sync_pull_success,
+                    force_push=self.force_push
                 )
                 self.sync_scheduler.start()
 

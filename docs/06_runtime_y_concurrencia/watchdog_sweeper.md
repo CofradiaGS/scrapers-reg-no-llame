@@ -11,9 +11,9 @@ Para resolver esto, el sistema incorpora el **Watchdog Sweeper**, un hilo centin
 ## 1. Arquitectura Hexagonal del Sweeper
 
 Siguiendo los principios de la arquitectura de Puertos y Adaptadores del repositorio, el Watchdog Sweeper desacopla la periodicidad temporal de la lógica de recuperación:
-- **Hilo Centinela (Capa de Runtime):** Método [`_watchdog_sweeper_loop`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) en [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31).
-- **Caso de Uso de Aplicación:** [`LiberarHuerfanosUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9) en [`core/use_cases/cleanup_orphans_use_case.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py).
-- **Adaptador de Infraestructura:** Método [`liberar_huerfanos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326) de [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36).
+- **Hilo Centinela (Capa de Runtime):** Método [`_watchdog_sweeper_loop`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117) en [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31).
+- **Caso de Uso de Aplicación:** [`LiberarHuerfanosUseCase`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py#L9) en [`core/use_cases/cleanup_orphans_use_case.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py).
+- **Adaptador de Infraestructura:** Método [`liberar_huerfanos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326) de [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36).
 
 ```mermaid
 sequenceDiagram
@@ -41,7 +41,7 @@ sequenceDiagram
 
 ## 2. Implementación del Hilo Centinela
 
-En las líneas 97-117 de [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117):
+En las líneas 97-117 de [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L97-L117):
 
 ```python
 def _watchdog_sweeper_loop(self, sweep_interval_sec: float = 300.0):
@@ -74,7 +74,7 @@ def _watchdog_sweeper_loop(self, sweep_interval_sec: float = 300.0):
 
 ## 3. Sentencia SQL Atómica de Rescate
 
-La recuperación se efectúa de manera puramente atómica a nivel del motor MySQL mediante la siguiente consulta optimizada en [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326):
+La recuperación se efectúa de manera puramente atómica a nivel del motor MySQL mediante la siguiente consulta optimizada en [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L326):
 
 ```sql
 UPDATE `queue_registro_no_llame`
@@ -89,3 +89,37 @@ WHERE estado = 'procesando'
 2. **Reseteo Transaccional:** Devuelve el campo `estado` al valor `'pendiente'`, lo que permite que el registro vuelva a ser elegible para la cláusula `SELECT ... FOR UPDATE SKIP LOCKED` de cualquier worker disponible.
 3. **Actualización de Marca Temporal:** Asigna `updated_at = CURRENT_TIMESTAMP`, evitando que el registro sea capturado nuevamente por el siguiente ciclo del sweeper si no es tomado de inmediato.
 4. **Reporte Preciso:** Utiliza `cursor.rowcount` para obtener el número exacto de filas modificadas e informar la métrica en logs y consola.
+
+---
+
+## 4. Estrategia Industrial de Auto-Sanación en 3 Capas
+
+Para garantizar que ningún registro quede huérfano de forma permanente bajo el modelo Offline-First ([`SQLiteStagingAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py)), el sistema implementa una arquitectura defensiva en 3 niveles complementarios:
+
+### Capa 1: Reconciliación de Arranque (*Boot Sweeper*)
+Al iniciar [`SyncSchedulerThread`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py), antes de solicitar cualquier bloque de tareas al VPS, se ejecuta [`VPSSyncAdapter.liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L701):
+- Audita si existen tareas asignadas a este nodo (`target_pc`) o al scraper actual en estado `en_proceso` / `procesando` con más de 15 minutos de inactividad y sin resultado (`resultado IS NULL`).
+- Si encuentra tareas huérfanas de sesiones previas que se interrumpieron, las devuelve a `pendiente` de inmediato, quedando disponibles para el primer Watermark Pull en el mismo segundo de arranque.
+
+### Capa 2: Watchdog Sweeper Remoto Periódico con Mutex Distribuido
+El centinela de sincronización en [`SyncSchedulerThread`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py) evalúa cada 600 segundos (10 minutos) la salud del VPS:
+- Ejecuta [`liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L701) protegiendo la transacción con un mutex distribuido MySQL `GET_LOCK('vps_sweeper_mutex_...', 0)`.
+- Si otra PC concurrente ya está barriendo, salta el ciclo sin bloqueos (no-wait).
+- Rescata automáticamente registros cuyo proceso o máquina remota se cayó hace más de 30 minutos.
+
+### Capa 3: Auto-Sanación Dinámica en la Consulta de Descarga (*Pull con Reclamo de Lease*)
+En [`VPSSyncAdapter.descargar_lote_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L117), la sentencia `SELECT ... FOR UPDATE SKIP LOCKED` incluye una cláusula de rescate por lease vencido:
+```sql
+WHERE auto_id = %s
+  AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
+  AND (
+      estado = 'pendiente'
+      OR (
+          estado = 'en_proceso'
+          AND (resultado IS NULL OR resultado = '')
+          AND fecha_inicio < NOW() - INTERVAL 45 MINUTE
+      )
+  )
+```
+Aun si el watchdog no hubiese alcanzado a correr, el propio motor de Pull rescata y reasigna automáticamente tareas abandonadas hace más de 45 minutos.
+

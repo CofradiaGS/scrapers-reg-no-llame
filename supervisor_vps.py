@@ -86,6 +86,7 @@ def main():
     parser.add_argument("--pc-id", type=str, default=getattr(config, "WORKER_PC_ID", "PC-00"), help="Identificador del nodo worker para 'cola_automatizacion' (default: PC-00)")
     parser.add_argument("--sync-now", action="store_true", help="Fuerza subida masiva nocturna inmediata (Push en chunks de a 5.000) de tareas terminadas al VPS y finaliza")
     parser.add_argument("--pull-now", action="store_true", help="Fuerza descarga masiva inmediata (Pull de 10.000 tareas) desde el VPS a SQLite local y finaliza")
+    parser.add_argument("--force-push", action="store_true", default=False, help="Forzar subida continua al VPS en chunks de 5.000 con semáforo distribuido ignorando la restricción de ventana nocturna")
     parser.add_argument("--local-staging", dest="local_staging", action="store_true", default=None, help="Habilita persistencia local desacoplada SQLite WAL (default según config.LOCAL_STAGING_ENABLED)")
     parser.add_argument("--no-local-staging", dest="local_staging", action="store_false", help="Deshabilita persistencia local y conecta directo al VPS")
 
@@ -167,7 +168,8 @@ def main():
         buffer_flush_size=args.buffer_size,
         buffer_max_delay=args.buffer_timeout,
         empty_queue_pause_max_sec=args.empty_queue_pause,
-        use_local_staging=args.local_staging
+        use_local_staging=args.local_staging,
+        force_push=args.force_push
     )
 
     supervisor.ejecutar()

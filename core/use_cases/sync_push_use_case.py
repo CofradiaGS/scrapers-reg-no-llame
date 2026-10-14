@@ -34,34 +34,38 @@ class SincronizarPushNocturnoUseCase:
         self,
         tipo_cola: str = "cola_automatizacion",
         chunk_size: int = 5000,
-        sweep_wait_sec: float = 10.0,
+        sweep_wait_sec: float = 0.0,
         dias_retencion: int = 7,
         roundrobin_pause_sec: Optional[float] = None,
-        should_stop: Optional[Callable[[], bool]] = None
+        should_stop: Optional[Callable[[], bool]] = None,
+        exigir_lote_completo: bool = False
     ) -> Dict[str, Any]:
         """
         Ejecuta el push masivo al VPS.
 
         :param tipo_cola: 'cola_automatizacion' o 'registro_no_llame'.
         :param chunk_size: Cantidad máxima de filas por transacción UPDATE (5.000).
-        :param sweep_wait_sec: Pausa previa al barrido final de remanentes.
+        :param sweep_wait_sec: Pausa previa al barrido final de remanentes (solo si exigir_lote_completo=False).
         :param dias_retencion: Días para la purga rotativa en SQLite local (7 días).
         :param roundrobin_pause_sec: Pausa cooperativa entre chunks para ceder turno a otras PCs.
         :param should_stop: Función opcional que indica si detener la subida (fin de ventana horaria o stop).
+        :param exigir_lote_completo: Si es True, solo sube en bloques completos de chunk_size (5.000)
+                                     y detiene la subida cuando el remanente sea < 5.000 para no parar producción.
         :return: Resumen de sincronización.
         """
         t0 = time.time()
         try:
             import config
-            default_pause = getattr(config, "SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", 2.0)
+            default_pause = getattr(config, "SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", 0.5)
         except Exception:
-            default_pause = 2.0
+            default_pause = 0.5
 
         roundrobin_pause = default_pause if roundrobin_pause_sec is None else roundrobin_pause_sec
 
         logger.info(
-            f"🚀 [PUSH NOCTURNO] Iniciando subida masiva a VPS ({tipo_cola}). "
-            f"Chunk size: {chunk_size:,} | Retención local: {dias_retencion} días | Pausa Round-Robin: {roundrobin_pause}s."
+            f"🚀 [PUSH VPS] Iniciando subida masiva a VPS ({tipo_cola}). "
+            f"Chunk size: {chunk_size:,} | Exigir lote completo: {exigir_lote_completo} | "
+            f"Retención local: {dias_retencion} días | Pausa Round-Robin: {roundrobin_pause}s."
         )
 
         total_subidos = 0
@@ -72,18 +76,43 @@ class SincronizarPushNocturnoUseCase:
         while True:
             if should_stop and should_stop():
                 logger.info(
-                    f"⏹️ [PUSH NOCTURNO] Subida detenida limpiamente (fin de ventana horaria o señal de stop). "
+                    f"⏹️ [PUSH VPS] Subida detenida limpiamente (fin de ventana horaria o señal de stop). "
                     f"Se alcanzaron a subir {total_subidos:,} registros. Los registros restantes permanecen "
                     f"seguros en SQLite local y se sincronizarán en el próximo ciclo."
                 )
                 interrumpido_por_ventana = True
                 break
 
+            # Si se exige lote completo, verificar antes de extraer si hay suficientes registros
+            if exigir_lote_completo:
+                listos_actuales = self.local.contar_listos_para_subir(tipo_cola=tipo_cola)
+                if listos_actuales < chunk_size:
+                    logger.info(
+                        f"🏁 [PUSH DRENAJE COMPLETADO] Remanente en staging ({listos_actuales:,} registros) "
+                        f"es menor al lote mínimo ({chunk_size:,}). Se preservan en SQLite local para "
+                        f"continuar la producción sin pausas."
+                    )
+                    break
+
             lote = self.local.obtener_lote_para_push(limit=chunk_size, tipo_cola=tipo_cola)
             if not lote:
                 break
 
             cantidad = len(lote)
+
+            # Si se exige lote completo y el lote extraído es menor, revertir y finalizar
+            if exigir_lote_completo and cantidad < chunk_size:
+                ids_vps = [r["id_vps"] for r in lote]
+                try:
+                    self.local.revertir_subida_a_listo(ids_vps=ids_vps, tipo_cola=tipo_cola)
+                except Exception:
+                    pass
+                logger.info(
+                    f"🏁 [PUSH DRENAJE COMPLETADO] Lote extraído ({cantidad:,} registros) < {chunk_size:,}. "
+                    f"Revertido a listo_para_subir. Se preserva en SQLite local para producción continua."
+                )
+                break
+
             logger.info(
                 f"📦 [PUSH LOTE {lote_num}] Enviando chunk de {cantidad:,} registros a MySQL VPS..."
             )
@@ -103,14 +132,11 @@ class SincronizarPushNocturnoUseCase:
 
                 # Pausa cooperativa Round-Robin: ceder turno a otras PCs en la red
                 if roundrobin_pause > 0:
-                    logger.info(
-                        f"⏸️ [ROUND-ROBIN] Pausa cooperativa de {roundrobin_pause}s para ceder turno a otras PCs en red..."
-                    )
                     dormido = 0.0
                     while dormido < roundrobin_pause:
                         if should_stop and should_stop():
                             break
-                        step = min(0.5, roundrobin_pause - dormido)
+                        step = min(0.2, roundrobin_pause - dormido)
                         time.sleep(step)
                         dormido += step
 
@@ -130,15 +156,15 @@ class SincronizarPushNocturnoUseCase:
                     "interrumpido_por_ventana": interrumpido_por_ventana
                 }
 
-        # Barrido Final (Sweep) para capturar cualquier registro finalizado durante la subida
+        # Barrido Final (Sweep) únicamente para subidas forzadas o permisivas de remanentes
         remanentes_sweep = 0
-        if sweep_wait_sec > 0 and not interrumpido_por_ventana and not (should_stop and should_stop()):
+        if not exigir_lote_completo and sweep_wait_sec > 0 and not interrumpido_por_ventana and not (should_stop and should_stop()):
             logger.info(f"⏳ [PUSH SWEEP] Esperando {sweep_wait_sec}s para barrido final de remanentes...")
             dormido_sweep = 0.0
             while dormido_sweep < sweep_wait_sec:
                 if should_stop and should_stop():
                     break
-                step = min(0.5, sweep_wait_sec - dormido_sweep)
+                step = min(0.2, sweep_wait_sec - dormido_sweep)
                 time.sleep(step)
                 dormido_sweep += step
 
@@ -173,7 +199,7 @@ class SincronizarPushNocturnoUseCase:
 
         duracion = round(time.time() - t0, 2)
         logger.info(
-            f"🏁 [PUSH NOCTURNO COMPLETADO] Total sincronizados: {total_subidos:,} en {lotes_procesados} transacciones. "
+            f"🏁 [PUSH COMPLETADO] Total sincronizados: {total_subidos:,} en {lotes_procesados} transacciones. "
             f"Remanentes sweep: {remanentes_sweep:,} | Purgados > {dias_retencion}d: {purgados:,} | Tiempo: {duracion}s."
             f"{' (Interrumpido por fin de ventana)' if interrumpido_por_ventana else ''}"
         )
@@ -187,4 +213,9 @@ class SincronizarPushNocturnoUseCase:
             "duracion_segundos": duracion,
             "interrumpido_por_ventana": interrumpido_por_ventana
         }
+
+
+# Alias de dominio para estandarización en todos los scrapers
+SincronizarPushUseCase = SincronizarPushNocturnoUseCase
+
 

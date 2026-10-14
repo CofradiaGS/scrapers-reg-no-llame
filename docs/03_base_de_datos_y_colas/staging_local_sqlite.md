@@ -2,7 +2,7 @@
 
 > **Capa 03: Base de Datos y Colas** | Arquitectura Hexagonal y Persistencia Desacoplada
 
-El adaptador [`SQLiteStagingAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py) implementa los puertos [`IColaRepositorioPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py) e [`ISyncLocalRepoPort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/sync_port.py), permitiendo la ejecución continua de workers en disco local SSD sin generar I/O continuo sobre el VPS central ni saturar los logs binarios (*binlogs*) de MySQL.
+El adaptador [`SQLiteStagingAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py) implementa los puertos [`IColaRepositorioPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/queue_port.py) e [`ISyncLocalRepoPort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/sync_port.py), permitiendo la ejecución continua de workers en disco local SSD sin generar I/O continuo sobre el VPS central ni saturar los logs binarios (*binlogs*) de MySQL.
 
 ---
 
@@ -85,7 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 
 ---
 
-## 4. Métodos Principales de [`SQLiteStagingAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py)
+## 4. Métodos Principales de [`SQLiteStagingAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py)
 
 | Método | Parámetros | Retorno | Propósito Hexagonal |
 |---|---|---|---|

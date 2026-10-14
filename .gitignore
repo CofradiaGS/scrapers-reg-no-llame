@@ -114,6 +114,8 @@ downloads/
 *.db-shm
 cuitonline_cache.*
 datuar_cache.*
+staging_local.*
+node_agent.*
 
 # ------------------------------------------------------------------------------
 # 8. EXPORTACIONES, DUMPS Y PAYLOADS CON DATOS PERSONALES
@@ -133,6 +135,23 @@ test_*.json
 *.sql
 lineas_*.txt
 registros_*.txt
+ultimos_procesados.json
+coincidencias_*.json
+coincidencias_*.md
+
+# Archivos comprimidos, volcados y descargas masivas
+*.zip
+*.tar
+*.gz
+*.7z
+*.rar
+drive-download-*
+drive-download-*/
+
+# Reportes generados, análisis e informes PDF/HTML locales
+*.pdf
+*.html
+!docs/**/*.html
 
 # ------------------------------------------------------------------------------
 # 9. DATOS DE TRABAJO Y ENACOM

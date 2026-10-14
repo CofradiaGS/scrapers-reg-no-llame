@@ -1,12 +1,12 @@
 # Estrategia de Índices y Rendimiento en MySQL 8
 
-Este documento técnico analiza el diseño físico de la base de datos, el impacto de los índices compuestos B-Tree sobre las consultas del adaptador [`MySQLQueueAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36-L358), la estructura de ejecución (`EXPLAIN`) y las consideraciones de particionamiento sobre la tabla `queue_registro_no_llame`.
+Este documento técnico analiza el diseño físico de la base de datos, el impacto de los índices compuestos B-Tree sobre las consultas del adaptador [`MySQLQueueAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L36-L358), la estructura de ejecución (`EXPLAIN`) y las consideraciones de particionamiento sobre la tabla `queue_registro_no_llame`.
 
 ---
 
 ## 1. Índice Compuesto Crítico: `idx_scraper_estado_ani_id`
 
-La consulta nuclear de reclamo ejecutada por [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L102-L111) es:
+La consulta nuclear de reclamo ejecutada por [`MySQLQueueAdapter.reservar_lote`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L102-L111) es:
 
 ```sql
 SELECT id, ani, estado, scraper_actual, fuente, datos_json
@@ -66,7 +66,7 @@ graph TD
 
 ## 3. Índice para el Centinela Watchdog Sweeper
 
-La rutina [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L325) ejecuta:
+La rutina [`MySQLQueueAdapter.liberar_huerfanos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L288-L325) ejecuta:
 
 ```sql
 UPDATE `queue_registro_no_llame`
@@ -121,7 +121,7 @@ PARTITION BY RANGE (ani) (
 );
 ```
 
-**Ventaja**: Coincide exactamente con la segmentación por cascada de prioridades del software ([`PRIORIDADES_CONFIG`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34)). MySQL realiza **Partition Pruning**, abriendo y bloqueando únicamente los archivos de datos de la partición consultada.
+**Ventaja**: Coincide exactamente con la segmentación por cascada de prioridades del software ([`PRIORIDADES_CONFIG`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34)). MySQL realiza **Partition Pruning**, abriendo y bloqueando únicamente los archivos de datos de la partición consultada.
 
 ### Esquema B: Particionamiento por Lista sobre `estado` (Poco eficiente)
 Separar registros activos (`pendiente`, `procesando`) de los inactivos (`completado`, `no_coincidencia`).
@@ -135,7 +135,7 @@ Separar registros activos (`pendiente`, `procesando`) de los inactivos (`complet
 En la auditoría del VPS de producción se constató que el optimizador de costos de MySQL 8 tendía a seleccionar erróneamente `idx_estado` (debido a su menor costo aparente por cardinalidad global) en lugar de `idx_scraper_estado`. Como consecuencia, examinaba más de **1.600.000 filas** para resolver el micro-lote de 15 registros.
 
 ### Solución Implementada
-En [`adapters/queue/mysql_vps_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L115-L130), la consulta de selección fue enriquecida con la directiva explícita:
+En [`adapters/queue/mysql_vps_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L115-L130), la consulta de selección fue enriquecida con la directiva explícita:
 
 ```sql
 SELECT id, ani, estado, scraper_actual, fuente, datos_json

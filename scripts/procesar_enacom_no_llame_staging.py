@@ -364,17 +364,17 @@ def procesar_registro_robusto(
 def push_a_vps(push_uc: SincronizarPushNocturnoUseCase, forzar: bool = False) -> int:
     """
     Sube al VPS utilizando el semáforo distribuido estándar MySQL (GET_LOCK/RELEASE_LOCK)
-    en chunks de hasta 5.000 registros, subiendo también los remanentes menores a 5.000 sin esperar.
+    en chunks de hasta 5.000 registros.
 
     REGLA ESTRICTA DE HORARIO:
-    La subida masiva al VPS ÚNICAMENTE se ejecuta dentro de la ventana nocturna oficial (00:00 a 08:00 hs).
-    Fuera de ese horario, los registros procesados se acumulan de forma segura en SQLite local (staging_local.db).
+    La subida masiva al VPS se ejecuta en la ventana habilitada (00:00 a 21:00 hs en horario de Argentina).
+    Durante la veda (21:00 a 00:00 hs), los registros procesados se acumulan de forma segura en SQLite local (staging_local.db).
     """
     if not forzar and not config.esta_en_ventana_push():
         from datetime import datetime
         hora_act = datetime.now().strftime("%H:%M:%S")
         logger.info(
-            f"🌙 [VENTANA PUSH CERRADA ({hora_act})] Fuera de ventana nocturna (00:00 a 08:00 hs). "
+            f"🌙 [VENTANA PUSH CERRADA ({hora_act})] Fuera de ventana operativa (Veda 21:00 a 00:00 hs). "
             f"Los registros confirmados permanecen seguros en SQLite local (data/staging_local.db)."
         )
         return 0
@@ -383,7 +383,7 @@ def push_a_vps(push_uc: SincronizarPushNocturnoUseCase, forzar: bool = False) ->
         if stop_requested.is_set():
             return True
         if not forzar and not config.esta_en_ventana_push():
-            logger.info("⏰ [FIN DE VENTANA 08:00 hs] Interrumpiendo push nocturno. Remanentes para el próximo ciclo.")
+            logger.info("⏰ [INICIO DE VEDA 21:00 hs] Interrumpiendo push al VPS. Remanentes para el próximo ciclo.")
             return True
         return False
 

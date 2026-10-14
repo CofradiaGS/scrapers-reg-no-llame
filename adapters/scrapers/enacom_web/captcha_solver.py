@@ -12,16 +12,31 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional
 import numpy as np
-import cv2
-import winsdk.windows.media.ocr as win_ocr
-import winsdk.windows.graphics.imaging as win_imaging
-import winsdk.windows.storage as win_storage
+
+try:
+    import cv2
+except (ImportError, ModuleNotFoundError):
+    cv2 = None
+
+try:
+    import winsdk.windows.media.ocr as win_ocr
+    import winsdk.windows.graphics.imaging as win_imaging
+    import winsdk.windows.storage as win_storage
+except (ImportError, ModuleNotFoundError):
+    win_ocr = None
+    win_imaging = None
+    win_storage = None
 
 
 class EnacomCaptchaSolver:
     """Extractor y resolutor OCR para los captchas alfanuméricos de ENACOM."""
 
     def __init__(self):
+        if cv2 is None or win_ocr is None:
+            raise RuntimeError(
+                "EnacomCaptchaSolver requiere 'opencv-python' y 'winsdk'. "
+                "Instálelas con: pip install opencv-python winsdk"
+            )
         self._executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="EnacomOCR")
 
     def clean_image_bytes(self, img_bytes: bytes) -> np.ndarray:
