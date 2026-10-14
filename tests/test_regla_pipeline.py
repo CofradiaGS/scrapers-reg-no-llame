@@ -513,6 +513,34 @@ class TestReglaPipeline(unittest.TestCase):
         self.assertEqual(sig_sc7, "finalizado", "BCRA finaliza el pipeline")
         self.assertEqual(sig_st7, EstadoRegistro.COMPLETADO.value)
 
+    def test_cola_automatizacion_telcos_es_terminal_con_dni(self):
+        """En cola_automatizacion, Telcos con DNI debe finalizar (no derivar a Datuar) para entrar al push de 5.000."""
+        self.assertEqual(ReglaPipeline.resolver_cadena("cola_automatizacion"), ["telcos", "claro", "personal", "movistar"])
+        self.assertIsNone(ReglaPipeline.resolver_cadena("registro_no_llame"))
+        self.assertEqual(ReglaPipeline.resolver_cadena("cola_automatizacion", ["iris", "telcos"]), ["iris", "telcos"])
+
+        for status, estado_esperado in (
+            (StatusScraping.SIN_COINCIDENCIA, EstadoRegistro.NO_COINCIDENCIA.value),
+            (StatusScraping.COINCIDENCIA, EstadoRegistro.COMPLETADO.value),
+        ):
+            res = ScrapeResult(ani="1122334455", status=status, fuente_scraper="telcos")
+            sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+                scraper_actual="telcos",
+                resultado=res,
+                cadena=ReglaPipeline.resolver_cadena("cola_automatizacion"),
+                dni_disponible=True,
+                fuentes_previas=["ce_bases_produccion"]
+            )
+            self.assertEqual(sig_sc, "finalizado")
+            self.assertEqual(sig_st, estado_esperado)
+
+        # Con la cadena default (registro_no_llame) sí deriva a Datuar
+        res_sc = ScrapeResult(ani="1122334455", status=StatusScraping.SIN_COINCIDENCIA, fuente_scraper="telcos")
+        sig_def, _ = ReglaPipeline.resolver_siguiente_etapa(
+            scraper_actual="telcos", resultado=res_sc, cadena=None, dni_disponible=True, fuentes_previas=["iris"]
+        )
+        self.assertEqual(sig_def, "datuar")
+
 if __name__ == "__main__":
     unittest.main()
 

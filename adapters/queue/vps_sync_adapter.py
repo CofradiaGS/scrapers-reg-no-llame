@@ -117,8 +117,16 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 query_find = """
                     SELECT id, numero_de_linea, dni, auto_id, target_pc, payload, prioridad
                     FROM cola_automatizacion
-                    WHERE estado = 'pendiente' AND auto_id = %s
+                    WHERE auto_id = %s
                       AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
+                      AND (
+                          estado = 'pendiente'
+                          OR (
+                              estado = 'en_proceso'
+                              AND (resultado IS NULL OR resultado = '')
+                              AND fecha_inicio < NOW() - INTERVAL 45 MINUTE
+                          )
+                      )
                     ORDER BY (target_pc IS NOT NULL AND target_pc != '') DESC,
                              prioridad ASC,
                              dias_desde_ultimo_cambio ASC,
@@ -179,13 +187,20 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     cursor.execute(query_find, (limit,))
                     filas = cursor.fetchall()
                 elif s_nombre in ("telcos", "telco", "telco_cascade"):
+                    cond_lease = """
+                        (estado = 'pendiente' OR (
+                            estado = 'procesando'
+                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{}')
+                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL 45 MINUTE)
+                        ))
+                    """
                     # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
                     # Solo si no cubren el limit, completar con registros sin DNI (Personal + Movistar).
                     query_con_dni = f"""
                         SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
                         FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
                         WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
-                          AND estado = 'pendiente'
+                          AND {cond_lease}
                           AND (dni IS NOT NULL AND dni != '')
                         ORDER BY id ASC
                         LIMIT %s
@@ -199,7 +214,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                             SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
                             FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
                             WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
-                              AND estado = 'pendiente'
+                              AND {cond_lease}
                               AND (dni IS NULL OR dni = '')
                             ORDER BY id ASC
                             LIMIT %s
@@ -208,10 +223,18 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         cursor.execute(query_sin_dni, (remanente,))
                         filas.extend(cursor.fetchall())
                 else:
+                    cond_lease = """
+                        (estado = 'pendiente' OR (
+                            estado = 'procesando'
+                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{}')
+                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL 45 MINUTE)
+                        ))
+                    """
+                    cond_iris = "AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')" if "iris" in s_nombre.lower() else ""
                     query_find = f"""
                         SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
                         FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
-                        WHERE scraper_actual = %s AND estado = 'pendiente'
+                        WHERE scraper_actual = %s AND {cond_lease} {cond_iris}
                         ORDER BY id ASC
                         LIMIT %s
                         FOR UPDATE SKIP LOCKED;
@@ -675,5 +698,109 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     conn.close()
                 except Exception:
                     pass
+
+    def liberar_huerfanos_vps(
+        self,
+        tipo_cola: str,
+        minutos_inactividad: int = 30,
+        auto_id: Optional[str] = None,
+        pc_id: Optional[str] = None,
+        scraper_actual: Optional[str] = None
+    ) -> int:
+        """
+        Recupera registros colgados en 'en_proceso' (cola_automatizacion) o 'procesando' (queue_registro_no_llame)
+        sin resultado en el VPS central, devolviéndolos atómicamente a 'pendiente'.
+        Utiliza un Mutex Distribuido (GET_LOCK) para prevenir condiciones de carrera entre nodos concurrentes.
+        Retorna la cantidad de registros rescatados.
+        """
+        tipo_cola_clean = (tipo_cola or "cola_automatizacion").lower().strip()
+        conn = None
+        cursor = None
+        lock_adquirido = False
+        target_auto_id = auto_id or getattr(config, "COLA_AUTO_ID", "telco_scraper")
+        target_pc_id = pc_id or getattr(config, "WORKER_PC_ID", "PC-00")
+        s_nombre = scraper_actual or ("telcos" if tipo_cola_clean == "cola_automatizacion" else "iris")
+        lock_name = f"vps_sweeper_mutex_{tipo_cola_clean}_{target_auto_id if tipo_cola_clean == 'cola_automatizacion' else s_nombre}"
+
+        try:
+            conn = self._get_connection(tipo_cola=tipo_cola_clean)
+            cursor = conn.cursor(buffered=True)
+
+            # Mutex Distribuido con timeout 0s (no-wait): si otro nodo está barriendo, saltear sin esperar
+            cursor.execute("SELECT GET_LOCK(%s, 0)", (lock_name,))
+            row = cursor.fetchone()
+            if not row or (isinstance(row, (list, tuple)) and row[0] != 1) or (isinstance(row, dict) and list(row.values())[0] != 1):
+                logger.debug(f"Watchdog VPS ({tipo_cola_clean}): Mutex '{lock_name}' ya adquirido por otro nodo. Omitiendo barrido.")
+                return 0
+
+            lock_adquirido = True
+            liberados = 0
+
+            if tipo_cola_clean == "cola_automatizacion":
+                query = """
+                    UPDATE cola_automatizacion
+                    SET estado = 'pendiente',
+                        instance_id = NULL
+                    WHERE estado = 'en_proceso'
+                      AND auto_id = %s
+                      AND (resultado IS NULL OR resultado = '')
+                      AND (
+                          (target_pc = %s AND fecha_inicio < NOW() - INTERVAL %s MINUTE)
+                          OR fecha_inicio < NOW() - INTERVAL %s MINUTE
+                      )
+                """
+                # Para la máquina actual usamos minutos_inactividad (ej. 15-30m), para cualquier otra máquina 60m
+                cursor.execute(query, (target_auto_id, target_pc_id, minutos_inactividad, max(minutos_inactividad * 2, 60)))
+                conn.commit()
+                liberados = cursor.rowcount
+            else:
+                # queue_registro_no_llame
+                if s_nombre in ("telcos", "telco", "telco_cascade", "claro", "personal", "movistar"):
+                    scrapers_filter = "('telcos', 'claro', 'personal', 'movistar')"
+                else:
+                    scrapers_filter = f"('{s_nombre}')"
+
+                query = f"""
+                    UPDATE {config.VPS_DB_TABLE}
+                    SET estado = 'pendiente'
+                    WHERE estado = 'procesando'
+                      AND scraper_actual IN {scrapers_filter}
+                      AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
+                      AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL %s MINUTE)
+                """
+                cursor.execute(query, (minutos_inactividad,))
+                conn.commit()
+                liberados = cursor.rowcount
+
+            if liberados > 0:
+                logger.info(f"🧹 [WATCHDOG VPS] Rescatados {liberados:,} registros huérfanos a estado 'pendiente' en VPS ({tipo_cola_clean}).")
+            return liberados
+
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.error(f"❌ Error en barrido de huérfanos VPS ({tipo_cola_clean}): {e}")
+            return 0
+        finally:
+            if lock_adquirido and cursor:
+                try:
+                    cursor.execute("SELECT RELEASE_LOCK(%s)", (lock_name,))
+                    cursor.fetchone()
+                except Exception:
+                    pass
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
 
 

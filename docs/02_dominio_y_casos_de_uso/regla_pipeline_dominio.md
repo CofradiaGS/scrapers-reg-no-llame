@@ -1,6 +1,6 @@
 # Regla de Dominio del Pipeline: Lógica Condicional, Ventana Temporal de 7 Días y Cortocircuito
 
-La clase [`ReglaPipeline`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
+La clase [`ReglaPipeline`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L146-L300) encapsula una de las reglas de negocio más críticas del sistema: **determinar de forma determinista y pura cuál es el siguiente destino de una línea telefónica en la base de datos y validar la elegibilidad para el modelo de piscina autónoma distribuida (Multi-PC)**.
 
 Al residir en el núcleo de dominio, esta lógica no depende de procedimientos almacenados (*stored procedures*), disparadores (*triggers*) de SQL ni condicionales dispersos en los controladores de la interfaz o en los hilos del supervisor.
 
@@ -472,21 +472,42 @@ Supongamos una línea que ingresa sin DNI previo y no registra Port Out en IRIS:
 
 ---
 
-## 4. Inyección de Cadenas Personalizadas
+## 4. Inyección de Cadenas Personalizadas y Cadena Especial de Cola Automatización
 
-Aunque la constante de clase `CADENA_DEFAULT = ["iris", "claro", "personal", "movistar", "datuar", "cuitonline"]` rige el comportamiento estándar, el método admite inyectar cualquier lista arbitraria a través del argumento `cadena: Optional[List[str]] = None`.
+Aunque la constante de clase `CADENA_DEFAULT = ["iris", "telcos", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]` rige el comportamiento estándar en `registro_no_llame`, el método admite inyectar cualquier lista arbitraria a través del argumento `cadena: Optional[List[str]] = None`.
+
+### 4.1. Cadena de Cola Automatización (`CADENA_COLA_AUTOMATIZACION`)
+
+Para la cola `cola_automatizacion` (utilizada en bases de Cobro Express y operaciones comerciales), el bloque de operadoras de telefonía es la etapa terminal del flujo:
+```python
+CADENA_COLA_AUTOMATIZACION = ["telcos", "claro", "personal", "movistar"]
+```
+
+Debido a que la tabla `cola_automatizacion` en el VPS central no posee columna `scraper_actual` ni consumidor posterior de identidad (Datuar / BCRA), las líneas consultadas por Telcos finalizan inmediatamente tras la cascada y quedan en `estado_local = 'listo_para_subir'`, permitiendo que el hilo centinela de sincronización las suba de forma atómica en bloques de 5.000 mediante el semáforo distribuido.
+
+El método de fábrica `ReglaPipeline.resolver_cadena(tipo_cola, cadena)` determina automáticamente la cadena a aplicar:
+```python
+@classmethod
+def resolver_cadena(cls, tipo_cola: Optional[str], cadena: Optional[List[str]] = None) -> Optional[List[str]]:
+    if cadena:
+        return list(cadena)
+    if str(tipo_cola or "").lower().strip() == "cola_automatizacion":
+        return list(cls.CADENA_COLA_AUTOMATIZACION)
+    return None
+```
 
 Esto permite escenarios operativos avanzados, tales como:
 - Pipelines de identidad primero: `cadena=["iris", "datuar", "cuitonline", "claro", "personal", "movistar"]`.
 - Pipelines de telcos directas: `cadena=["claro", "personal", "movistar"]`.
 - Pipelines exclusivos de enriquecimiento fiscal: `cadena=["datuar", "cuitonline"]`.
+- Pipelines de Cobro Express (`cola_automatizacion`): `cadena=["telcos", "claro", "personal", "movistar"]`.
 
 ---
 
 ## 5. Referencias Cruzadas
-- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
-- [Caso de Uso: Procesar Lote](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Entidades y Value Objects de Dominio](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Pipeline en Cascada y Cortocircuito](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/01_arquitectura/pipeline_cascada.md)
+- [Caso de Uso: Procesar Lote](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Entidades y Value Objects de Dominio](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Guía Scraper CuitOnline](../05_guia_nuevos_scrapers/guia_creacion_cuitonline.md)
 - [Guía Scraper Datuar](../05_guia_nuevos_scrapers/guia_creacion_datuar.md)
 - [Guía Scraper Claro](../05_guia_nuevos_scrapers/guia_creacion_claro.md)

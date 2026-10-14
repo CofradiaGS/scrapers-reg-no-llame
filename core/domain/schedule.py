@@ -147,3 +147,112 @@ class PoliticaHorarioComercial:
             "proxima_apertura": prox_apertura.strftime("%Y-%m-%d %H:%M:%S %Z") if prox_apertura else None,
             "descripcion": desc
         }
+
+
+class PoliticaVentanaPush:
+    """
+    Política de dominio que gobierna la ventana horaria y cadencia de subida al VPS.
+
+    Reglas de negocio transversales para todos los scrapers:
+    1. Ventana Operativa: Subida permitida a cualquier hora EXCEPTO en la ventana de veda
+       de 21:00 a 00:00 hs (Horario de Argentina / America/Argentina/Buenos_Aires).
+       - Habilitado: 00:00:00 a 20:59:59 hs.
+       - Veda / Prohibido: 21:00:00 a 23:59:59 hs.
+    2. Cadencia por Lote Completo: La subida se dispara cuando se completa un lote de 5.000
+       registros (o múltiplos de 5.000).
+    3. Drenaje Continuo Sin Polling: Si hay >= 5.000 registros listos (ej. 155k pendientes),
+       se suben de forma consecutiva en ciclos de 5.000 sin pausas de sondeo ni bloqueos,
+       hasta que el remanente sea menor a 5.000 (< 5.000).
+    4. Protección de Producción: Los remanentes menores a 5.000 permanecen en el staging
+       local para que los scrapers sigan procesando sin detenerse.
+    """
+
+    def __init__(
+        self,
+        hora_veda_inicio: int = 21,
+        hora_veda_fin: int = 0,
+        chunk_size: int = 5000,
+        timezone_name: str = "America/Argentina/Buenos_Aires"
+    ):
+        self.hora_veda_inicio = hora_veda_inicio
+        self.hora_veda_fin = hora_veda_fin
+        self.chunk_size = chunk_size
+        self.timezone_name = timezone_name
+        self.tz = self._resolver_timezone(timezone_name)
+
+    def _resolver_timezone(self, tz_name: str):
+        try:
+            return zoneinfo.ZoneInfo(tz_name)
+        except Exception:
+            # Fallback seguro para Argentina (UTC-3)
+            return timezone(timedelta(hours=-3))
+
+    def ahora(self, dt: Optional[datetime] = None) -> datetime:
+        """Obtiene la fecha y hora actual en la zona horaria del negocio."""
+        if dt is None:
+            return datetime.now(self.tz)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=self.tz)
+        return dt.astimezone(self.tz)
+
+    def esta_en_ventana(self, dt: Optional[datetime] = None) -> bool:
+        """
+        Determina si el momento dado (o actual) está dentro de la ventana habilitada para subir al VPS.
+        Habilitado: 00:00 a 21:00 hs (hora < 21).
+        Veda: 21:00 a 00:00 hs (hora >= 21).
+        """
+        ahora_tz = self.ahora(dt)
+        hora = ahora_tz.hour
+        # Veda de 21:00 a 00:00 hs
+        if self.hora_veda_inicio <= hora < 24:
+            return False
+        return True
+
+    def debe_subir(self, listos_para_subir: int, dt: Optional[datetime] = None, forzar: bool = False) -> bool:
+        """
+        Determina si se debe disparar la subida al VPS:
+        - Si es forzado: True siempre que haya al menos 1 registro.
+        - En operación estándar: True si está en ventana habilitada Y hay al menos chunk_size (5.000) registros.
+        """
+        if forzar:
+            return listos_para_subir > 0
+        return self.esta_en_ventana(dt) and listos_para_subir >= self.chunk_size
+
+    def calcular_lotes_a_subir(self, listos_para_subir: int, forzar: bool = False) -> int:
+        """
+        Calcula la cantidad de lotes completos de 5.000 a subir.
+        Si es forzado y queda un remanente < 5.000, incluye 1 lote adicional para el remanente.
+        """
+        if listos_para_subir <= 0:
+            return 0
+        lotes_completos = listos_para_subir // self.chunk_size
+        remanente = listos_para_subir % self.chunk_size
+        if forzar and remanente > 0:
+            return lotes_completos + 1
+        return lotes_completos
+
+    def obtener_estado(self, listos_para_subir: int = 0, dt: Optional[datetime] = None) -> Dict[str, Any]:
+        """Devuelve un resumen estructurado del estado de subida."""
+        ahora_tz = self.ahora(dt)
+        en_ventana = self.esta_en_ventana(ahora_tz)
+        lotes = self.calcular_lotes_a_subir(listos_para_subir, forzar=False)
+        remanente = listos_para_subir % self.chunk_size if listos_para_subir >= self.chunk_size else listos_para_subir
+        
+        if not en_ventana:
+            desc = "PAUSADO (Veda nocturna 21:00 a 00:00 hs activa. Subida al VPS en pausa)."
+        elif listos_para_subir >= self.chunk_size:
+            desc = f"LISTO PARA SUBIR ({listos_para_subir:,} registros = {lotes} lotes de {self.chunk_size:,} + {remanente:,} remanentes)."
+        else:
+            desc = f"ACUMULANDO ({listos_para_subir:,}/{self.chunk_size:,} registros para el próximo lote completo)."
+
+        return {
+            "en_ventana": en_ventana,
+            "ahora": ahora_tz.strftime("%Y-%m-%d %H:%M:%S %Z"),
+            "hora": ahora_tz.hour,
+            "listos_para_subir": listos_para_subir,
+            "chunk_size": self.chunk_size,
+            "lotes_a_subir": lotes,
+            "remanente": remanente,
+            "descripcion": desc
+        }
+

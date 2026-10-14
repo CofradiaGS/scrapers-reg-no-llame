@@ -1,12 +1,12 @@
 # Demonio de Windows y Bucle Permanente (`run_daemon.bat`)
 
-El archivo [run_daemon.bat](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_daemon.bat) implementa el **demonio de arranque y supervisión en segundo plano para sistemas Windows**, diseñado para operar 24 horas al día, 7 días a la semana sin requerir intervención humana constante.
+El archivo [run_daemon.bat](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/run_daemon.bat) implementa el **demonio de arranque y supervisión en segundo plano para sistemas Windows**, diseñado para operar 24 horas al día, 7 días a la semana sin requerir intervención humana constante.
 
 ---
 
 ## 1. Arquitectura y Ciclo de Vida del Demonio
 
-El script encapsula la ejecución de [supervisor_vps.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) dentro de un bucle de control de procesos (*watchdog loop*) que evalúa el código de salida de Python (`%ERRORLEVEL%`).
+El script encapsula la ejecución de [supervisor_vps.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) dentro de un bucle de control de procesos (*watchdog loop*) que evalúa el código de salida de Python (`%ERRORLEVEL%`).
 
 ```mermaid
 stateDiagram-v2
@@ -36,7 +36,7 @@ stateDiagram-v2
 
 ## 2. Análisis Línea por Línea del Código Batch
 
-A continuación se detalla la configuración y directivas de [run_daemon.bat](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/run_daemon.bat):
+A continuación se detalla la configuración y directivas de [run_daemon.bat](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/run_daemon.bat):
 
 ### 2.1. Inicialización del Entorno de Consola
 ```cmd
@@ -81,7 +81,7 @@ goto RUN_LOOP
 
 ## 3. Configuración de Variables de Entorno (`.env` y `config.py`)
 
-El demonio y los subprocesos leen su configuración operativa centralizada desde el archivo [.env](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/.env) a través del cargador [config.py](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/config.py):
+El demonio y los subprocesos leen su configuración operativa centralizada desde el archivo [.env](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/.env) a través del cargador [config.py](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/config.py):
 
 | Variable | Tipo | Valor Predeterminado | Uso en el Sistema |
 | :--- | :---: | :---: | :--- |

@@ -110,6 +110,8 @@ class ProcesarLoteUseCase:
             try:
                 # 2. Consultar a través del puerto de scraper
                 linea_consulta = Linea(ani=reg.linea.ani, dni=reg.linea.dni or getattr(reg, 'dni', None))
+                # Cadena efectiva según la cola (cola_automatizacion => Telcos terminal)
+                cadena_efectiva = ReglaPipeline.resolver_cadena(getattr(reg, "tipo_cola", None), self.cadena)
 
                 # Parsear datos_json previos
                 if isinstance(reg.datos_existentes, dict):
@@ -178,7 +180,7 @@ class ProcesarLoteUseCase:
                         sig_scraper, sig_estado = ReglaPipeline.resolver_siguiente_etapa(
                             scraper_actual=self.scraper.nombre,
                             resultado=resultado_salteado,
-                            cadena=self.cadena,
+                            cadena=cadena_efectiva,
                             dni_disponible=dni_activo,
                             fuentes_previas=fuentes_previas_list,
                             coincidencia_telco_previa=coincidencia_telco_previa,
@@ -225,7 +227,7 @@ class ProcesarLoteUseCase:
                 sig_scraper, sig_estado = ReglaPipeline.resolver_siguiente_etapa(
                     scraper_actual=self.scraper.nombre,
                     resultado=resultado,
-                    cadena=self.cadena,
+                    cadena=cadena_efectiva,
                     dni_disponible=dni_activo,
                     fuentes_previas=fuentes_previas_list,
                     coincidencia_telco_previa=coincidencia_telco_previa,

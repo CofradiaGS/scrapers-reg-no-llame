@@ -39,6 +39,23 @@ class ISyncRemoteRepoPort(ABC):
         """
         pass
 
+    @abstractmethod
+    def liberar_huerfanos_vps(
+        self,
+        tipo_cola: str,
+        minutos_inactividad: int = 30,
+        auto_id: Optional[str] = None,
+        pc_id: Optional[str] = None,
+        scraper_actual: Optional[str] = None
+    ) -> int:
+        """
+        Recupera registros colgados en 'en_proceso' (cola_automatizacion) o 'procesando' (queue_registro_no_llame)
+        sin resultado en el VPS central, devolviéndolos atómicamente a 'pendiente'.
+        Utiliza un Mutex Distribuido (GET_LOCK) para prevenir condiciones de carrera entre nodos concurrentes.
+        Retorna la cantidad de registros rescatados.
+        """
+        pass
+
 
 class ISyncLocalRepoPort(ABC):
     """Contrato abstracto para el almacén local de staging (SQLite WAL)."""

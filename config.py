@@ -6,8 +6,14 @@ from dotenv import load_dotenv
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
+# Credenciales de Acceso IRIS (Movistar BPM)
 IRIS_USER = os.getenv("IRIS_USER", "enorozco")
 IRIS_PASS = os.getenv("IRIS_PASS", "TucaChorron2026.")
+# Credenciales específicas por cola
+IRIS_REG_NO_LLAME_USER = os.getenv("IRIS_REG_NO_LLAME_USER", "enorozco")
+IRIS_REG_NO_LLAME_PASS = os.getenv("IRIS_REG_NO_LLAME_PASS", "TucaChorron2026.")
+IRIS_COLA_AUTO_USER = os.getenv("IRIS_COLA_AUTO_USER", "emartina")
+IRIS_COLA_AUTO_PASS = os.getenv("IRIS_COLA_AUTO_PASS", "Inicio-2026")
 IRIS_LOGIN_URL = os.getenv("IRIS_LOGIN_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/security/login.xhtml")
 IRIS_LOGOUT_URL = os.getenv("IRIS_LOGOUT_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/security/logout.xhtml")
 IRIS_WORKSPACE_URL = os.getenv("IRIS_WORKSPACE_URL", "http://iris.tmoviles.com.ar/workspace/faces/jsf/workspace/workspace.xhtml")
@@ -158,40 +164,44 @@ PROXY_POOL_VALIDATION_WORKERS = int(os.getenv("PROXY_POOL_VALIDATION_WORKERS", "
 PROXY_POOL_CACHE_FILE = os.getenv("PROXY_POOL_CACHE_FILE", os.path.join(os.getcwd(), "tor_data", "live_proxies.txt"))
 PROXY_POOL_REFRESH_INTERVAL = int(os.getenv("PROXY_POOL_REFRESH_INTERVAL", "600"))  # 10 min
 
-# Staging Local Offline-First (SQLite WAL) y Push Nocturno Masivo (00:00 a 08:00 hs)
+# Staging Local Offline-First (SQLite WAL) y Push al VPS
 LOCAL_STAGING_ENABLED = os.getenv("LOCAL_STAGING_ENABLED", "True").strip().lower() in ("true", "1", "yes")
 LOCAL_STAGING_DB_PATH = os.getenv("LOCAL_STAGING_DB_PATH", os.path.join(os.path.dirname(__file__), "data", "staging_local.db"))
 PULL_CHUNK_SIZE = int(os.getenv("PULL_CHUNK_SIZE", "5000"))
 LOW_WATERMARK_THRESHOLD = int(os.getenv("LOW_WATERMARK_THRESHOLD", "2000"))
 PULL_DAILY_LIMIT = int(os.getenv("PULL_DAILY_LIMIT", "50000"))
-SYNC_PUSH_WINDOW_START_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_START_HOUR", "0"))  # 00:00 hs
-SYNC_PUSH_WINDOW_END_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_END_HOUR", "8"))      # 08:00 hs
+
+# Ventana de Subida al VPS: Permitido a cualquier hora EXCEPTO Veda de 21:00 a 00:00 hs (Horario de Argentina)
+SYNC_PUSH_WINDOW_START_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_START_HOUR", "0"))   # 00:00 hs (Inicio ventana)
+SYNC_PUSH_WINDOW_END_HOUR = int(os.getenv("SYNC_PUSH_WINDOW_END_HOUR", "21"))     # 21:00 hs (Fin ventana / Inicio Veda)
+SYNC_PUSH_BLACKOUT_START_HOUR = int(os.getenv("SYNC_PUSH_BLACKOUT_START_HOUR", "21")) # 21:00 hs (Inicio Veda)
+SYNC_PUSH_BLACKOUT_END_HOUR = int(os.getenv("SYNC_PUSH_BLACKOUT_END_HOUR", "0"))       # 00:00 hs (Fin Veda)
 SYNC_PUSH_HOUR = SYNC_PUSH_WINDOW_START_HOUR  # Retrocompatibilidad
 SYNC_CHUNK_SIZE = int(os.getenv("SYNC_CHUNK_SIZE", "5000"))
 SYNC_SWEEP_WAIT_SEC = float(os.getenv("SYNC_SWEEP_WAIT_SEC", "10.0"))
 SYNC_RETENTION_DAYS = int(os.getenv("SYNC_RETENTION_DAYS", "7"))
-# Semáforo Distribuido para Push Nocturno (Round-Robin cooperativo entre PCs en red)
+# Semáforo Distribuido para Push (Round-Robin cooperativo entre PCs en red)
 SYNC_PUSH_SEMAPHORE_ENABLED = os.getenv("SYNC_PUSH_SEMAPHORE_ENABLED", "True").strip().lower() in ("true", "1", "yes")
 SYNC_PUSH_LOCK_NAME = os.getenv("SYNC_PUSH_LOCK_NAME", "vps_push_nocturno_semaphore")
 SYNC_PUSH_LOCK_TIMEOUT = int(os.getenv("SYNC_PUSH_LOCK_TIMEOUT", "600"))
-SYNC_PUSH_ROUNDROBIN_PAUSE_SEC = float(os.getenv("SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", "2.0"))
+SYNC_PUSH_ROUNDROBIN_PAUSE_SEC = float(os.getenv("SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", "0.5"))
 
 
 def esta_en_ventana_push(dt=None) -> bool:
     """
-    Verifica si el horario proporcionado (o datetime.now()) se encuentra
-    dentro de la ventana configurada para push nocturno masivo al VPS (00:00 a 08:00 hs por defecto).
+    Verifica si el horario proporcionado (o datetime.now()) en zona horaria de Argentina
+    (America/Argentina/Buenos_Aires) se encuentra habilitado para subir al VPS.
+    Habilitado: 00:00 a 20:59:59 hs.
+    Veda / Prohibido: 21:00 a 23:59:59 hs.
     """
-    from datetime import datetime
-    now = dt or datetime.now()
-    inicio = SYNC_PUSH_WINDOW_START_HOUR
-    fin = SYNC_PUSH_WINDOW_END_HOUR
-    if inicio < fin:
-        return inicio <= now.hour < fin
-    elif inicio > fin:
-        return now.hour >= inicio or now.hour < fin
-    else:
-        return True
+    from core.domain.schedule import PoliticaVentanaPush
+    politica = PoliticaVentanaPush(
+        hora_veda_inicio=SYNC_PUSH_WINDOW_END_HOUR,
+        hora_veda_fin=SYNC_PUSH_WINDOW_START_HOUR,
+        chunk_size=SYNC_CHUNK_SIZE,
+        timezone_name=getattr(config, "HORARIO_COMERCIAL_TIMEZONE", "America/Argentina/Buenos_Aires") if 'config' in globals() else HORARIO_COMERCIAL_TIMEZONE
+    )
+    return politica.esta_en_ventana(dt)
 
 
 

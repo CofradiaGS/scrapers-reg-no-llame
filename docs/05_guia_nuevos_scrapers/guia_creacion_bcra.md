@@ -1,8 +1,8 @@
 # Guía Técnica: Adaptador Scraper BCRA Central de Deudores (Situación Crediticia y Deuda Financiera)
 
 > **Capa 05: Extensibilidad y Scrapers Secundarios** | Especificación de Integración  
-> **Archivo Fuente Principal**: [`adapters/scrapers/bcra/bcra_adapter.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_adapter.py)  
-> **Cliente Auxiliar**: [`adapters/scrapers/bcra/bcra_client.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_client.py)  
+> **Archivo Fuente Principal**: [`adapters/scrapers/bcra/bcra_adapter.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_adapter.py)  
+> **Cliente Auxiliar**: [`adapters/scrapers/bcra/bcra_client.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_client.py)  
 > **Endpoint Oficial**: `https://api.bcra.gob.ar/centraldedeudores/v1.0/Deudas/{cuit}`
 
 ---
@@ -11,14 +11,14 @@
 
 El Banco Central de la República Argentina (BCRA) provee un servicio REST público y abierto (sin requerimiento de captcha) para auditar el historial de endeudamiento bancario y situación crediticia de personas humanas y jurídicas bajo el régimen de la Central de Deudores del Sistema Financiero.
 
-[`BcraAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_adapter.py) implementa el puerto [`IScraperEnginePort`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py) heredando de [`BaseScraperAdapter`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/base_scraper.py), incorporando blindajes industriales:
+[`BcraAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/bcra/bcra_adapter.py) implementa el puerto [`IScraperEnginePort`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py) heredando de [`BaseScraperAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/base_scraper.py), incorporando blindajes industriales:
 
 1. **Blindaje Criptográfico SSL SECLEVEL=1 (`BCRA_SSLAdapter`)**:
    - Resuelve incompatibilidades críticas de OpenSSL 3.0 en Windows/Linux que provocan cortes de conexión (`RemoteDisconnected` y `ConnectionResetError`) mediante un contexto SSL con ciphers `DEFAULT@SECLEVEL=1`.
 2. **Rate Limiting Global Coordinado (`BCRAGlobalRateLimiter`)**:
    - La API oficial posee un WAF perimetral estricto. Mantener un intervalo coordinado de `0.85s` entre peticiones concurrentes y aplicar un enfriamiento cooperativo de `3.5s` ante HTTP 429 garantiza un 100% de efectividad sin disparar bloqueos.
 3. **Resolución Inteligente DNI ➔ CUIT/CUIL**:
-   - Si la línea proviene con DNI de 7 u 8 dígitos, genera y consulta automáticamente los candidatos primario y secundario vía [`obtener_cuils_candidatos`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py).
+   - Si la línea proviene con DNI de 7 u 8 dígitos, genera y consulta automáticamente los candidatos primario y secundario vía [`obtener_cuils_candidatos`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py).
 4. **Normalización Monetaria Integral y Métrica de Cartera**:
    - Captura la totalidad del universo de deudas del sistema financiero expuestas por el BCRA, registrando tanto montos originales en miles (`deuda_total_miles`) como montos exactos en pesos argentinos ($ ARS reales = miles * 1000): `deuda_total_pesos`.
    - Consolida con precisión las métricas `cantidad_entidades` y `operaciones_en_cartera`.
@@ -70,11 +70,11 @@ sequenceDiagram
 Consulta deudas del sistema financiero por CUIT/CUIL de 11 dígitos o DNI inferido.
 
 * **Parámetros**:
-  * `linea` ([`Linea`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py)): Instancia que contiene `ani` y `dni`.
-* **Retorno** ([`ScrapeResult`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py)):
+  * `linea` ([`Linea`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py)): Instancia que contiene `ani` y `dni`.
+* **Retorno** ([`ScrapeResult`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py)):
   * `status`: `StatusScraping.COINCIDENCIA` o `StatusScraping.SIN_COINCIDENCIA`.
   * `fuente_scraper`: `'bcra'`.
-  * `titular`: [`Titular`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) con razón social y CUIT.
+  * `titular`: [`Titular`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) con razón social y CUIT.
   * `detalles` (`Dict[str, Any]`): Diccionario enriquecido con campos financieros canónicos:
 
 | Campo en `detalles` | Tipo | Descripción |

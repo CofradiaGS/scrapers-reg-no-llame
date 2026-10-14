@@ -167,6 +167,25 @@ class ReglaPipeline:
     TELCOS = ("claro", "personal", "movistar")
     REQUIEREN_DNI = ("claro", "datuar", "cuitonline", "bcra")
     CADENA_DEFAULT = ["iris", "telcos", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
+    # cola_automatizacion (Cobro Express): el bloque Telcos es la etapa terminal. El VPS no posee columna
+    # scraper_actual en esa tabla ni consumidor posterior (Datuar), por lo que toda línea procesada
+    # finaliza tras la cascada y queda 'listo_para_subir' para el push semaforizado en chunks de 5.000.
+    # Se incluyen las telcos individuales para preservar la posta Claro -> Personal -> Movistar.
+    CADENA_COLA_AUTOMATIZACION = ["telcos", "claro", "personal", "movistar"]
+
+    @classmethod
+    def resolver_cadena(cls, tipo_cola: Optional[str], cadena: Optional[List[str]] = None) -> Optional[List[str]]:
+        """
+        Devuelve la cadena efectiva según el tipo de cola.
+        - Si se inyectó una cadena explícita, se respeta.
+        - Si la cola es 'cola_automatizacion', se usa CADENA_COLA_AUTOMATIZACION (Telcos terminal).
+        - En cualquier otro caso retorna None (CADENA_DEFAULT).
+        """
+        if cadena:
+            return list(cadena)
+        if str(tipo_cola or "").lower().strip() == "cola_automatizacion":
+            return list(cls.CADENA_COLA_AUTOMATIZACION)
+        return None
 
     @classmethod
     def es_reciente(cls, fecha_str: Optional[str], max_dias: int = 7) -> bool:

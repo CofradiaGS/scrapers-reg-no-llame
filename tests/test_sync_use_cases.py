@@ -310,8 +310,127 @@ class TestSyncUseCases(unittest.TestCase):
         self.assertEqual(tareas[0]["scraper_actual"], "telcos")
         mock_conn.commit.assert_called_once()
 
+    def test_09_push_exigir_lote_completo_no_sube_remanentes_menores_a_5000(self):
+        """
+        Regla de negocio: si exigir_lote_completo=True, se suben lotes consecutivos
+        de a 5.000 mientras haya >= 5.000, y se detiene cuando el remanente sea < 5.000.
+        Para 12.340 registros: debe subir 2 lotes de 5.000 (10.000) y dejar 2.340 en SQLite.
+        """
+        total_filas = 12340
+        tareas = [{"id": i, "numero_de_linea": f"113300{i:05d}", "dni": "20112233"} for i in range(1, total_filas + 1)]
+        self.local_repo.insertar_tareas_descargadas(tareas)
+        self.local_repo.reservar_lote(batch_size=total_filas)
+        resultados = [{"id": i, "status": "coincidencia", "datos": {}} for i in range(1, total_filas + 1)]
+        self.local_repo.persistir_resultados(resultados)
+
+        self.assertEqual(self.local_repo.contar_listos_para_subir(), 12340)
+
+        use_case = SincronizarPushNocturnoUseCase(remote_repo=self.remote_mock, local_repo=self.local_repo)
+        res = use_case.ejecutar(
+            tipo_cola="cola_automatizacion",
+            chunk_size=5000,
+            sweep_wait_sec=0.0,
+            roundrobin_pause_sec=0.0,
+            exigir_lote_completo=True
+        )
+
+        self.assertTrue(res["exito"])
+        # Deben subirse exactamente 10.000 (2 chunks de 5.000)
+        self.assertEqual(res["total_subidos"], 10000)
+        self.assertEqual(res["lotes_procesados"], 2)
+        # Remanente menor a 5.000 (2.340) permanece en SQLite local para no parar la producción
+        self.assertEqual(self.local_repo.contar_listos_para_subir(), 2340)
+
+    def test_10_politica_ventana_push_dominio_argentina(self):
+        """Verifica la regla de dominio PoliticaVentanaPush (00:00 a 21:00 hs habilitado; 21:00 a 00:00 hs veda)."""
+        from datetime import datetime
+        from core.domain.schedule import PoliticaVentanaPush
+
+        politica = PoliticaVentanaPush(
+            hora_veda_inicio=21,
+            hora_veda_fin=0,
+            chunk_size=5000
+        )
+
+        # Ventana habilitada: 00:00, 10:30, 20:59:59
+        self.assertTrue(politica.esta_en_ventana(datetime(2026, 10, 14, 0, 0, 0)))
+        self.assertTrue(politica.esta_en_ventana(datetime(2026, 10, 14, 10, 30, 0)))
+        self.assertTrue(politica.esta_en_ventana(datetime(2026, 10, 14, 20, 59, 59)))
+
+        # Veda nocturna (prohibido): 21:00, 22:15, 23:59:59
+        self.assertFalse(politica.esta_en_ventana(datetime(2026, 10, 14, 21, 0, 0)))
+        self.assertFalse(politica.esta_en_ventana(datetime(2026, 10, 14, 22, 15, 0)))
+        self.assertFalse(politica.esta_en_ventana(datetime(2026, 10, 14, 23, 59, 59)))
+
+        # Condición de disparo: >= 5.000 registros y en ventana
+        dt_habilitado = datetime(2026, 10, 14, 15, 0, 0)
+        dt_veda = datetime(2026, 10, 14, 21, 30, 0)
+
+        self.assertFalse(politica.debe_subir(listos_para_subir=4999, dt=dt_habilitado))
+        self.assertTrue(politica.debe_subir(listos_para_subir=5000, dt=dt_habilitado))
+        self.assertTrue(politica.debe_subir(listos_para_subir=155000, dt=dt_habilitado))
+        # En veda nunca sube salvo forzado
+        self.assertFalse(politica.debe_subir(listos_para_subir=155000, dt=dt_veda, forzar=False))
+        self.assertTrue(politica.debe_subir(listos_para_subir=155000, dt=dt_veda, forzar=True))
+
+        # Cálculo de lotes continuos: 155.000 / 5.000 = 31 lotes exactos
+        self.assertEqual(politica.calcular_lotes_a_subir(155000), 31)
+        self.assertEqual(politica.calcular_lotes_a_subir(12340), 2)
+        self.assertEqual(politica.calcular_lotes_a_subir(12340, forzar=True), 3)
+
+    def test_11_sync_scheduler_push_desacoplado_no_bloquea_pull(self):
+        """Verifica que pull y push tienen locks independientes y pueden concurrir sin bloquearse mutuamente."""
+        from runtime.sync_scheduler import SyncSchedulerThread
+
+        scheduler = SyncSchedulerThread(
+            local_repo=self.local_repo,
+            remote_repo=self.remote_mock,
+            sync_push_window_start_hour=0,
+            sync_push_window_end_hour=21
+        )
+
+        # Simular que el lock de push está adquirido (subida en curso)
+        with scheduler._push_lock:
+            # El lock de pull DEBE estar libre y disponible
+            adquirido_pull = scheduler._pull_lock.acquire(blocking=False)
+            self.assertTrue(adquirido_pull, "El lock de pull debe ser independiente y no quedar bloqueado por el push")
+            scheduler._pull_lock.release()
+
+    def test_12_boot_sweeper_reconciliacion_remota_vps(self):
+        """Verifica que SyncSchedulerThread ejecuta la auto-sanación de huérfanos al arrancar."""
+        import threading
+        from runtime.sync_scheduler import SyncSchedulerThread
+
+        self.remote_mock.liberar_huerfanos_vps.return_value = 147911
+        self.remote_mock.descargar_lote_vps.return_value = []
+
+        stop_evt = threading.Event()
+        stop_evt.set()  # Detener de inmediato tras la fase de boot
+
+        scheduler = SyncSchedulerThread(
+            local_repo=self.local_repo,
+            remote_repo=self.remote_mock,
+            stop_event=stop_evt,
+            tipo_cola="cola_automatizacion",
+            auto_id="scraper_cobro_express",
+            pc_id="PC-01"
+        )
+        scheduler.run()
+
+        # Comprobar que se invocó liberar_huerfanos_vps en el boot
+        self.remote_mock.liberar_huerfanos_vps.assert_called_with(
+            tipo_cola="cola_automatizacion",
+            minutos_inactividad=15,
+            auto_id="scraper_cobro_express",
+            pc_id="PC-01",
+            scraper_actual="telcos"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
 
 

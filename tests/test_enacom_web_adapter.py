@@ -6,7 +6,11 @@ normalización de operadores, validación de líneas y resolución de imágenes.
 """
 import unittest
 import numpy as np
-import cv2
+
+try:
+    import cv2
+except (ImportError, ModuleNotFoundError):
+    cv2 = None
 
 from core.domain.entities import Linea, StatusScraping
 from core.ports.scraper_port import IScraperEnginePort
@@ -15,6 +19,7 @@ from adapters.scrapers.enacom_web.enacom_web_adapter import EnacomWebAdapter
 from adapters.scrapers.enacom_web.captcha_solver import EnacomCaptchaSolver
 
 
+@unittest.skipIf(cv2 is None, "OpenCV (cv2) no está instalado en este entorno")
 class TestEnacomWebAdapter(unittest.TestCase):
     """Pruebas unitarias para el adaptador de scraping web de ENACOM."""
 
