@@ -89,6 +89,7 @@ def main():
     parser.add_argument("--force-push", action="store_true", default=False, help="Forzar subida continua al VPS en chunks de 5.000 con semáforo distribuido ignorando la restricción de ventana nocturna")
     parser.add_argument("--local-staging", dest="local_staging", action="store_true", default=None, help="Habilita persistencia local desacoplada SQLite WAL (default según config.LOCAL_STAGING_ENABLED)")
     parser.add_argument("--no-local-staging", dest="local_staging", action="store_false", help="Deshabilita persistencia local y conecta directo al VPS")
+    parser.add_argument("--orphan-timeout", type=int, default=None, help="Tiempo en minutos de inactividad antes de considerar huérfano un registro en VPS (default: 720 = 12 horas)")
 
     args = parser.parse_args()
 
@@ -169,7 +170,8 @@ def main():
         buffer_max_delay=args.buffer_timeout,
         empty_queue_pause_max_sec=args.empty_queue_pause,
         use_local_staging=args.local_staging,
-        force_push=args.force_push
+        force_push=args.force_push,
+        minutos_inactividad_huerfanos=args.orphan_timeout
     )
 
     supervisor.ejecutar()

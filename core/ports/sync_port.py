@@ -43,7 +43,7 @@ class ISyncRemoteRepoPort(ABC):
     def liberar_huerfanos_vps(
         self,
         tipo_cola: str,
-        minutos_inactividad: int = 30,
+        minutos_inactividad: int = 720,
         auto_id: Optional[str] = None,
         pc_id: Optional[str] = None,
         scraper_actual: Optional[str] = None

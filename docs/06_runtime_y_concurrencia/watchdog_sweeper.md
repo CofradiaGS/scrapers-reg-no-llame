@@ -92,23 +92,36 @@ WHERE estado = 'procesando'
 
 ---
 
-## 4. Estrategia Industrial de Auto-Sanación en 3 Capas
+## 4. Estrategia Industrial de Auto-Sanación en 3 Capas (Umbral de 12 Horas)
 
-Para garantizar que ningún registro quede huérfano de forma permanente bajo el modelo Offline-First ([`SQLiteStagingAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py)), el sistema implementa una arquitectura defensiva en 3 niveles complementarios:
+Para garantizar que ningún registro quede huérfano de forma permanente bajo el modelo Offline-First ([`SQLiteStagingAdapter`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py)), protegiendo al mismo tiempo a **scrapers más lentos** (como Playwright/Browser, IRIS o ENACOM) contra reprocesamientos prematuros cuando procesan lotes grandes antes de alcanzar el umbral de subida (Push masivo de 5.000 filas), el sistema implementa un umbral configurable de **12 horas (`720` minutos)** definido en [`config.VPS_ORPHAN_TIMEOUT_MINUTES`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/config.py):
+
+### Tabla de Configuración de Huérfanos por Operador / Motor
+| Variable de Entorno | Parámetro Python | Default | Propósito |
+| :--- | :--- | :---: | :--- |
+| `VPS_ORPHAN_TIMEOUT_MINUTES` | `config.VPS_ORPHAN_TIMEOUT_MINUTES` | `720` (12h) | Umbral global de expiración de leasing en VPS |
+| `VPS_ORPHAN_TIMEOUT_TELCOS` | `config.VPS_ORPHAN_TIMEOUT_BY_SCRAPER['telcos']` | `720` (12h) | Timeout para cascada Telcos (Claro/Personal/Movistar) |
+| `VPS_ORPHAN_TIMEOUT_IRIS` | `config.VPS_ORPHAN_TIMEOUT_BY_SCRAPER['iris']` | `720` (12h) | Timeout para motor IRIS BPM / Browser |
+| `VPS_ORPHAN_TIMEOUT_DATUAR` | `config.VPS_ORPHAN_TIMEOUT_BY_SCRAPER['datuar']` | `720` (12h) | Timeout para motor Datuar |
+| `VPS_ORPHAN_TIMEOUT_BCRA` | `config.VPS_ORPHAN_TIMEOUT_BY_SCRAPER['bcra']` | `720` (12h) | Timeout para motor BCRA Deudores |
+| `VPS_ORPHAN_TIMEOUT_CUITONLINE` | `config.VPS_ORPHAN_TIMEOUT_BY_SCRAPER['cuitonline']` | `720` (12h) | Timeout para motor CuitOnline |
+
+---
 
 ### Capa 1: Reconciliación de Arranque (*Boot Sweeper*)
-Al iniciar [`SyncSchedulerThread`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py), antes de solicitar cualquier bloque de tareas al VPS, se ejecuta [`VPSSyncAdapter.liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L701):
-- Audita si existen tareas asignadas a este nodo (`target_pc`) o al scraper actual en estado `en_proceso` / `procesando` con más de 15 minutos de inactividad y sin resultado (`resultado IS NULL`).
+Al iniciar [`SyncSchedulerThread`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py), antes de solicitar cualquier bloque de tareas al VPS, se ejecuta [`VPSSyncAdapter.liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L705):
+- Resuelve dinámicamente el umbral mediante `config.obtener_timeout_huerfanos_vps(scraper_actual)` (por defecto 12 horas).
+- Audita si existen tareas asignadas a este nodo (`target_pc`) o al scraper actual en estado `en_proceso` / `procesando` con más de 12 horas de inactividad y sin resultado (`resultado IS NULL`).
 - Si encuentra tareas huérfanas de sesiones previas que se interrumpieron, las devuelve a `pendiente` de inmediato, quedando disponibles para el primer Watermark Pull en el mismo segundo de arranque.
 
 ### Capa 2: Watchdog Sweeper Remoto Periódico con Mutex Distribuido
 El centinela de sincronización en [`SyncSchedulerThread`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py) evalúa cada 600 segundos (10 minutos) la salud del VPS:
-- Ejecuta [`liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L701) protegiendo la transacción con un mutex distribuido MySQL `GET_LOCK('vps_sweeper_mutex_...', 0)`.
+- Ejecuta [`liberar_huerfanos_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L705) protegiendo la transacción con un mutex distribuido MySQL `GET_LOCK('vps_sweeper_mutex_...', 0)`.
 - Si otra PC concurrente ya está barriendo, salta el ciclo sin bloqueos (no-wait).
-- Rescata automáticamente registros cuyo proceso o máquina remota se cayó hace más de 30 minutos.
+- Rescata automáticamente registros cuyo proceso o máquina remota se cayó hace más de 12 horas (720 min para el mismo nodo, o 24 horas para otros nodos).
 
 ### Capa 3: Auto-Sanación Dinámica en la Consulta de Descarga (*Pull con Reclamo de Lease*)
-En [`VPSSyncAdapter.descargar_lote_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L117), la sentencia `SELECT ... FOR UPDATE SKIP LOCKED` incluye una cláusula de rescate por lease vencido:
+En [`VPSSyncAdapter.descargar_lote_vps`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py#L92), la sentencia `SELECT ... FOR UPDATE SKIP LOCKED` aplica dinámicamente el umbral de 12 horas:
 ```sql
 WHERE auto_id = %s
   AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
@@ -117,9 +130,10 @@ WHERE auto_id = %s
       OR (
           estado = 'en_proceso'
           AND (resultado IS NULL OR resultado = '')
-          AND fecha_inicio < NOW() - INTERVAL 45 MINUTE
+          AND fecha_inicio < NOW() - INTERVAL 720 MINUTE
       )
   )
 ```
-Aun si el watchdog no hubiese alcanzado a correr, el propio motor de Pull rescata y reasigna automáticamente tareas abandonadas hace más de 45 minutos.
+Aun si el watchdog no hubiese alcanzado a correr, el propio motor de Pull rescata y reasigna automáticamente tareas abandonadas hace más de 12 horas, garantizando que scrapers con cadencias pausadas nunca sufran robos prematuros de tareas ni reprocesamientos colisionantes.
+
 

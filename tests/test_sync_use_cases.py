@@ -27,6 +27,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
 from core.use_cases.sync_pull_use_case import SincronizarPullMatutinoUseCase
 from core.use_cases.sync_push_use_case import SincronizarPushNocturnoUseCase
+import config
+
 
 
 class TestSyncUseCases(unittest.TestCase):
@@ -417,14 +419,23 @@ class TestSyncUseCases(unittest.TestCase):
         )
         scheduler.run()
 
-        # Comprobar que se invocó liberar_huerfanos_vps en el boot
+        # Comprobar que se invocó liberar_huerfanos_vps en el boot con el umbral de 12h (720 min)
+        timeout_esperado = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)("telcos")
         self.remote_mock.liberar_huerfanos_vps.assert_called_with(
             tipo_cola="cola_automatizacion",
-            minutos_inactividad=15,
+            minutos_inactividad=timeout_esperado,
             auto_id="scraper_cobro_express",
             pc_id="PC-01",
             scraper_actual="telcos"
         )
+
+    def test_timeout_huerfanos_12_horas_configuracion(self):
+        """Verifica que el umbral de huérfanos por defecto sea 720 minutos (12 horas)."""
+        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_MINUTES, 720)
+        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_HOURS, 12.0)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("telcos"), 720)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("iris_browser"), 720)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("desconocido"), 720)
 
 
 if __name__ == "__main__":

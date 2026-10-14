@@ -49,7 +49,7 @@ class SupervisorIndustrial:
         delay_max: float = 2.5,
         scraper_kwargs: Optional[Dict[str, Any]] = None,
         verificar_vpn: bool = True,
-        minutos_inactividad_huerfanos: int = 15,
+        minutos_inactividad_huerfanos: Optional[int] = None,
         forzar_horario: bool = False,
         solo_sin_coincidencia: bool = False,
         queue_type: str = "registro_no_llame",
@@ -76,7 +76,11 @@ class SupervisorIndustrial:
         self.delay_max = delay_max
         self.scraper_kwargs = scraper_kwargs or {}
         self.verificar_vpn = verificar_vpn
-        self.minutos_inactividad_huerfanos = minutos_inactividad_huerfanos
+        self.minutos_inactividad_huerfanos = (
+            minutos_inactividad_huerfanos
+            if minutos_inactividad_huerfanos is not None
+            else getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(scraper_name)
+        )
         self.forzar_horario = forzar_horario
         self.solo_sin_coincidencia = solo_sin_coincidencia
         self.use_local_staging = (
@@ -816,7 +820,7 @@ class SupervisorIndustrial:
         print(f"  • Stats Throttling:       Cada {int(self.stats_flush_interval)}s")
         print(f"  • Horario Comercial:      {desc_hc}")
         print(f"  • Circuit Breaker:        Activo")
-        print(f"  • Watchdog Sweeper:       Activo (Barrido cada {int(self.watchdog_sweep_interval)}s)")
+        print(f"  • Watchdog Sweeper:       Activo (Barrido cada {int(self.watchdog_sweep_interval)}s | Umbral huérfanos: {self.minutos_inactividad_huerfanos}m / {self.minutos_inactividad_huerfanos/60:.1f}h)")
         print(f"  • Centinela Cola Vacía:   Backoff Progresivo (60s -> 3m -> 5m -> 10m -> máx {int(self.empty_queue_pause_max_sec / 60)}min)")
         print("*" * 75)
 

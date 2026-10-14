@@ -113,8 +113,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 target_auto_id = auto_id or getattr(config, "COLA_AUTO_ID", "telco_scraper")
                 target_pc_id = pc_id or getattr(config, "WORKER_PC_ID", "PC-00")
                 instance_id = f"{target_pc_id}_{os.getpid()}_{random.randint(1000, 9999)}"
+                timeout_lease_min = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(scraper_actual or target_auto_id)
 
-                query_find = """
+                query_find = f"""
                     SELECT id, numero_de_linea, dni, auto_id, target_pc, payload, prioridad
                     FROM cola_automatizacion
                     WHERE auto_id = %s
@@ -124,7 +125,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                           OR (
                               estado = 'en_proceso'
                               AND (resultado IS NULL OR resultado = '')
-                              AND fecha_inicio < NOW() - INTERVAL 45 MINUTE
+                              AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
                           )
                       )
                     ORDER BY (target_pc IS NOT NULL AND target_pc != '') DESC,
@@ -176,6 +177,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 s_nombre = scraper_actual or "iris"
                 if "iris" in (s_nombre or "").lower():
                     s_nombre = "iris"
+                timeout_lease_min = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(s_nombre)
                 if s_nombre == "enacom_web":
                     query_find = f"""
                         SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
@@ -189,11 +191,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     cursor.execute(query_find, (limit,))
                     filas = cursor.fetchall()
                 elif s_nombre in ("telcos", "telco", "telco_cascade"):
-                    cond_lease = """
+                    cond_lease = f"""
                         (estado = 'pendiente' OR (
                             estado = 'procesando'
-                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{}')
-                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL 45 MINUTE)
+                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
+                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL {timeout_lease_min} MINUTE)
                         ))
                     """
                     # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
@@ -225,11 +227,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         cursor.execute(query_sin_dni, (remanente,))
                         filas.extend(cursor.fetchall())
                 else:
-                    cond_lease = """
+                    cond_lease = f"""
                         (estado = 'pendiente' OR (
                             estado = 'procesando'
-                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{}')
-                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL 45 MINUTE)
+                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
+                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL {timeout_lease_min} MINUTE)
                         ))
                     """
                     cond_iris = "AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')" if "iris" in s_nombre.lower() else ""
@@ -705,7 +707,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
     def liberar_huerfanos_vps(
         self,
         tipo_cola: str,
-        minutos_inactividad: int = 30,
+        minutos_inactividad: Optional[int] = None,
         auto_id: Optional[str] = None,
         pc_id: Optional[str] = None,
         scraper_actual: Optional[str] = None
@@ -713,6 +715,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
         """
         Recupera registros colgados en 'en_proceso' (cola_automatizacion) o 'procesando' (queue_registro_no_llame)
         sin resultado en el VPS central, devolviéndolos atómicamente a 'pendiente'.
+        Aplica un umbral de 12 horas (720 min por defecto) para proteger scrapers lentos.
         Utiliza un Mutex Distribuido (GET_LOCK) para prevenir condiciones de carrera entre nodos concurrentes.
         Retorna la cantidad de registros rescatados.
         """
@@ -724,6 +727,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
         target_pc_id = pc_id or getattr(config, "WORKER_PC_ID", "PC-00")
         s_nombre = scraper_actual or ("telcos" if tipo_cola_clean == "cola_automatizacion" else "iris")
         lock_name = f"vps_sweeper_mutex_{tipo_cola_clean}_{target_auto_id if tipo_cola_clean == 'cola_automatizacion' else s_nombre}"
+
+        if minutos_inactividad is None:
+            minutos_inactividad = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(s_nombre)
 
         try:
             conn = self._get_connection(tipo_cola=tipo_cola_clean)
@@ -752,8 +758,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                           OR fecha_inicio < NOW() - INTERVAL %s MINUTE
                       )
                 """
-                # Para la máquina actual usamos minutos_inactividad (ej. 15-30m), para cualquier otra máquina 60m
-                cursor.execute(query, (target_auto_id, target_pc_id, minutos_inactividad, max(minutos_inactividad * 2, 60)))
+                # Para la máquina actual usamos minutos_inactividad (ej. 720m = 12h), para cualquier otra máquina 24h
+                timeout_otras_pcs = max(minutos_inactividad * 2, minutos_inactividad + 60)
+                cursor.execute(query, (target_auto_id, target_pc_id, minutos_inactividad, timeout_otras_pcs))
                 conn.commit()
                 liberados = cursor.rowcount
             else:

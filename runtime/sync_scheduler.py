@@ -227,15 +227,16 @@ class SyncSchedulerThread(threading.Thread):
         # Rescata inmediatamente cualquier registro que haya quedado huérfano de sesiones previas
         try:
             logger.info("🔍 [BOOT SWEEPER] Verificando y recuperando posibles registros huérfanos en el VPS...")
+            timeout_huerfanos = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(self.scraper_actual)
             rescatados_boot = self.remote_repo.liberar_huerfanos_vps(
                 tipo_cola=self.tipo_cola,
-                minutos_inactividad=15,
+                minutos_inactividad=timeout_huerfanos,
                 auto_id=self.auto_id,
                 pc_id=self.pc_id,
                 scraper_actual=self.scraper_actual
             )
             if rescatados_boot > 0:
-                logger.info(f"✨ [BOOT SWEEPER] {rescatados_boot:,} registros huérfanos rescatados a 'pendiente' en el VPS.")
+                logger.info(f"✨ [BOOT SWEEPER] {rescatados_boot:,} registros huérfanos rescatados a 'pendiente' en el VPS (umbral: {timeout_huerfanos}m / {timeout_huerfanos/60:.1f}h).")
         except Exception as e_boot:
             logger.warning(f"Aviso en verificación inicial de huérfanos VPS: {e_boot}")
 
@@ -297,15 +298,16 @@ class SyncSchedulerThread(threading.Thread):
                 if time.time() - self._ultimo_vps_sweep_time >= 600.0:
                     self._ultimo_vps_sweep_time = time.time()
                     try:
+                        timeout_huerfanos = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(self.scraper_actual)
                         resc = self.remote_repo.liberar_huerfanos_vps(
                             tipo_cola=self.tipo_cola,
-                            minutos_inactividad=30,
+                            minutos_inactividad=timeout_huerfanos,
                             auto_id=self.auto_id,
                             pc_id=self.pc_id,
                             scraper_actual=self.scraper_actual
                         )
                         if resc > 0:
-                            logger.info(f"🧹 [WATCHDOG PERIÓDICO VPS] {resc:,} registros huérfanos liberados a 'pendiente' en el VPS.")
+                            logger.info(f"🧹 [WATCHDOG PERIÓDICO VPS] {resc:,} registros huérfanos liberados a 'pendiente' en el VPS (umbral: {timeout_huerfanos}m / {timeout_huerfanos/60:.1f}h).")
                     except Exception as e_sw:
                         logger.warning(f"Aviso en barrido periódico de huérfanos VPS: {e_sw}")
 

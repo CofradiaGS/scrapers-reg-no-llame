@@ -1,4 +1,5 @@
 import os
+from typing import Optional, Dict
 from pathlib import Path
 from dotenv import load_dotenv
 
@@ -187,6 +188,7 @@ SYNC_PUSH_LOCK_TIMEOUT = int(os.getenv("SYNC_PUSH_LOCK_TIMEOUT", "600"))
 SYNC_PUSH_ROUNDROBIN_PAUSE_SEC = float(os.getenv("SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", "0.5"))
 
 
+
 def esta_en_ventana_push(dt=None) -> bool:
     """
     Verifica si el horario proporcionado (o datetime.now()) en zona horaria de Argentina
@@ -202,6 +204,35 @@ def esta_en_ventana_push(dt=None) -> bool:
         timezone_name=getattr(config, "HORARIO_COMERCIAL_TIMEZONE", "America/Argentina/Buenos_Aires") if 'config' in globals() else HORARIO_COMERCIAL_TIMEZONE
     )
     return politica.esta_en_ventana(dt)
+
+
+# Umbral de expiración de leasing / rescate de registros huérfanos en VPS (Opción D: 12 horas = 720 minutos)
+VPS_ORPHAN_TIMEOUT_MINUTES = int(os.getenv("VPS_ORPHAN_TIMEOUT_MINUTES", "720"))
+VPS_ORPHAN_TIMEOUT_HOURS = float(VPS_ORPHAN_TIMEOUT_MINUTES) / 60.0
+
+# Umbrales diferenciados por tipo de scraper (permite ajuste fino por operador)
+VPS_ORPHAN_TIMEOUT_BY_SCRAPER = {
+    "telcos": int(os.getenv("VPS_ORPHAN_TIMEOUT_TELCOS", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
+    "iris": int(os.getenv("VPS_ORPHAN_TIMEOUT_IRIS", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
+    "datuar": int(os.getenv("VPS_ORPHAN_TIMEOUT_DATUAR", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
+    "bcra": int(os.getenv("VPS_ORPHAN_TIMEOUT_BCRA", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
+    "cuitonline": int(os.getenv("VPS_ORPHAN_TIMEOUT_CUITONLINE", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
+}
+
+
+def obtener_timeout_huerfanos_vps(scraper_name: Optional[str] = None) -> int:
+    """
+    Retorna el umbral en minutos (por defecto 12 horas = 720 min) antes de considerar
+    un registro como huérfano en el VPS central. Protege a scrapers lentos contra reprocesamientos
+    prematuros.
+    """
+    if scraper_name:
+        s_clean = scraper_name.lower().strip()
+        for k, v in VPS_ORPHAN_TIMEOUT_BY_SCRAPER.items():
+            if k in s_clean:
+                return v
+    return VPS_ORPHAN_TIMEOUT_MINUTES
+
 
 
 
