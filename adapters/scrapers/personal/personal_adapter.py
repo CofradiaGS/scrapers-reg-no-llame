@@ -75,7 +75,7 @@ class PersonalAdapter(BaseScraperAdapter):
 
         self.worker_slot = worker_slot or kwargs.get("worker_slot")
         self.socks_port, self.control_port = TorController.resolve_ports_for_worker(self.worker_slot)
-        self._stream_id = f"w{self.worker_slot or 1}_{uuid.uuid4().hex[:6]}"
+        self._stream_id = f"w{self.worker_slot or 1}"
         if self.use_tor and not self.proxy:
             self.proxy = f"socks5h://{self._stream_id}:tor@127.0.0.1:{self.socks_port}"
 
@@ -153,8 +153,10 @@ class PersonalAdapter(BaseScraperAdapter):
         """Devuelve la URL del proxy SOCKS5h con credenciales de aislamiento de flujo (IsolateSOCKSAuth)."""
         socks_p = getattr(self, "socks_port", None) or TorController.resolve_ports_for_worker(self.worker_slot)[0]
         slot = self.worker_slot or 1
-        if reset or not getattr(self, "_stream_id", None):
+        if reset:
             self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        elif not getattr(self, "_stream_id", None):
+            self._stream_id = f"w{slot}"
         return f"socks5h://{self._stream_id}:tor@127.0.0.1:{socks_p}"
 
     def _rotar_circuito_instantaneo(self) -> None:
@@ -316,7 +318,7 @@ class PersonalAdapter(BaseScraperAdapter):
                 # Ante HTTP 418/419 (WAF Bot Challenge), 403/429 (Rate Limit), 5xx o Timeouts/Red
                 TOTAL_REINTENTOS = 3
                 MAX_INTENTOS = 1 + TOTAL_REINTENTOS
-                req_timeout = (8.0, 15.0) if self.use_tor else self.timeout
+                req_timeout = (18.0, 15.0) if self.use_tor else self.timeout
                 resp = None
                 ultimo_error = None
 
@@ -363,12 +365,17 @@ class PersonalAdapter(BaseScraperAdapter):
                         ultimo_error = str(net_err)
                         if intento < MAX_INTENTOS:
                             backoff_sec = 1.0 * intento + random.uniform(0.1, 0.4)
-                            if self.use_tor:
+                            if intento >= 2 and self.use_tor:
                                 logger.warning(
-                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Personal vía Tor ({net_err}). "
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout persistente en Personal vía Tor ({net_err}). "
                                     f"Renovando circuito Tor aislado y reintentando tras pausa de {backoff_sec:.1f}s..."
                                 )
                                 self._rotar_circuito_instantaneo()
+                            elif self.use_tor:
+                                logger.warning(
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Personal vía Tor ({net_err}). "
+                                    f"Reintentando en canal Tor tras pausa de {backoff_sec:.1f}s..."
+                                )
                             else:
                                 logger.warning(
                                     f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red directo en Personal ({net_err}). "
@@ -377,6 +384,8 @@ class PersonalAdapter(BaseScraperAdapter):
                             time.sleep(backoff_sec)
                             continue
                         else:
+                            if self.use_tor:
+                                self._rotar_circuito_instantaneo()
                             raise ScraperTransientError(
                                 f"Error de red/timeout en PersonalAdapter tras {TOTAL_REINTENTOS} reintentos Tor: {ultimo_error}"
                             )

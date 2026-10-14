@@ -235,7 +235,7 @@ class TorController:
                         f.write(f"GeoIPFile {config.TOR_GEOIP_PATH}\n")
                     if config.TOR_GEOIPV6_PATH and os.path.exists(config.TOR_GEOIPV6_PATH):
                         f.write(f"GeoIPv6File {config.TOR_GEOIPV6_PATH}\n")
-                    f.write(f"SocksPort {self.socks_port} IsolateSOCKSAuth\n")
+                    f.write(f"SocksPort {self.socks_port} IsolateSOCKSAuth KeepAliveIsolateSOCKSAuth\n")
                     f.write("ControlPort " + str(self.control_port) + "\n")
                     f.write("CookieAuthentication 0\n")
                     f.write("DormantCanceledByStartup 1\n")
@@ -245,6 +245,7 @@ class TorController:
                     f.write("KeepalivePeriod 60\n")
                     f.write("MaxCircuitDirtiness 300\n")
                     f.write("NumEntryGuards 8\n")
+                    f.write("MaxClientCircuitsPending 64\n")
 
                 cmd = [self.tor_path, "-f", runtime_torrc]
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
