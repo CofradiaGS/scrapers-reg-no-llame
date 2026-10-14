@@ -22,7 +22,7 @@ Características de Arquitectura Industrial:
 import sys
 import argparse
 import logging
-from logging.handlers import RotatingFileHandler
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 from pathlib import Path
 
 # Configuración de codificación UTF-8 en Windows
@@ -38,9 +38,9 @@ from runtime.supervisor import SupervisorIndustrial
 from adapters.scrapers.registry import ScraperRegistry
 import config
 
-# Configuración de Logging Industrial con Rotación Estricta
+# Configuración de Logging Industrial con Rotación Estricta Multi-Proceso (Safe para Windows y Linux)
 LOG_FILE = PROJECT_ROOT / "supervisor_247.log"
-file_handler = RotatingFileHandler(
+file_handler = ConcurrentRotatingFileHandler(
     LOG_FILE,
     maxBytes=20 * 1024 * 1024,  # 20 MB
     backupCount=5,              # 5 copias = máx 100 MB en disco

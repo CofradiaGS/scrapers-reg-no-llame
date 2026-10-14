@@ -1,6 +1,6 @@
 # Registro y Factoría Central de Scrapers (ScraperRegistry)
 
-El componente [`ScraperRegistry`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) implementa el patrón **Registry / Service Locator** para la resolución dinámica e instanciación de motores de scraping en tiempo de ejecución.
+El componente [`ScraperRegistry`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) implementa el patrón **Registry / Service Locator** para la resolución dinámica e instanciación de motores de scraping en tiempo de ejecución.
 
 Permite desacoplar los puntos de entrada (CLI, scripts batch, procesos de worker daemon) de las implementaciones concretas de cada operador.
 

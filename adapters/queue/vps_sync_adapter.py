@@ -194,8 +194,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     cond_lease = f"""
                         (estado = 'pendiente' OR (
                             estado = 'procesando'
-                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
-                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL {timeout_lease_min} MINUTE)
+                            AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL {timeout_lease_min} MINUTE)
                         ))
                     """
                     # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
@@ -230,8 +229,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     cond_lease = f"""
                         (estado = 'pendiente' OR (
                             estado = 'procesando'
-                            AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
-                            AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL {timeout_lease_min} MINUTE)
+                            AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL {timeout_lease_min} MINUTE)
                         ))
                     """
                     cond_iris = "AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')" if "iris" in s_nombre.lower() else ""
@@ -257,7 +255,6 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         UPDATE {config.VPS_DB_TABLE}
                         SET estado = 'procesando',
                             scraper_actual = 'enacom_web',
-                            fecha_procesado = NOW(),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id IN ({placeholders});
                     """
@@ -267,7 +264,6 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         UPDATE {config.VPS_DB_TABLE}
                         SET estado = 'procesando',
                             scraper_actual = %s,
-                            fecha_procesado = NOW(),
                             updated_at = CURRENT_TIMESTAMP
                         WHERE id IN ({placeholders});
                     """
@@ -772,11 +768,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
 
                 query = f"""
                     UPDATE {config.VPS_DB_TABLE}
-                    SET estado = 'pendiente'
+                    SET estado = 'pendiente',
+                        updated_at = CURRENT_TIMESTAMP
                     WHERE estado = 'procesando'
                       AND scraper_actual IN {scrapers_filter}
-                      AND (datos_json IS NULL OR datos_json = '' OR datos_json = '{{}}')
-                      AND (fecha_procesado IS NULL OR fecha_procesado < NOW() - INTERVAL %s MINUTE)
+                      AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL %s MINUTE)
                 """
                 cursor.execute(query, (minutos_inactividad,))
                 conn.commit()

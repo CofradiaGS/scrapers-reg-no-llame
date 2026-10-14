@@ -1,8 +1,8 @@
 # Runbook: Enriquecimiento Total Banco Macro a SQLite
 
 > **Capa 07: Operación y Runbooks** | Manual Operativo  
-> **Scripts**: [`scripts/import_banco_macro_sqlite.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/import_banco_macro_sqlite.py) | [`scripts/procesar_banco_macro_sqlite.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/procesar_banco_macro_sqlite.py) | [`scripts/reauditar_iris_telcos.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/reauditar_iris_telcos.py) | [`scripts/reparar_bcra_completados.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/reparar_bcra_completados.py)  
-> **Dominio**: [`core/domain/cuit_validator.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py)  
+> **Scripts**: [`scripts/import_banco_macro_sqlite.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/import_banco_macro_sqlite.py) | [`scripts/procesar_banco_macro_sqlite.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/procesar_banco_macro_sqlite.py) | [`scripts/reauditar_iris_telcos.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/reauditar_iris_telcos.py) | [`scripts/reparar_bcra_completados.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/reparar_bcra_completados.py)  
+> **Dominio**: [`core/domain/cuit_validator.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py)  
 > **Base de Datos**: `data/banco_macro.sqlite` (SQLite WAL)
 
 ---
@@ -14,7 +14,7 @@ El flujo de enriquecimiento para carteras de deudores (como `base_macro.xlsx`) d
 2. **Cascada Exhaustiva de Enriquecimiento (0% Omisiones)**:
    * **CuitOnline**: Resuelve CUIT verificado, constancia AFIP, actividades y domicilio fiscal.
    * **Datuar**: Nutre campos demográficos (edad, género, localidad, municipio, ciudad).
-   * **Resolución Algorítmica de CUIL**: Si CuitOnline y Datuar no disponen de CUIT, el módulo de dominio [`core/domain/cuit_validator.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py) calcula automáticamente el CUIL oficial (Módulo 11 ANSES con manejo de colisiones e inferencia de género).
+   * **Resolución Algorítmica de CUIL**: Si CuitOnline y Datuar no disponen de CUIT, el módulo de dominio [`core/domain/cuit_validator.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py) calcula automáticamente el CUIL oficial (Módulo 11 ANSES con manejo de colisiones e inferencia de género).
    * **BCRA Central de Deudores**: Consulta obligatoria para el 100% de los registros con reintento automático anti-rate limit (HTTP 429), capturando deudas de Banco Macro, peor situación crediticia (1 a 5) y entidades bancarias.
    * **IRIS por DNI**: Consulta `att$nroIdentificacion` e itera sobre todas las lupas históricas, descubriendo las líneas telefónicas asociadas.
    * **Telcos Cobro Express**: Para cada línea hallada, audita en paralelo Claro (Línea + DNI), Personal (Línea) y Movistar (Característica + Línea), determinando prestador actual y deuda activa.

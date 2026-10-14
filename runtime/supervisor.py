@@ -16,7 +16,6 @@ import json
 import signal
 import urllib.request
 import logging
-from logging.handlers import RotatingFileHandler
 import threading
 from typing import Dict, Any, Optional
 from collections import deque

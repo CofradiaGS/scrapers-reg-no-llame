@@ -23,7 +23,7 @@ Al terminar el proceso a nivel del sistema operativo, el kernel limpia de raíz 
 
 ## 2. Lógica de Control de Cuota y Cálculo de Lote Dinámico
 
-La lógica de control reside en el bucle principal de [`worker_lifecycle_process`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L118-L161).
+La lógica de control reside en el bucle principal de [`worker_lifecycle_process`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L118-L161).
 
 ```mermaid
 flowchart TD
@@ -50,7 +50,7 @@ flowchart TD
 ### El Algoritmo de Truncado Atómico de Lote
 Un error común en arquitecturas distribuidas es reservar un lote estándar (ej. 12 registros) cuando al worker solo le restan 3 consultas para alcanzar su cuota de 350, lo que provocaría que ejecute 359 consultas o corte el lote a mitad de camino.
 
-Para evitar esto, en la línea 136 de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L136):
+Para evitar esto, en la línea 136 de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L136):
 ```python
 # Calcular tamaño de lote sin exceder la cuota de rotación preventiva
 batch_to_claim = min(batch_size, max_queries - consultas_realizadas)
@@ -72,7 +72,7 @@ El bucle finaliza limpiamente sin dejar registros a medio procesar ni transaccio
 
 ## 3. Emisión de Mensaje de Retiro y Parámetro `recycled`
 
-Cuando el bucle `while` rompe, la ejecución entra indefectiblemente en el bloque `finally` de [`runtime/worker_process.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L164-L181):
+Cuando el bucle `while` rompe, la ejecución entra indefectiblemente en el bloque `finally` de [`runtime/worker_process.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py#L164-L181):
 
 ```python
 finally:
@@ -102,7 +102,7 @@ finally:
 
 ## 4. Recepción y Auto-Spawn en el Supervisor
 
-El proceso [`SupervisorIndustrial`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) en [`runtime/supervisor.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L248-L268) realiza un monitoreo no bloqueante del pool de workers cada 2.0 segundos:
+El proceso [`SupervisorIndustrial`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) en [`runtime/supervisor.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L248-L268) realiza un monitoreo no bloqueante del pool de workers cada 2.0 segundos:
 
 ```python
 while not self.stop_event.is_set():
@@ -138,7 +138,7 @@ while not self.stop_event.is_set():
 
 ## 5. Parámetros CLI y Ajuste Fino
 
-En [`supervisor_vps.py`](file:///c:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L68), el operador puede parametrizar la cadencia de rotación según la memoria RAM disponible en el nodo de cómputo:
+En [`supervisor_vps.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L68), el operador puede parametrizar la cadencia de rotación según la memoria RAM disponible en el nodo de cómputo:
 
 ```bash
 python supervisor_vps.py --scraper iris_http --workers 9 --max-queries-worker 350
