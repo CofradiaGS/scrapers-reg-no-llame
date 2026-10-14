@@ -74,8 +74,9 @@ class ClaroAdapter(BaseScraperAdapter):
             
         self.worker_slot = worker_slot or kwargs.get("worker_slot")
         self.socks_port, self.control_port = TorController.resolve_ports_for_worker(self.worker_slot)
+        self._stream_id = f"w{self.worker_slot or 1}_{uuid.uuid4().hex[:6]}"
         if self.use_tor and not self.proxy:
-            self.proxy = f"socks5h://127.0.0.1:{self.socks_port}"
+            self.proxy = f"socks5h://{self._stream_id}:tor@127.0.0.1:{self.socks_port}"
 
         self.tor_rotate_every = tor_rotate_every or kwargs.get("tor_rotate_every", config.TOR_ROTATE_EVERY)
         self.tor_external_daemon = kwargs.get("tor_external_daemon", False) or bool(self.worker_slot)
@@ -147,42 +148,31 @@ class ClaroAdapter(BaseScraperAdapter):
             pass
         return data
 
-    def _generar_proxy_aislado(self) -> str:
-        """Devuelve la URL limpia del proxy SOCKS5h sin tokens aleatorios disruptivos."""
+    def _generar_proxy_aislado(self, reset: bool = False) -> str:
+        """Devuelve la URL del proxy SOCKS5h con credenciales de aislamiento de flujo (IsolateSOCKSAuth)."""
         socks_p = getattr(self, "socks_port", None) or TorController.resolve_ports_for_worker(self.worker_slot)[0]
-        return f"socks5h://127.0.0.1:{socks_p}"
+        slot = self.worker_slot or 1
+        if reset or not getattr(self, "_stream_id", None):
+            self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        return f"socks5h://{self._stream_id}:tor@127.0.0.1:{socks_p}"
 
     def _rotar_circuito_instantaneo(self) -> None:
-        """Rota de IP usando señal NEWNYM de Tor hacia su instancia correspondiente sin saturar circuitos."""
+        """Rota de IP instantáneamente mediante Stream Isolation en Tor sin colisiones ni saturación."""
         if self.use_tor:
-            socks_p = getattr(self, "socks_port", None)
-            ctrl_p = getattr(self, "control_port", None)
-            if not socks_p or not ctrl_p:
-                socks_p, ctrl_p = TorController.resolve_ports_for_worker(self.worker_slot)
-                self.socks_port = socks_p
-                self.control_port = ctrl_p
-
-            if self.tor_controller is not None:
-                self.tor_controller.rotate_ip()
-            else:
-                try:
-                    ctrl = TorController(socks_port=socks_p, control_port=ctrl_p, is_owner=False)
-                    ctrl.rotate_ip()
-                except Exception as e:
-                    logger.debug(f"Aviso al rotar circuito en puerto {ctrl_p}: {e}")
-
-            self.proxy = f"socks5h://127.0.0.1:{socks_p}"
+            socks_p = getattr(self, "socks_port", None) or TorController.resolve_ports_for_worker(self.worker_slot)[0]
+            self.socks_port = socks_p
+            self.proxy = self._generar_proxy_aislado(reset=True)
             if self._session is not None:
                 try:
                     self._session.close()
                 except Exception:
                     pass
-                self._session = requests.Session()
-                self._session.proxies = {
-                    "http": self.proxy,
-                    "https": self.proxy
-                }
-            logger.debug(f"🔄 Conexión Tor renovada limpiamente en puerto SOCKS {socks_p}")
+            self._session = requests.Session()
+            self._session.proxies = {
+                "http": self.proxy,
+                "https": self.proxy
+            }
+            logger.info(f"🔄 [TOR ROTATION] Circuito renovado para {self.nombre.capitalize()} Slot {self.worker_slot or 1} ({self._stream_id}) en puerto {socks_p}")
 
 
     def iniciar(self) -> None:
@@ -345,7 +335,7 @@ class ClaroAdapter(BaseScraperAdapter):
                 # Ante HTTP 418/419 (WAF Bot Challenge), 403/429 (Rate Limit), 5xx o Timeouts/Red
                 TOTAL_REINTENTOS = 3
                 MAX_INTENTOS = 1 + TOTAL_REINTENTOS
-                req_timeout = (25.0, 20.0) if self.use_tor else self.timeout
+                req_timeout = (8.0, 15.0) if self.use_tor else self.timeout
                 resp = None
                 ultimo_error = None
 
@@ -391,12 +381,13 @@ class ClaroAdapter(BaseScraperAdapter):
                     except (requests.exceptions.Timeout, requests.exceptions.RequestException) as net_err:
                         ultimo_error = str(net_err)
                         if intento < MAX_INTENTOS:
-                            backoff_sec = 1.5 * intento + random.uniform(0.1, 0.5)
+                            backoff_sec = 1.0 * intento + random.uniform(0.1, 0.4)
                             if self.use_tor:
                                 logger.warning(
                                     f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Claro vía Tor ({net_err}). "
-                                    f"Reintentando en el canal Tor tras pausa de {backoff_sec:.1f}s..."
+                                    f"Renovando circuito Tor aislado y reintentando tras pausa de {backoff_sec:.1f}s..."
                                 )
+                                self._rotar_circuito_instantaneo()
                             else:
                                 logger.warning(
                                     f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red directo en Claro ({net_err}). "

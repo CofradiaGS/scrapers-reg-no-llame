@@ -119,13 +119,16 @@ class TorController:
         return chosen_socks, chosen_ctrl
 
     @classmethod
-    def get_proxy_for_worker(cls, worker_slot: Optional[int] = None) -> str:
+    def get_proxy_for_worker(cls, worker_slot: Optional[int] = None, stream_id: Optional[str] = None) -> str:
         """
-        Retorna la URL SOCKS5h limpia correspondiente al worker slot.
-        Nunca inyecta UUIDs aleatorios destructivos que fuercen construcción compulsiva de circuitos en Tor.
+        Retorna la URL SOCKS5h con aislamiento de flujo determinista (IsolateSOCKSAuth).
+        Cada worker slot obtiene su propio circuito Tor independiente basado en sus credenciales SOCKS,
+        evitando totalmente colisiones de IP y bloqueos mutuos entre los workers concurrentes.
         """
         socks_port, _ = cls.resolve_ports_for_worker(worker_slot)
-        return f"socks5h://127.0.0.1:{socks_port}"
+        slot = worker_slot or 1
+        ident = stream_id or f"w{slot}"
+        return f"socks5h://{ident}:tor@127.0.0.1:{socks_port}"
 
     def is_port_open(self, port: int) -> bool:
         """Comprueba si un socket local responde rápidamente."""
