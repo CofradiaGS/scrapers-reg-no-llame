@@ -2,7 +2,7 @@
 
 > **Capa 02: Dominio y Casos de Uso** | Orquestación Desacoplada Staging <-> VPS
 
-Los casos de uso [`SincronizarPullMatutinoUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_pull_use_case.py) y [`SincronizarPushNocturnoUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_push_use_case.py) (con alias universal [`SincronizarPushUseCase`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_push_use_case.py#L181)) regulan el flujo de datos entre el VPS central MySQL y el almacenamiento local SSD (SQLite WAL), garantizando el desacoplamiento total de los workers y la continuidad de producción.
+Los casos de uso [`SincronizarPullMatutinoUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_pull_use_case.py) y [`SincronizarPushNocturnoUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_push_use_case.py) (con alias universal [`SincronizarPushUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/sync_push_use_case.py#L181)) regulan el flujo de datos entre el VPS central MySQL y el almacenamiento local SSD (SQLite WAL), garantizando el desacoplamiento total de los workers y la continuidad de producción.
 
 ---
 
@@ -47,7 +47,7 @@ sequenceDiagram
 
 ## 2. Contratos Hexagonales de Sincronización
 
-Definidos en [`core/ports/sync_port.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/sync_port.py):
+Definidos en [`core/ports/sync_port.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/sync_port.py):
 
 ### Puerto Remoto: `ISyncRemoteRepoPort`
 - `descargar_lote_vps(tipo_cola, limit, auto_id, pc_id, scraper_actual) -> List[Dict]`: Ejecuta la descarga atómica con `SELECT ... FOR UPDATE SKIP LOCKED` y marca las filas como `en_proceso` o `procesando` en MySQL VPS.
@@ -66,7 +66,7 @@ Definidos en [`core/ports/sync_port.py`](file:///c:/Users/Usuario/Documents/GitH
 
 ## 3. Especificación de Reglas de Negocio Universales
 
-La política transversal [`PoliticaVentanaPush`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py#L152) y el orquestador [`SyncSchedulerThread`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py#L31) aplican las siguientes reglas:
+La política transversal [`PoliticaVentanaPush`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py#L152) y el orquestador [`SyncSchedulerThread`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py#L31) aplican las siguientes reglas:
 
 | Regla | Parámetro | Valor | Justificación Técnica |
 |---|---|---|---|

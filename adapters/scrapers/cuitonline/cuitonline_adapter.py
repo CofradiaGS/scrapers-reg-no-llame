@@ -12,6 +12,7 @@ import json
 import random
 import hashlib
 import logging
+import uuid
 from typing import Dict, Any, Optional, List
 import requests
 from requests.adapters import HTTPAdapter
@@ -77,20 +78,30 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         """Identificador único en el pipeline."""
         return "cuitonline"
 
-    def _generar_proxy_aislado(self) -> str:
+    def _generar_proxy_aislado(self, reset: bool = False) -> str:
+        """Devuelve la URL del proxy SOCKS5h con credenciales de aislamiento de flujo (IsolateSOCKSAuth)."""
         socks_base = TorController.resolve_ports_for_worker(self.worker_slot)[0]
-        return f"socks5h://127.0.0.1:{socks_base}"
+        slot = self.worker_slot or 1
+        if reset:
+            self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        elif not getattr(self, "_stream_id", None):
+            self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        return f"socks5h://{self._stream_id}:tor@127.0.0.1:{socks_base}"
 
     def _rotar_circuito_instantaneo(self) -> None:
+        """Rota de IP instantáneamente mediante Stream Isolation en Tor sin colisiones."""
         if not self.use_tor:
             return
-        if self.tor_controller:
+        self._proxy_url = self._generar_proxy_aislado(reset=True)
+        if self._session is not None:
             try:
-                self.tor_controller.rotate_ip()
+                self._session.close()
             except Exception:
                 pass
-        self._proxy_url = self._generar_proxy_aislado()
-        if self._session is not None:
+            self._session = requests.Session()
+            adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=1)
+            self._session.mount("http://", adapter)
+            self._session.mount("https://", adapter)
             self._session.proxies = {
                 "http": self._proxy_url,
                 "https": self._proxy_url

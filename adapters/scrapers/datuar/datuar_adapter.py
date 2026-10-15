@@ -12,6 +12,7 @@ import json
 import random
 import hashlib
 import logging
+import uuid
 from typing import Dict, Any, Optional
 import requests
 from requests.adapters import HTTPAdapter
@@ -92,21 +93,30 @@ class DatuarAdapter(BaseScraperAdapter):
         """Identificador único en el pipeline."""
         return "datuar"
 
-    def _generar_proxy_aislado(self) -> str:
+    def _generar_proxy_aislado(self, reset: bool = False) -> str:
+        """Devuelve la URL del proxy SOCKS5h con credenciales de aislamiento de flujo (IsolateSOCKSAuth)."""
         socks_base = self.tor_port or TorController.resolve_ports_for_worker(self.worker_slot)[0]
-        return f"socks5h://127.0.0.1:{socks_base}"
-
+        slot = self.worker_slot or 1
+        if reset:
+            self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        elif not getattr(self, "_stream_id", None):
+            self._stream_id = f"w{slot}_{uuid.uuid4().hex[:6]}"
+        return f"socks5h://{self._stream_id}:tor@127.0.0.1:{socks_base}"
 
     def _rotar_circuito_instantaneo(self) -> None:
+        """Rota de IP instantáneamente mediante Stream Isolation en Tor sin colisiones."""
         if not self.use_tor:
             return
-        if self.tor_controller:
+        self._proxy_url = self._generar_proxy_aislado(reset=True)
+        if self._session is not None:
             try:
-                self.tor_controller.rotate_ip()
+                self._session.close()
             except Exception:
                 pass
-        self._proxy_url = self._generar_proxy_aislado()
-        if self._session is not None:
+            self._session = requests.Session()
+            adapter = HTTPAdapter(pool_connections=5, pool_maxsize=5, max_retries=1)
+            self._session.mount("http://", adapter)
+            self._session.mount("https://", adapter)
             self._session.proxies = {
                 "http": self._proxy_url,
                 "https": self._proxy_url
@@ -235,17 +245,24 @@ class DatuarAdapter(BaseScraperAdapter):
                     time.sleep(1.5)
                     continue
 
-                if resp.status_code != 200:
-                    time.sleep(0.5)
+                if resp.status_code in (403, 503) or resp.status_code != 200:
+                    logger.warning(f"⚠️ Datuar HTTP {resp.status_code} en IP actual. Rotando circuito Tor (intento {intento}/{max_intentos})...")
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
+                    time.sleep(1.0)
                     continue
 
                 html = resp.text
 
-                # Si dio "0 resultados", es el bloqueo de IP de salida de Tor en Datuar: rotar circuito de inmediato
-                if "0 resultados" in html and intento < max_intentos:
+                # Detección de desafío antibot Cloudflare / Turnstile
+                m_cnt = re.search(r'id="contador-resultados">\s*(\d+)\s*<', html)
+                es_desafio = ("challenges.cloudflare.com" in html or "cf-turnstile" in html or "just a moment" in html.lower()) and not m_cnt
+
+                if es_desafio:
+                    logger.warning(f"⚠️ Datuar desafío Cloudflare/Turnstile detectado en IP actual. Rotando circuito Tor (intento {intento}/{max_intentos})...")
                     if self.use_tor:
                         self._rotar_circuito_instantaneo()
-                    time.sleep(0.4)
+                    time.sleep(1.2)
                     continue
 
                 names = re.findall(r'data-nombre-completo="([^"]+)"', html)
@@ -350,8 +367,33 @@ class DatuarAdapter(BaseScraperAdapter):
                         descripcion=descripcion_line
                     )
 
-                # Si llegamos al final del HTML y no dio error ni 0 resultados (o es el último intento)
-                if intento == max_intentos or "0 resultados" not in html:
+                # Si no se encontraron nombres, verificar si legítimamente dio 0 resultados
+                total_res = int(m_cnt.group(1)) if m_cnt else None
+                if total_res == 0:
+                    # En Tor, verificar una segunda vez con otra IP para descartar bloqueo silencioso
+                    if self.use_tor and intento < 2:
+                        logger.debug(f"Datuar reportó 0 resultados para DNI {dni_limpio}. Verificando con circuito secundario...")
+                        self._rotar_circuito_instantaneo()
+                        time.sleep(0.5)
+                        continue
+
+                    return ScrapeResult(
+                        ani=linea.ani,
+                        status=StatusScraping.SIN_COINCIDENCIA,
+                        fuente_scraper=self.nombre,
+                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
+                        detalles={"motivo": "DNI no registrado en Datuar", "dni": dni_limpio},
+                        descripcion=f"Datuar - DNI {dni_limpio} sin registros"
+                    )
+
+                # Si no hubo names y tampoco contador = 0 (respuesta truncada o anómala)
+                if self.use_tor and intento < max_intentos:
+                    logger.debug(f"Datuar respuesta anómala sin contador para DNI {dni_limpio}. Rotando circuito...")
+                    self._rotar_circuito_instantaneo()
+                    time.sleep(0.5)
+                    continue
+
+                if intento == max_intentos:
                     return ScrapeResult(
                         ani=linea.ani,
                         status=StatusScraping.SIN_COINCIDENCIA,

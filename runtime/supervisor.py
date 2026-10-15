@@ -893,9 +893,9 @@ class SupervisorIndustrial:
             )
             self._set_pause("horario")
 
-        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal, Datuar o Telcos
+        # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal, Datuar, CuitOnline o Telcos
         tor_daemon = None
-        if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar", "telcos")):
+        if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar", "telcos", "cuit")):
             if self.scraper_kwargs.get("use_proxy_pool", config.PROXY_POOL_ENABLED):
                 from adapters.network.proxy_pool import ProxyPoolManager
                 logger.info("🌐 [SUPERVISOR] Inicializando caché y bootstrap inicial de ProxyPoolManager...")
