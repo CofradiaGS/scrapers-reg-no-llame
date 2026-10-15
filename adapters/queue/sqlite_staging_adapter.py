@@ -93,6 +93,13 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado ON tareas_staging(tipo_cola, estado_local);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado_scraper ON tareas_staging(tipo_cola, estado_local, scraper_actual);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fecha_sincronizado);")
+            # Auto-sanación de arranque: si el supervisor previo cayó de forma abrupta,
+            # revertir cualquier tarea que haya quedado atrapada en 'en_proceso' local a 'pendiente'
+            conn.execute("""
+                UPDATE tareas_staging
+                SET estado_local = 'pendiente'
+                WHERE estado_local = 'en_proceso';
+            """)
             conn.execute("COMMIT;")
         finally:
             conn.close()
@@ -459,7 +466,22 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 INSERT INTO tareas_staging (
                     id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, estado_local
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
-                ON CONFLICT(id_vps, tipo_cola) DO NOTHING;
+                ON CONFLICT(id_vps, tipo_cola) DO UPDATE SET
+                    numero_de_linea = excluded.numero_de_linea,
+                    dni = excluded.dni,
+                    auto_id = excluded.auto_id,
+                    target_pc = excluded.target_pc,
+                    scraper_actual = excluded.scraper_actual,
+                    payload_origen = excluded.payload_origen,
+                    fuente = excluded.fuente,
+                    estado_local = 'pendiente',
+                    resultado_json = NULL,
+                    error_msg = NULL,
+                    reintentos_sync = 0,
+                    fecha_descarga = CURRENT_TIMESTAMP,
+                    fecha_procesado = NULL,
+                    fecha_sincronizado = NULL
+                WHERE estado_local != 'en_proceso';
             """, valores)
             conn.execute("COMMIT;")
             logger.info(f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type})")

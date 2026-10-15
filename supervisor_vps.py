@@ -22,7 +22,7 @@ Características de Arquitectura Industrial:
 import sys
 import argparse
 import logging
-from concurrent_log_handler import ConcurrentRotatingFileHandler
+import multiprocessing
 from pathlib import Path
 
 # Configuración de codificación UTF-8 en Windows
@@ -31,6 +31,10 @@ if sys.stdout.encoding != 'utf-8':
 if sys.stderr.encoding != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8')
 
+# Garantizar que los procesos hijos de multiprocessing usen el mismo intérprete venv
+if hasattr(multiprocessing, "set_executable"):
+    multiprocessing.set_executable(sys.executable)
+
 PROJECT_ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -38,22 +42,38 @@ from runtime.supervisor import SupervisorIndustrial
 from adapters.scrapers.registry import ScraperRegistry
 import config
 
-# Configuración de Logging Industrial con Rotación Estricta Multi-Proceso (Safe para Windows y Linux)
 LOG_FILE = PROJECT_ROOT / "supervisor_247.log"
-file_handler = ConcurrentRotatingFileHandler(
-    LOG_FILE,
-    maxBytes=20 * 1024 * 1024,  # 20 MB
-    backupCount=5,              # 5 copias = máx 100 MB en disco
-    encoding="utf-8"
-)
 stream_handler = logging.StreamHandler(sys.stdout)
 formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-file_handler.setFormatter(formatter)
 stream_handler.setFormatter(formatter)
+
+# En procesos worker (hijos spawn), usar únicamente salida por consola para evitar bloqueos de archivo en Windows
+handlers = [stream_handler]
+if __name__ == "__main__":
+    try:
+        from concurrent_log_handler import ConcurrentRotatingFileHandler
+        file_handler = ConcurrentRotatingFileHandler(
+            LOG_FILE,
+            maxBytes=20 * 1024 * 1024,  # 20 MB
+            backupCount=5,              # 5 copias = máx 100 MB en disco
+            encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
+    except ImportError:
+        from logging.handlers import RotatingFileHandler
+        file_handler = RotatingFileHandler(
+            LOG_FILE,
+            maxBytes=20 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8"
+        )
+        file_handler.setFormatter(formatter)
+        handlers.append(file_handler)
 
 logging.basicConfig(
     level=logging.INFO,
-    handlers=[file_handler, stream_handler],
+    handlers=handlers,
     force=True
 )
 logging.getLogger("mysql.connector").setLevel(logging.WARNING)
@@ -152,6 +172,12 @@ def main():
             scraper_kwargs["user"] = getattr(config, "IRIS_COLA_AUTO_USER", "emartina")
             scraper_kwargs["password"] = getattr(config, "IRIS_COLA_AUTO_PASS", "Inicio-2026")
 
+    # Inyectar proxy residencial exclusivo para ENACOM si está configurado en .env
+    if "enacom" in scraper_name:
+        enacom_proxy = getattr(config, "ENACOM_PROXY", None)
+        if enacom_proxy:
+            scraper_kwargs["proxy"] = enacom_proxy
+
     supervisor = SupervisorIndustrial(
         scraper_name=scraper_name,
         workers=args.workers,
@@ -178,4 +204,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

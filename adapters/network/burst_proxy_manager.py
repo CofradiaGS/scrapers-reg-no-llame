@@ -185,6 +185,19 @@ class BurstProxyManager:
         Filtra proxies en límite diario, muertos o en cooldown.
         """
         if self._static_proxy:
+            # Si el proxy configurado es Smartproxy, inyectar una sesión aleatoria sticky para aislar cada worker
+            if "smartproxy" in self._static_proxy.lower():
+                import random
+                from urllib.parse import urlparse, urlunparse
+                parsed = urlparse(self._static_proxy)
+                if parsed.username:
+                    u_base = parsed.username
+                    if "_session-" in u_base:
+                        u_base = u_base.split("_session-")[0]
+                    sess_id = f"s{random.randint(100000, 999999)}"
+                    new_user = f"{u_base}_session-{sess_id}"
+                    netloc = f"{new_user}:{parsed.password}@{parsed.hostname}:{parsed.port}"
+                    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
             return self._static_proxy
             
         end_time = time.time() + (timeout if timeout is not None else 10.0)
@@ -251,6 +264,13 @@ class BurstProxyManager:
         Registra un proxy que alcanzó el límite estricto de 100 consultas diarias en ENACOM.
         Queda vetado por el resto de la jornada y NUNCA se volverá a cosechar o encolar.
         """
+        if self._static_proxy and "smartproxy" in proxy_url.lower():
+            with self._lock:
+                self.stats["daily_limits"] += 1
+                self.stats["proxies_exhausted"] += 1
+            logger.info("🔄 [SMARTPROXY ROTACIÓN] Sesión previa alcanzó límite de 100 en ENACOM. Siguiente worker obtendrá nueva IP argentina limpia.")
+            return
+
         with self._lock:
             self._daily_blocked_proxies.add(proxy_url)
             self._dead_proxies.add(proxy_url)
@@ -268,6 +288,12 @@ class BurstProxyManager:
         Registra un proxy que alcanzó el límite de 5 consultas por minuto en ENACOM.
         Entra en cooldown temporal para volver al pool una vez transcurrido el tiempo.
         """
+        if self._static_proxy and "smartproxy" in proxy_url.lower():
+            with self._lock:
+                self.stats["minute_limits"] += 1
+            logger.info("🔄 [SMARTPROXY ROTACIÓN] Sesión previa en límite 5/min. Siguiente worker rotará a una nueva sesión limpia.")
+            return
+
         with self._lock:
             self._cooldown_proxies[proxy_url] = time.time() + cooldown_sec
             self._in_queue.discard(proxy_url)
@@ -291,6 +317,8 @@ class BurstProxyManager:
                 self.report_daily_limit(proxy_url)
             elif "5" in r_lower or "minuto" in r_lower:
                 self.report_minute_limit(proxy_url, cooldown_sec=65.0)
+            elif self._static_proxy and "smartproxy" in proxy_url.lower():
+                logger.info(f"🔄 [SMARTPROXY ROTACIÓN] Sesión falló [{reason}]. Rotando sesión para el próximo intento.")
             else:
                 with self._lock:
                     self._dead_proxies.add(proxy_url)

@@ -48,6 +48,12 @@ class EnacomWebAdapter(BaseScraperAdapter):
         self.headless = headless
         self.max_retries = max_retries
         self.proxy = proxy
+        if not self.proxy:
+            try:
+                import config
+                self.proxy = getattr(config, "ENACOM_PROXY", None)
+            except Exception:
+                pass
         self.use_tor = use_tor or kwargs.get("tor", False)
         self.tor_socks_port = tor_socks_port
         if self.use_tor and not self.proxy:
@@ -72,55 +78,69 @@ class EnacomWebAdapter(BaseScraperAdapter):
         except Exception as e:
             logger.warning(f"No se pudo inicializar directorio de cache estático ({e}).")
 
-    def _setup_page_routes(self, page: Page) -> None:
+    def _setup_page_routes(self, target: Any) -> None:
         """
-        Configura la interceptación y ruteo de red ultra-optimizado:
-        1. Fulfill local dinámico de scripts pesados (Google reCAPTCHA v3 runtime ~850 KB por versión).
-           Si la versión de release solicitada por Google no está en disco, se descarga una única vez
-           directamente y se almacena en `data/enacom_static_cache/<version>_<lang>.js`.
-           Para todas las cargas y rotaciones subsecuentes, se sirve en 0ms con 0 bytes consumidos de proxy.
-        2. Bloqueo (abort) de fuentes (.woff, .woff2, .ttf), librerías CSS pesadas (font-awesome, bootstrap),
-           logos e íconos estéticos que no aportan a la resolución.
-        3. Paso libre exclusivo para peticiones transaccionales esenciales (portal ENACOM, ASP.NET WebResource
-           y tokens reCAPTCHA v3).
+        Configura la interceptación y ruteo de red ultra-optimizado a nivel de BrowserContext:
+        1. Fulfill local dinámico de scripts pesados (Google reCAPTCHA v3 runtime ~850 KB y jQuery ~70 KB).
+           Garantiza 0 bytes consumidos de proxy en todos los iframes de reCAPTCHA y scripts de soporte.
+        2. Bloqueo (abort) de fuentes (.woff, .woff2, .ttf), CSS pesados (font-awesome, bootstrap, styles__ltr.css),
+           logos e íconos estéticos (logo-enacom, logo_48.png).
+        3. Paso libre exclusivo para peticiones transaccionales esenciales (portal ENACOM, Captcha.aspx y tokens api.js).
         """
         cache_dir = self._static_cache_dir
 
         def intercept_route(route):
-            url = route.request.url
-            clean_url = url.split("?")[0]
+            try:
+                url = route.request.url
+                clean_url = url.split("?")[0]
+                clean_lower = clean_url.lower()
 
-            # 1. Local Fulfill dinámico para Google reCAPTCHA v3 (~850 KB ahorrados por carga)
-            if "/recaptcha/releases/" in clean_url and ("recaptcha__" in clean_url and clean_url.endswith(".js")):
-                try:
-                    file_key = clean_url.split("/releases/")[1].replace("/", "_")
-                    local_path = cache_dir / file_key
-                    if not local_path.exists() or local_path.stat().st_size == 0:
-                        import urllib.request
-                        req = urllib.request.Request(clean_url, headers={"User-Agent": "Mozilla/5.0"})
-                        with urllib.request.urlopen(req, timeout=10) as resp:
-                            local_path.write_bytes(resp.read())
-                    return route.fulfill(
-                        path=str(local_path),
-                        content_type="application/javascript",
-                        status=200
-                    )
-                except Exception as e:
-                    logger.debug(f"Fallback a red para reCAPTCHA ({e})")
-                    return route.continue_()
+                # 1. Local Fulfill dinámico para Google reCAPTCHA v3 (~850 KB ahorrados por carga)
+                if "/recaptcha/releases/" in clean_url and ("recaptcha__" in clean_url and clean_url.endswith(".js")):
+                    try:
+                        file_key = clean_url.split("/releases/")[1].replace("/", "_")
+                        local_path = cache_dir / file_key
+                        if not local_path.exists() or local_path.stat().st_size == 0:
+                            import urllib.request
+                            req = urllib.request.Request(clean_url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=10) as resp:
+                                local_path.write_bytes(resp.read())
+                        return route.fulfill(
+                            path=str(local_path),
+                            content_type="application/javascript",
+                            status=200
+                        )
+                    except Exception as e:
+                        logger.debug(f"Fallback a red para reCAPTCHA ({e})")
+                        try:
+                            return route.continue_()
+                        except Exception:
+                            return None
 
-            # 2. Bloqueo de recursos estáticos innecesarios para el scraping
-            if any(ext in clean_url.lower() for ext in [
-                ".woff", ".woff2", ".ttf", ".eot",
-                "font-awesome", "all.min.css", "bootstrap", "popper",
-                "favicon.ico", "logo-enacom"
-            ]):
-                return route.abort()
+                # 2. Local Fulfill para jQuery (~70 KB ahorrados por carga)
+                if "jquery" in clean_lower and clean_lower.endswith(".js"):
+                    local_jq = cache_dir / "jquery-3.4.1.slim.min.js"
+                    if local_jq.exists() and local_jq.stat().st_size > 0:
+                        return route.fulfill(
+                            path=str(local_jq),
+                            content_type="application/javascript",
+                            status=200
+                        )
 
-            # 3. Continuar tráfico esencial (ENACOM Numeracion.aspx, WebResource, tokens api.js)
-            return route.continue_()
+                # 3. Bloqueo de recursos estáticos innecesarios para el scraping (< 6 KB wire size total)
+                if any(ext in clean_lower for ext in [
+                    ".woff", ".woff2", ".ttf", ".eot",
+                    "font-awesome", "all.min.css", "bootstrap", "popper",
+                    "favicon.ico", "logo-enacom", "logo_48.png", "styles__ltr.css"
+                ]):
+                    return route.abort()
 
-        page.route("**/*", intercept_route)
+                # 4. Continuar tráfico transaccional esencial (Numeracion.aspx, Captcha.aspx, tokens api.js)
+                return route.continue_()
+            except Exception:
+                pass
+
+        target.route("**/*", intercept_route)
 
     @property
     def nombre(self) -> str:
@@ -152,6 +172,26 @@ class EnacomWebAdapter(BaseScraperAdapter):
         """Alias para close() requerido por IScraperEnginePort."""
         self.close()
 
+    @staticmethod
+    def _formatear_proxy_playwright(proxy_url: Optional[str]) -> Optional[Dict[str, str]]:
+        """
+        Formatea una URL de proxy para Playwright soportando credenciales embebidas
+        (ej: http://user:pass@gate.smartproxy.com:7000 -> server, username, password).
+        """
+        if not proxy_url:
+            return None
+        from urllib.parse import urlparse
+        parsed = urlparse(proxy_url)
+        if parsed.username and parsed.password:
+            scheme = parsed.scheme or "http"
+            server = f"{scheme}://{parsed.hostname}:{parsed.port}"
+            return {
+                "server": server,
+                "username": parsed.username,
+                "password": parsed.password,
+            }
+        return {"server": proxy_url}
+
     def _ensure_browser(self) -> Page:
         """Inicializa o restablece la instancia de Playwright optimizada."""
         if self._page and not self._page.is_closed():
@@ -159,6 +199,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
 
         logger.info(f"Inicializando motor Chromium headless para ENACOM Web (Proxy: {self.proxy or 'Directo'})...")
         if not self._playwright:
+            os.environ.setdefault("NODE_OPTIONS", "--max-old-space-size=512")
             self._playwright = sync_playwright().start()
 
         if not self._browser or not self._browser.is_connected():
@@ -168,12 +209,29 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
                     "--disable-gpu",
+                    "--disable-software-rasterizer",
                     "--disable-extensions",
                     "--disable-blink-features=AutomationControlled",
+                    "--js-flags=--max-old-space-size=256",
+                    "--mute-audio",
+                    "--no-first-run",
+                    "--no-default-browser-check",
+                    "--disable-background-networking",
+                    "--disable-background-timer-throttling",
+                    "--disable-client-side-phishing-detection",
+                    "--disable-default-apps",
+                    "--disable-hang-monitor",
+                    "--disable-popup-blocking",
+                    "--disable-prompt-on-repost",
+                    "--disable-sync",
+                    "--disable-translate",
+                    "--metrics-recording-only",
                 ]
             }
             if self.proxy:
-                launch_kwargs["proxy"] = {"server": self.proxy}
+                p_cfg = self._formatear_proxy_playwright(self.proxy)
+                if p_cfg:
+                    launch_kwargs["proxy"] = p_cfg
             self._browser = self._playwright.chromium.launch(**launch_kwargs)
 
         context_kwargs: Dict[str, Any] = {
@@ -181,13 +239,15 @@ class EnacomWebAdapter(BaseScraperAdapter):
             "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         }
         if self.proxy:
-            context_kwargs["proxy"] = {"server": self.proxy}
+            p_cfg = self._formatear_proxy_playwright(self.proxy)
+            if p_cfg:
+                context_kwargs["proxy"] = p_cfg
 
         self._context = self._browser.new_context(**context_kwargs)
+        self._setup_page_routes(self._context)
         self._page = self._context.new_page()
         self._page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
-        self._setup_page_routes(self._page)
         try:
             self._page.goto(self.PORTAL_URL, wait_until="domcontentloaded", timeout=25000)
         except Exception as e:
@@ -235,22 +295,35 @@ class EnacomWebAdapter(BaseScraperAdapter):
                 "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             }
             if self.proxy:
-                context_kwargs["proxy"] = {"server": self.proxy}
+                p_cfg = self._formatear_proxy_playwright(self.proxy)
+                if p_cfg:
+                    context_kwargs["proxy"] = p_cfg
 
             try:
                 self._context = self._browser.new_context(**context_kwargs)
+                self._setup_page_routes(self._context)
                 self._page = self._context.new_page()
                 self._page.add_init_script("Object.defineProperty(navigator, 'webdriver', { get: () => undefined });")
 
-                self._setup_page_routes(self._page)
                 self._page.goto(self.PORTAL_URL, wait_until="domcontentloaded", timeout=25000)
                 return True
             except Exception as e:
                 logger.warning(f"Error al inicializar portal con nuevo proxy {self.proxy}: {e}")
-                self.proxy = None
+                try:
+                    if self._context:
+                        self._context.close()
+                except Exception:
+                    pass
+                try:
+                    if self._browser:
+                        self._browser.close()
+                except Exception:
+                    pass
                 self._page = None
                 self._context = None
+                self._browser = None
                 return False
+
 
     def _normalizar_operador(self, nombre_raw: str) -> str:
         """Homologa las razones sociales regulatorias a marcas comerciales."""
@@ -294,6 +367,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
 
             for intento in range(1, self.max_retries + 1):
                 try:
+                    logger.info(f"[{ani_clean}] Iniciando consulta en portal ENACOM (Intento #{intento}/{self.max_retries})...")
                     # 1. Asegurar formulario limpio
                     if not page.url.startswith(self.PORTAL_URL):
                         page.goto(self.PORTAL_URL, wait_until="domcontentloaded", timeout=15000)
@@ -306,10 +380,11 @@ class EnacomWebAdapter(BaseScraperAdapter):
                             page.reload(wait_until="domcontentloaded")
                             continue
 
-                        img_bytes = captcha_elem.screenshot()
+                        img_bytes = captcha_elem.screenshot(timeout=8000)
                         cand = self.solver.solve_bytes(img_bytes)
                         if len(cand) == 5:
                             code = cand
+                            logger.info(f"[{ani_clean}] Captcha resuelto: '{code}' (Sub-intento #{sub_intento + 1}).")
                             break
 
                         # Si el OCR leyó menos o más de 5 caracteres, recargar imagen sin gastar intento de envío
@@ -317,6 +392,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
                         page.wait_for_timeout(500)
 
                     if len(code) != 5:
+                        logger.warning(f"[{ani_clean}] No se logró resolver captcha de 5 caracteres tras 6 sub-intentos. Recargando página...")
                         page.reload(wait_until="domcontentloaded")
                         continue
 
@@ -336,16 +412,20 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     page.wait_for_timeout(80)
                     page.fill("#TxtCaptcha", code)
                     page.wait_for_timeout(120)
+                    logger.info(f"[{ani_clean}] Enviando formulario con captcha '{code}'...")
                     page.click("#BtnBuscar")
 
                     # 4. Esperar respuesta (resultado poblado para este número específico o mensaje de error)
                     encontrado = False
                     for _ in range(40):
-                        val_num = page.input_value("#TxtRtaNumero").strip()
-                        val_actual = page.input_value("#TxtPrestadorActual").strip()
-                        if val_num == ani_clean and val_actual:
-                            encontrado = True
-                            break
+                        try:
+                            val_num = page.input_value("#TxtRtaNumero", timeout=300).strip()
+                            val_actual = page.input_value("#TxtPrestadorActual", timeout=300).strip()
+                            if val_num == ani_clean and val_actual:
+                                encontrado = True
+                                break
+                        except Exception:
+                            pass
 
                         # Verificar si saltó error de captcha incorrecto u otro mensaje
                         div_msg = page.locator("#DivMensaje")
@@ -414,8 +494,8 @@ class EnacomWebAdapter(BaseScraperAdapter):
                             ani=ani_clean,
                             status=StatusScraping.COINCIDENCIA,
                             fuente_scraper="enacom_web",
-                            operador=op_orig_norm,
-                            operador_receptor=op_norm,
+                            operador=op_orig_norm or op_norm,
+                            operador_receptor=op_norm or op_orig_norm,
                             detalles=detalles,
                             raw={"prestador_original": orig, "prestador_actual": act},
                             descripcion=desc
