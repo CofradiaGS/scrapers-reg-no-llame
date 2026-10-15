@@ -214,7 +214,6 @@ def esta_en_ventana_push(dt=None) -> bool:
 VPS_ORPHAN_TIMEOUT_MINUTES = int(os.getenv("VPS_ORPHAN_TIMEOUT_MINUTES", "720"))
 VPS_ORPHAN_TIMEOUT_HOURS = float(VPS_ORPHAN_TIMEOUT_MINUTES) / 60.0
 
-# Umbrales diferenciados por tipo de scraper (permite ajuste fino por operador)
 VPS_ORPHAN_TIMEOUT_BY_SCRAPER = {
     "telcos": int(os.getenv("VPS_ORPHAN_TIMEOUT_TELCOS", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
     "iris": int(os.getenv("VPS_ORPHAN_TIMEOUT_IRIS", str(VPS_ORPHAN_TIMEOUT_MINUTES))),
@@ -227,14 +226,15 @@ VPS_ORPHAN_TIMEOUT_BY_SCRAPER = {
 def obtener_timeout_huerfanos_vps(scraper_name: Optional[str] = None) -> int:
     """
     Retorna el umbral en minutos (por defecto 12 horas = 720 min) antes de considerar
-    un registro como huérfano en el VPS central. Protege a scrapers lentos contra reprocesamientos
-    prematuros.
+    un registro como huérfano en el VPS central. Permite override por tipo de scraper o env.
     """
     if scraper_name:
         s_clean = scraper_name.lower().strip()
         for k, v in VPS_ORPHAN_TIMEOUT_BY_SCRAPER.items():
             if k in s_clean:
                 return v
+        if any(w in s_clean for w in ("cobro_express", "ce_", "claro", "personal", "movistar")):
+            return VPS_ORPHAN_TIMEOUT_BY_SCRAPER.get("telcos", VPS_ORPHAN_TIMEOUT_MINUTES)
     return VPS_ORPHAN_TIMEOUT_MINUTES
 
 
