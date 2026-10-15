@@ -185,10 +185,18 @@ def worker_lifecycle_process(
 
             # Si el supervisor activa pausa (ej: fin de jornada comercial, caída de VPN o cola vacía)
             if pause_event.is_set():
+                t_inicio_pausa = time.time()
                 w_log.info(f"[{worker_tag}] Supervisor en pausa activa. Entrando en reposo pasivo silencioso...")
                 while pause_event.is_set() and not stop_event.is_set():
                     time.sleep(2.0)
                 if not stop_event.is_set():
+                    tiempo_pausado = time.time() - t_inicio_pausa
+                    if tiempo_pausado > 1800:
+                        w_log.info(
+                            f"[{worker_tag}] 🔄 Pausa prolongada detectada ({int(tiempo_pausado/60)} min). "
+                            "Rotando worker para iniciar jornada con sesión limpia..."
+                        )
+                        break
                     jitter = random.uniform(0.5, 2.0) + (worker_slot * 0.4)
                     w_log.info(f"[{worker_tag}] Pausa liberada. Reanudando escalonadamente en {jitter:.1f}s (anti-thundering herd)...")
                     time.sleep(jitter)

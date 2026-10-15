@@ -1,4 +1,17 @@
 import os
+import socket
+
+# Fijar resolución DNS de iris.tmoviles.com.ar a la IP estable de WebLogic (10.167.27.185)
+# para evitar que Windows resuelva intermitentemente hacia 10.167.46.191 (IIS que arroja 404).
+if not getattr(socket, "_iris_pinned", False):
+    _orig_getaddrinfo = socket.getaddrinfo
+    def _pinned_getaddrinfo(host, *args, **kwargs):
+        if host == "iris.tmoviles.com.ar":
+            host = "10.167.27.185"
+        return _orig_getaddrinfo(host, *args, **kwargs)
+    socket.getaddrinfo = _pinned_getaddrinfo
+    socket._iris_pinned = True
+
 from typing import Optional, Dict
 from pathlib import Path
 from dotenv import load_dotenv
