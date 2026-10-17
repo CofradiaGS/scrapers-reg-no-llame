@@ -81,17 +81,23 @@ class SincronizarPullMatutinoUseCase:
             insertadas = 0
             if tareas:
                 insertadas = self.local.insertar_tareas_descargadas(tareas, tipo_cola=tipo_cola)
-                logger.info(
-                    f"✅ [WATERMARK PULL EXITOSO] {len(tareas):,} tareas descargadas del VPS, "
-                    f"{insertadas:,} insertadas en SQLite local."
-                )
+                if insertadas == 0:
+                    logger.warning(
+                        f"⚠️ [WATERMARK PULL REDUNDANTE] {len(tareas):,} tareas descargadas del VPS, "
+                        f"pero 0 insertadas como pendientes nuevas en SQLite local (todas ya se encontraban procesadas/sincronizadas)."
+                    )
+                else:
+                    logger.info(
+                        f"✅ [WATERMARK PULL EXITOSO] {len(tareas):,} tareas descargadas del VPS, "
+                        f"{insertadas:,} nuevas pendientes insertadas en SQLite local."
+                    )
             else:
                 logger.warning(
                     f"⚠️ [WATERMARK PULL VACÍO] No hay tareas pendientes disponibles en el VPS "
                     f"para tipo_cola='{tipo_cola}'."
                 )
 
-            total_ahora = self.local.contar_pendientes(tipo_cola=tipo_cola)
+            total_ahora = self.local.contar_pendientes(tipo_cola=tipo_cola, scraper_actual=scraper_actual)
             return {
                 "ejecutado": True,
                 "descargados": len(tareas),

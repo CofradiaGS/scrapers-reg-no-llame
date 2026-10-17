@@ -87,18 +87,32 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     fecha_descarga DATETIME DEFAULT CURRENT_TIMESTAMP,
                     fecha_procesado DATETIME,
                     fecha_sincronizado DATETIME,
+                    fecha_lease DATETIME,
                     PRIMARY KEY (id_vps, tipo_cola)
                 );
             """)
+            try:
+                conn.execute("ALTER TABLE tareas_staging ADD COLUMN fecha_lease DATETIME;")
+            except Exception:
+                pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado ON tareas_staging(tipo_cola, estado_local);")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_auto_estado ON tareas_staging(tipo_cola, auto_id, estado_local);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado_scraper ON tareas_staging(tipo_cola, estado_local, scraper_actual);")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fecha_sincronizado);")
             # Auto-sanación de arranque: si el supervisor previo cayó de forma abrupta,
-            # revertir cualquier tarea que haya quedado atrapada en 'en_proceso' local a 'pendiente'
+            # promover tareas que ya tenían resultado a 'listo_para_subir' y solo revertir a 'pendiente' las incompletas
             conn.execute("""
                 UPDATE tareas_staging
-                SET estado_local = 'pendiente'
-                WHERE estado_local = 'en_proceso';
+                SET estado_local = 'listo_para_subir'
+                WHERE estado_local = 'en_proceso'
+                  AND resultado_json IS NOT NULL AND resultado_json != '';
+            """)
+            conn.execute("""
+                UPDATE tareas_staging
+                SET estado_local = 'pendiente',
+                    fecha_lease = NULL
+                WHERE estado_local = 'en_proceso'
+                  AND (resultado_json IS NULL OR resultado_json = '');
             """)
             conn.execute("COMMIT;")
         finally:
@@ -143,26 +157,32 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = nombre_clean
 
 
+            cond_auto = ""
+            params_auto = []
+            if self.tipo_cola == "cola_automatizacion" and self.auto_id:
+                cond_auto = "AND auto_id = ?"
+                params_auto = [self.auto_id]
+
             if canon == "telcos":
-                cursor = conn.execute("""
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto}
                       AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
-                """, (self.tipo_cola, batch_size))
+                """, [self.tipo_cola] + params_auto + [batch_size])
             else:
-                cursor = conn.execute("""
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto}
                       AND scraper_actual = ?
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
-                """, (self.tipo_cola, canon, batch_size))
+                """, [self.tipo_cola] + params_auto + [canon, batch_size])
             filas = cursor.fetchall()
 
             if not filas:
@@ -174,7 +194,8 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
 
             conn.execute(f"""
                 UPDATE tareas_staging
-                SET estado_local = 'en_proceso'
+                SET estado_local = 'en_proceso',
+                    fecha_lease = CURRENT_TIMESTAMP
                 WHERE tipo_cola = ? AND id_vps IN ({placeholders});
             """, [self.tipo_cola] + ids_vps)
             conn.execute("COMMIT;")
@@ -372,20 +393,35 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
         """Recupera registros colgados en 'en_proceso' o 'en_subida' tras caídas imprevistas o reinicios."""
         conn = self._get_connection()
         try:
-            with conn:
+                # 1. Si alguna tarea en_proceso ya tiene resultado_json, promoverla a listo_para_subir
+                cursor0 = conn.execute("""
+                    UPDATE tareas_staging
+                    SET estado_local = 'listo_para_subir',
+                        fecha_lease = NULL
+                    WHERE tipo_cola = ? AND estado_local = 'en_proceso'
+                      AND resultado_json IS NOT NULL AND resultado_json != '';
+                """, (self.tipo_cola,))
+                h_promovidos = cursor0.rowcount
+
+                # 2. Solo revertir a pendiente aquellas tareas verdaderamente huérfanas sin resultado
                 cursor1 = conn.execute("""
                     UPDATE tareas_staging
-                    SET estado_local = 'pendiente'
+                    SET estado_local = 'pendiente',
+                        fecha_lease = NULL
                     WHERE tipo_cola = ? AND estado_local = 'en_proceso' 
-                      AND (fecha_procesado IS NULL OR fecha_procesado < DATETIME('now', ?));
-                """, (self.tipo_cola, f"-{minutos_inactividad} minutes"))
+                      AND (resultado_json IS NULL OR resultado_json = '')
+                      AND (
+                          (fecha_lease IS NOT NULL AND fecha_lease < DATETIME('now', ?))
+                          OR (fecha_lease IS NULL AND fecha_descarga < DATETIME('now', ?))
+                      );
+                """, (self.tipo_cola, f"-{minutos_inactividad} minutes", f"-{minutos_inactividad} minutes"))
                 h_proc = cursor1.rowcount
 
                 cursor2 = conn.execute("""
                     UPDATE tareas_staging
                     SET estado_local = 'listo_para_subir'
                     WHERE tipo_cola = ? AND estado_local = 'en_subida' 
-                      AND (fecha_procesado IS NULL OR fecha_procesado < DATETIME('now', ?));
+                      AND (fecha_procesado IS NOT NULL AND fecha_procesado < DATETIME('now', ?));
                 """, (self.tipo_cola, f"-{minutos_inactividad} minutes"))
                 h_subida = cursor2.rowcount
                 return h_proc + h_subida
@@ -408,12 +444,18 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
         }
         conn = self._get_connection()
         try:
-            cursor = conn.execute("""
+            cond_auto = ""
+            params_stats = [self.tipo_cola]
+            if self.tipo_cola == "cola_automatizacion" and self.auto_id:
+                cond_auto = "AND auto_id = ?"
+                params_stats = [self.tipo_cola, self.auto_id]
+
+            cursor = conn.execute(f"""
                 SELECT estado_local, COUNT(*) as cnt
                 FROM tareas_staging
-                WHERE tipo_cola = ?
+                WHERE tipo_cola = ? {cond_auto}
                 GROUP BY estado_local;
-            """, (self.tipo_cola,))
+            """, params_stats)
             for row in cursor.fetchall():
                 est = row["estado_local"]
                 cnt = row["cnt"]
@@ -462,6 +504,10 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     id_vps, q_type, linea, dni, auto_id, target_pc, scraper_act, payload_str, fuente_str
                 ))
 
+            # Medir pendientes antes de la inserción para detectar si las tareas ya existían procesadas
+            cur_antes = conn.execute("SELECT COUNT(*) FROM tareas_staging WHERE tipo_cola = ? AND estado_local = 'pendiente';", (q_type,))
+            pend_antes = cur_antes.fetchone()[0]
+
             cursor = conn.executemany("""
                 INSERT INTO tareas_staging (
                     id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, estado_local
@@ -480,12 +526,25 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     reintentos_sync = 0,
                     fecha_descarga = CURRENT_TIMESTAMP,
                     fecha_procesado = NULL,
-                    fecha_sincronizado = NULL
-                WHERE estado_local != 'en_proceso';
+                    fecha_sincronizado = NULL,
+                    fecha_lease = NULL
+                WHERE estado_local NOT IN ('en_proceso', 'en_subida', 'listo_para_subir', 'sincronizado')
+                  AND (resultado_json IS NULL OR resultado_json = '');
             """, valores)
+
+            cur_despues = conn.execute("SELECT COUNT(*) FROM tareas_staging WHERE tipo_cola = ? AND estado_local = 'pendiente';", (q_type,))
+            pend_despues = cur_despues.fetchone()[0]
             conn.execute("COMMIT;")
-            logger.info(f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type})")
-            return len(valores)
+
+            nuevos = max(0, pend_despues - pend_antes)
+            if nuevos < len(valores):
+                logger.info(
+                    f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type}): "
+                    f"{nuevos:,} nuevas tareas pendientes agregadas ({len(valores) - nuevos:,} omitidas por encontrarse ya procesadas/sincronizadas)."
+                )
+            else:
+                logger.info(f"💾 Inyectadas {len(valores)} tareas en SQLite local ({q_type})")
+            return nuevos
         except Exception as e:
             try:
                 conn.execute("ROLLBACK;")

@@ -223,8 +223,8 @@ def esta_en_ventana_push(dt=None) -> bool:
     return politica.esta_en_ventana(dt)
 
 
-# Umbral de expiración de leasing / rescate de registros huérfanos en VPS (Opción D: 12 horas = 720 minutos)
-VPS_ORPHAN_TIMEOUT_MINUTES = int(os.getenv("VPS_ORPHAN_TIMEOUT_MINUTES", "720"))
+# Umbral de expiración de leasing / rescate de registros huérfanos en VPS (Opción D: 24 horas = 1440 minutos para blindaje nocturno)
+VPS_ORPHAN_TIMEOUT_MINUTES = int(os.getenv("VPS_ORPHAN_TIMEOUT_MINUTES", "1440"))
 VPS_ORPHAN_TIMEOUT_HOURS = float(VPS_ORPHAN_TIMEOUT_MINUTES) / 60.0
 
 VPS_ORPHAN_TIMEOUT_BY_SCRAPER = {

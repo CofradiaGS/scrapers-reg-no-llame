@@ -21,6 +21,7 @@ from datetime import datetime, date
 from typing import Dict, Any, Optional, Callable
 
 import config
+from core.domain.schedule import PoliticaHorarioComercial
 from core.ports.sync_port import ISyncRemoteRepoPort, ISyncLocalRepoPort
 from core.use_cases.sync_pull_use_case import SincronizarPullMatutinoUseCase
 from core.use_cases.sync_push_use_case import SincronizarPushNocturnoUseCase
@@ -50,7 +51,8 @@ class SyncSchedulerThread(threading.Thread):
         sync_retention_days: Optional[int] = None,
         check_interval_sec: float = 10.0,
         on_pull_success: Optional[Callable[[int], None]] = None,
-        force_push: bool = False
+        force_push: bool = False,
+        is_paused_fn: Optional[Callable[[], bool]] = None
     ):
         super().__init__(name="SyncSchedulerThread", daemon=True)
         self.local_repo = local_repo
@@ -72,6 +74,8 @@ class SyncSchedulerThread(threading.Thread):
         self.check_interval_sec = check_interval_sec
         self.on_pull_success = on_pull_success
         self.force_push = force_push
+        self.is_paused_fn = is_paused_fn
+        self.politica_horario = PoliticaHorarioComercial()
 
         self._pull_use_case = SincronizarPullMatutinoUseCase(remote_repo=self.remote_repo, local_repo=self.local_repo)
         self._push_use_case = SincronizarPushNocturnoUseCase(remote_repo=self.remote_repo, local_repo=self.local_repo)
@@ -214,6 +218,16 @@ class SyncSchedulerThread(threading.Thread):
                 # Si todavía quedan >= 5000 registros, el ciclo while continúa INMEDIATAMENTE
                 # sin pausas de polling, ejecutando los N ciclos de 5.000 consecutivos.
 
+    def _esta_en_pausa_operativa(self) -> bool:
+        """Determina si la máquina está pausada o fuera de horario comercial oficial."""
+        if self.is_paused_fn and self.is_paused_fn():
+            return True
+        if not self.force_push and getattr(config, "HORARIO_COMERCIAL_ENABLED", True):
+            if any(k in (self.scraper_actual or "").lower() for k in ("iris", "telco", "claro", "personal", "movistar")):
+                if hasattr(self, "politica_horario") and not self.politica_horario.esta_en_horario():
+                    return True
+        return False
+
     def run(self):
         """Bucle continuo del centinela de sincronización."""
         logger.info(
@@ -242,15 +256,18 @@ class SyncSchedulerThread(threading.Thread):
 
         # 1. Comprobación inicial de arranque: Si la cola local está vacía o baja, recargar
         try:
-            pendientes_inicio = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
-            if pendientes_inicio <= self.low_watermark:
-                logger.info(f"💧 [INICIO STAGING] Cola local baja ({pendientes_inicio:,} tareas). Ejecutando recarga inicial...")
-                res_ini = self.ejecutar_pull_inmediato(forzar=False)
-                if res_ini.get("ejecutado") and res_ini.get("descargados", 0) > 0 and self.on_pull_success:
-                    try:
-                        self.on_pull_success(res_ini["descargados"])
-                    except Exception as e_cb:
-                        logger.warning(f"Aviso en callback on_pull_success inicial: {e_cb}")
+            if not self._esta_en_pausa_operativa():
+                pendientes_inicio = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
+                if pendientes_inicio <= self.low_watermark:
+                    logger.info(f"💧 [INICIO STAGING] Cola local baja ({pendientes_inicio:,} tareas). Ejecutando recarga inicial...")
+                    res_ini = self.ejecutar_pull_inmediato(forzar=False)
+                    if res_ini.get("ejecutado") and res_ini.get("descargados", 0) > 0 and self.on_pull_success:
+                        try:
+                            self.on_pull_success(res_ini["descargados"])
+                        except Exception as e_cb:
+                            logger.warning(f"Aviso en callback on_pull_success inicial: {e_cb}")
+            else:
+                logger.info("⏸️ [INICIO STAGING] Recarga inicial omitida: Supervisor en pausa o fuera de horario comercial.")
         except Exception as e_ini:
             logger.warning(f"Aviso en comprobación inicial de staging: {e_ini}")
 
@@ -261,18 +278,23 @@ class SyncSchedulerThread(threading.Thread):
                 # --- 1. EVALUAR WATERMARK PULL (Reabastecimiento de tareas - Prioridad #1 para no parar producción) ---
                 time_since_empty = time.time() - self._ultimo_pull_vacio_time
                 if time_since_empty >= 60.0:
-                    pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
-                    if pendientes <= self.low_watermark:
-                        res_pull = self.ejecutar_pull_inmediato(forzar=False)
-                        if res_pull.get("ejecutado"):
-                            descargados = res_pull.get("descargados", 0)
-                            if descargados == 0:
-                                self._ultimo_pull_vacio_time = time.time()
-                            elif descargados > 0 and self.on_pull_success:
-                                try:
-                                    self.on_pull_success(descargados)
-                                except Exception as e_cb:
-                                    logger.warning(f"Aviso en on_pull_success: {e_cb}")
+                    if self._esta_en_pausa_operativa():
+                        # Fuera de horario comercial o supervisor pausado: no reclamar tareas al VPS
+                        pass
+                    else:
+                        pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
+                        if pendientes <= self.low_watermark:
+                            res_pull = self.ejecutar_pull_inmediato(forzar=False)
+                            if res_pull.get("ejecutado"):
+                                descargados = res_pull.get("descargados", 0)
+                                insertados = res_pull.get("insertados", 0)
+                                if descargados == 0 or insertados == 0:
+                                    self._ultimo_pull_vacio_time = time.time()
+                                elif descargados > 0 and self.on_pull_success:
+                                    try:
+                                        self.on_pull_success(descargados)
+                                    except Exception as e_cb:
+                                        logger.warning(f"Aviso en on_pull_success: {e_cb}")
 
                 # --- 2. EVALUAR PUSH AL VPS (Drenaje continuo desacoplado de lotes de 5.000) ---
                 listos_subir = self.local_repo.contar_listos_para_subir(tipo_cola=self.tipo_cola)

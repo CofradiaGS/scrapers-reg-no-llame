@@ -430,12 +430,12 @@ class TestSyncUseCases(unittest.TestCase):
         )
 
     def test_timeout_huerfanos_12_horas_configuracion(self):
-        """Verifica que el umbral de huérfanos por defecto sea 720 minutos (12 horas)."""
-        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_MINUTES, 720)
-        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_HOURS, 12.0)
-        self.assertEqual(config.obtener_timeout_huerfanos_vps("telcos"), 720)
-        self.assertEqual(config.obtener_timeout_huerfanos_vps("iris_browser"), 720)
-        self.assertEqual(config.obtener_timeout_huerfanos_vps("desconocido"), 720)
+        """Verifica que el umbral de huérfanos por defecto sea 1440 minutos (24 horas) o el configurado."""
+        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_MINUTES, 1440)
+        self.assertEqual(config.VPS_ORPHAN_TIMEOUT_HOURS, 24.0)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("telcos"), 1440)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("iris_browser"), 1440)
+        self.assertEqual(config.obtener_timeout_huerfanos_vps("desconocido"), 1440)
 
 
 if __name__ == "__main__":

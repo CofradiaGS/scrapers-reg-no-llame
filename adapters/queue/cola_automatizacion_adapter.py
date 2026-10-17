@@ -716,6 +716,8 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     instance_id = NULL
                 WHERE estado = 'en_proceso'
                   AND auto_id = %s
+                  AND (resultado IS NULL OR resultado = '')
+                  AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%')
                   AND fecha_inicio < NOW() - INTERVAL %s MINUTE
             """
             cursor.execute(query, (self.auto_id, minutos_inactividad))

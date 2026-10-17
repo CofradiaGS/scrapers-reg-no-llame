@@ -63,10 +63,12 @@ CREATE TABLE IF NOT EXISTS tareas_staging (
     fecha_descarga DATETIME DEFAULT CURRENT_TIMESTAMP,
     fecha_procesado DATETIME,
     fecha_sincronizado DATETIME,
+    fecha_lease DATETIME,
     PRIMARY KEY (id_vps, tipo_cola)
 );
 
 CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado ON tareas_staging(tipo_cola, estado_local);
+CREATE INDEX IF NOT EXISTS idx_staging_tipo_auto_estado ON tareas_staging(tipo_cola, auto_id, estado_local);
 CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fecha_sincronizado);
 ```
 
@@ -77,7 +79,7 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 | Estado Local (`estado_local`) | Descripción | Disparador de Transición |
 |---|---|---|
 | `pendiente` | Tarea descargada del VPS lista para raspado local O posta intermedia del pipeline (ej: IRIS -> Telcos -> CuitOnline/Datuar -> BCRA). | Pull matutino, recarga watermark, o `persistir_resultados()` intermedio. |
-| `en_proceso` | Tarea reservada por un worker en memoria. | `reservar_lote()` vía `DBDispatcherThread`. |
+| `en_proceso` | Tarea reservada por un worker en memoria con registro de `fecha_lease`. | `reservar_lote()` vía `DBDispatcherThread`. |
 | `en_subida` | Tarea reservada atómicamente por el proceso de sincronización durante el push hacia el VPS. Previene colisiones multihilo/multiproceso. | `obtener_lote_para_push()` bajo transacción `BEGIN IMMEDIATE`. |
 | `listo_para_subir` | Tarea que completó la totalidad de su pipeline local (`scraper_actual = 'finalizado'`) esperando push a VPS. | `persistir_resultados()` al finalizar la cadena. |
 | `fallido` | Error fatal irrecuperable en scraping local (WAF, caída de proxy). | `persistir_resultados()` con status error. |
@@ -89,12 +91,12 @@ CREATE INDEX IF NOT EXISTS idx_staging_sincro ON tareas_staging(estado_local, fe
 
 | Método | Parámetros | Retorno | Propósito Hexagonal |
 |---|---|---|---|
-| `reservar_lote` | `batch_size: int`, `scraper_nombre: str` | `List[RegistroCola]` | Reclama micro-lotes locales a 0ms sin tocar red. Prioriza registros con DNI para maximizar cobertura. |
+| `reservar_lote` | `batch_size: int`, `scraper_nombre: str` | `List[RegistroCola]` | Reclama micro-lotes locales a 0ms sin tocar red. Registra `fecha_lease = NOW()` para control de inactividad seguro. |
 | `persistir_resultados` | `resultados: List[Dict[str, Any]]` | `bool` | Persiste en SQLite marcando `listo_para_subir` solo si finalizó; si restan etapas, preserva `pendiente` y enriquece `payload_origen`. |
 | `revertir_a_pendiente` | `ids: List[int]` | `bool` | Recupera tareas si un worker concluye anticipadamente. |
 | `revertir_subida_a_listo` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Devuelve registros de `en_subida` a `listo_para_subir` si falla o se interrumpe la subida. |
-| `liberar_huerfanos` | `minutos_inactividad: int = 15` | `int` | Watchdog local contra caídas imprevistas (recupera `en_proceso` y `en_subida`). |
-| `insertar_tareas_descargadas` | `tareas: List[Dict]`, `tipo_cola: str` | `int` | Inyecta tareas del pull en SQLite usando `ON CONFLICT DO NOTHING` para proteger el progreso local. |
+| `liberar_huerfanos` | `minutos_inactividad: int = 15` | `int` | Watchdog local contra caídas imprevistas (recupera `en_proceso` evaluando `fecha_lease < NOW() - 15m` y `en_subida`). Previene abortar tareas en vuelo. |
+| `insertar_tareas_descargadas` | `tareas: List[Dict]`, `tipo_cola: str` | `int` | Inyecta tareas del pull en SQLite usando `ON CONFLICT DO UPDATE` blindado con guarda `WHERE estado_local NOT IN ('en_proceso', 'en_subida', 'listo_para_subir', 'sincronizado') AND (resultado_json IS NULL OR resultado_json = '')` para proteger el progreso local y resultados. |
 | `obtener_lote_para_push` | `limit: int = 5000`, `tipo_cola: str` | `List[Dict]` | Reclama atómicamente registros como `en_subida` para el push masivo al VPS. |
 | `marcar_como_sincronizados` | `ids_vps: List[int]`, `tipo_cola: str` | `bool` | Registra `fecha_sincronizado = NOW()` y estado `sincronizado`. |
 | `purgar_antiguos` | `dias_retencion: int = 7` | `int` | Limpia registros sincronizados con > 7 días de resguardo. |

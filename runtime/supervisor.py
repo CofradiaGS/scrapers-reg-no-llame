@@ -805,6 +805,15 @@ class SupervisorIndustrial:
         estado_hc = self.politica_horario.obtener_estado()
         desc_hc = "IGNORADO (--forzar-horario)" if self.forzar_horario else estado_hc["descripcion"]
 
+        # Inicializar pausa preventiva inmediata si arranca fuera de horario comercial
+        es_con_horario = any(k in self.scraper_name.lower() for k in ("iris", "telco", "claro", "personal", "movistar"))
+        if not self.forzar_horario and es_con_horario and not estado_hc["abierto"]:
+            logger.warning(
+                f"⏸️ [HORARIO COMERCIAL] Inicio fuera de ventana operativa: {estado_hc['descripcion']}. "
+                "Los workers iniciarán en reposo hasta la reapertura comercial."
+            )
+            self._set_pause("horario")
+
         print("*" * 75)
         print("🛡️  INICIANDO SUPERVISOR INDUSTRIAL 24/7 (ARQUITECTURA HEXAGONAL)")
         print(f"  • Scraper asignado:       {self.scraper_name.upper()}")
@@ -846,7 +855,8 @@ class SupervisorIndustrial:
                     scraper_actual=self.scraper_name,
                     stop_event=self.stop_event,
                     on_pull_success=self._on_sync_pull_success,
-                    force_push=self.force_push
+                    force_push=self.force_push,
+                    is_paused_fn=lambda: self.pause_event.is_set() or bool(self._pause_reasons)
                 )
                 self.sync_scheduler.start()
 
@@ -885,13 +895,6 @@ class SupervisorIndustrial:
         if hasattr(signal, "SIGTERM"):
             signal.signal(signal.SIGTERM, handle_shutdown)
 
-        # 3. Inicializar pausa preventiva si arranca fuera de horario comercial
-        if not self.forzar_horario and "iris" in self.scraper_name and not estado_hc["abierto"]:
-            logger.warning(
-                f"⏸️ [HORARIO COMERCIAL] Inicio fuera de ventana operativa: {estado_hc['descripcion']}. "
-                "Los workers iniciarán en reposo hasta la reapertura comercial."
-            )
-            self._set_pause("horario")
 
         # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal, Datuar, CuitOnline o Telcos
         tor_daemon = None

@@ -32,10 +32,22 @@ def main():
     c = conn.cursor()
 
     if args.revertir_huerfanos:
-        c.execute("UPDATE tareas_staging SET estado_local = 'pendiente' WHERE estado_local = 'en_proceso'")
+        c.execute("""
+            UPDATE tareas_staging 
+            SET estado_local = 'listo_para_subir' 
+            WHERE estado_local = 'en_proceso' 
+              AND resultado_json IS NOT NULL AND resultado_json != '';
+        """)
+        listos = c.rowcount
+        c.execute("""
+            UPDATE tareas_staging 
+            SET estado_local = 'pendiente', fecha_lease = NULL 
+            WHERE estado_local = 'en_proceso' 
+              AND (resultado_json IS NULL OR resultado_json = '');
+        """)
         cambiados = c.rowcount
         conn.commit()
-        print(f"🔄 Se revirtieron {cambiados:,} registros de 'en_proceso' a 'pendiente' exitosamente.\n")
+        print(f"🔄 Se promovieron {listos:,} tareas con resultado a 'listo_para_subir' y se revirtieron {cambiados:,} huérfanos vacíos a 'pendiente'.\n")
 
     print("=" * 80)
     print("📊 MONITOR EN VIVO: STAGING LOCAL ENACOM / REGISTRO NO LLAME")

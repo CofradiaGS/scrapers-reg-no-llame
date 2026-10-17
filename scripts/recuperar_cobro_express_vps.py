@@ -31,6 +31,7 @@ cur_sqlite.execute("""
     WHERE tipo_cola = 'cola_automatizacion'
       AND auto_id = 'scraper_cobro_express'
       AND (resultado_json LIKE '%"status": "error"%' OR resultado_json LIKE '%"status":"error"%')
+      AND (resultado_json NOT LIKE '%"status": "coincidencia"%' AND resultado_json NOT LIKE '%"status":"coincidencia"%')
 """)
 ids_error_staging = [r[0] for r in cur_sqlite.fetchall()]
 print(f"   -> Encontrados {len(ids_error_staging):,} IDs con error en staging local.", flush=True)
@@ -38,10 +39,10 @@ print(f"   -> Encontrados {len(ids_error_staging):,} IDs con error en staging lo
 # 2. Conectar a MySQL VPS
 print("\n2. Conectando a MySQL VPS (cola_automatizacion)...", flush=True)
 conn_vps = mysql.connector.connect(
-    host=os.getenv("VPS_DBHOST", "172.16.20.15"),
-    user=os.getenv("COLA_AUTO_DBUSER", "automatizaciones"),
-    password=os.getenv("COLA_AUTO_DBPASS", "Mg1ZOGk3mE!2_q1Q"),
-    database=os.getenv("VPS_DBNAME", "bases"),
+    host=os.getenv("VPS_DBHOST"),
+    user=os.getenv("COLA_AUTO_DBUSER"),
+    password=os.getenv("COLA_AUTO_DBPASS"),
+    database=os.getenv("VPS_DBNAME"),
     port=int(os.getenv("VPS_DBPORT", 3306)),
     autocommit=False
 )
@@ -57,7 +58,8 @@ cur_vps.execute("""
         fecha_inicio = NULL,
         fecha_fin = NULL
     WHERE auto_id = 'scraper_cobro_express'
-      AND estado = 'fallido';
+      AND estado = 'fallido'
+      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%');
 """)
 fallidos_reseteados = cur_vps.rowcount
 conn_vps.commit()
@@ -75,7 +77,10 @@ query_reset = """
         error_msg = NULL,
         fecha_inicio = NULL,
         fecha_fin = NULL
-    WHERE id = %s AND auto_id = 'scraper_cobro_express';
+    WHERE id = %s 
+      AND auto_id = 'scraper_cobro_express'
+      AND (resultado IS NULL OR resultado = '' OR resultado LIKE '%error%' OR resultado LIKE '%Error%')
+      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%');
 """
 
 # Usar executemany por chunk
@@ -97,7 +102,8 @@ for i in range(0, len(ids_error_staging), 5000):
     cur_sqlite.execute(f"""
         DELETE FROM tareas_staging 
         WHERE tipo_cola = 'cola_automatizacion'
-          AND id_vps IN ({placeholders});
+          AND id_vps IN ({placeholders})
+          AND (resultado_json IS NULL OR (resultado_json NOT LIKE '%"status": "coincidencia"%' AND resultado_json NOT LIKE '%"status":"coincidencia"%'));
     """, chunk_del)
 conn_sqlite.commit()
 conn_sqlite.close()

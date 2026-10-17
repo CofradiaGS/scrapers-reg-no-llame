@@ -128,10 +128,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                               AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
                           )
                       )
-                    ORDER BY (target_pc IS NOT NULL AND target_pc != '') DESC,
-                             prioridad ASC,
-                             dias_desde_ultimo_cambio ASC,
-                             id ASC
+                    ORDER BY id ASC
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED;
                 """
@@ -750,6 +747,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     WHERE estado = 'en_proceso'
                       AND auto_id = %s
                       AND (resultado IS NULL OR resultado = '')
+                      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%')
                       AND (
                           (target_pc = %s AND fecha_inicio < NOW() - INTERVAL %s MINUTE)
                           OR fecha_inicio < NOW() - INTERVAL %s MINUTE

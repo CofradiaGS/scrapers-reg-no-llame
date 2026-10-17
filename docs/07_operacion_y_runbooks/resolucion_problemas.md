@@ -157,3 +157,31 @@ Ante cualquier eventualidad crítica en el entorno de producción, seguir este p
    ```powershell
    .\run_daemon.bat --engine http --workers 9
    ```
+
+---
+
+## 7. Reconciliación y Rescate de Datos Staging -> VPS Central
+
+### 7.1. Síntomas
+* El volumen de completados en el VPS (`cola_automatizacion`) cae drásticamente respecto al procesado local.
+* Tareas procesadas exitosamente en local figuran en el VPS con `estado = 'pendiente'` y `resultado = NULL` debido a scripts externos de recuperación o reseteos manuales nocturnos.
+
+### 7.2. Procedimiento de Reconciliación (Runbook)
+Ejecutar el script industrial de rescate [`scripts/reconciliar_dia15_vps.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/reconciliar_dia15_vps.py):
+
+```powershell
+# Reconciliar una fecha específica (por defecto 2026-10-15) en lotes atómicos de 2.500
+python scripts/reconciliar_dia15_vps.py --fecha 2026-10-15 --chunk-size 2500
+
+# Simulación previa (Dry-Run)
+python scripts/reconciliar_dia15_vps.py --fecha 2026-10-15 --dry-run
+
+# Reconciliar todas las fechas con resultados pendientes de sincronización
+python scripts/reconciliar_dia15_vps.py --fecha todos --chunk-size 2500
+```
+
+### 7.3. Garantías de Seguridad
+* **No-Destructivo**: Solo actualiza filas en VPS que estén en `estado = 'pendiente'` o con `resultado IS NULL`.
+* **Idempotente**: Puede ejecutarse múltiples veces sin riesgo de duplicación ni sobreescritura de tareas activas.
+* **Doble Fase**: Extrae IDs de forma ligera y lee lotes completos por Primary Key SQLite, alcanzando velocidades de ~25 registros/segundo en enlaces WAN.
+
