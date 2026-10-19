@@ -178,6 +178,20 @@ class BurstProxyManager:
         with self._lock:
             return set(self._daily_blocked_proxies)
 
+    @classmethod
+    def is_rotating_proxy(cls, proxy_url: Optional[str]) -> bool:
+        """
+        Determina si una URL corresponde a un gateway de proxy rotativo residencial o comercial
+        (ej: Smartproxy, Decodo, BrightData) que asigna una IP pública diferente en cada consulta.
+        """
+        if not proxy_url:
+            return False
+        p_clean = proxy_url.lower()
+        return any(k in p_clean for k in (
+            "smartproxy", "decodo", "rotating", "luminati", "brightdata",
+            "oxylabs", "iproyal", "proxy.smartproxy.net"
+        )) or "area-ar" in p_clean or ":3120" in p_clean or ":7000" in p_clean
+
     def get_next_proxy(self, timeout: Optional[float] = 10.0, exclude: Optional[Set[str]] = None) -> Optional[str]:
         """
         Obtiene el siguiente proxy vivo validado de la cola.
@@ -185,19 +199,8 @@ class BurstProxyManager:
         Filtra proxies en límite diario, muertos o en cooldown.
         """
         if self._static_proxy:
-            # Si el proxy configurado es Smartproxy, inyectar una sesión aleatoria sticky para aislar cada worker
-            if "smartproxy" in self._static_proxy.lower():
-                import random
-                from urllib.parse import urlparse, urlunparse
-                parsed = urlparse(self._static_proxy)
-                if parsed.username:
-                    u_base = parsed.username
-                    if "_session-" in u_base:
-                        u_base = u_base.split("_session-")[0]
-                    sess_id = f"s{random.randint(100000, 999999)}"
-                    new_user = f"{u_base}_session-{sess_id}"
-                    netloc = f"{new_user}:{parsed.password}@{parsed.hostname}:{parsed.port}"
-                    return urlunparse((parsed.scheme, netloc, parsed.path, parsed.params, parsed.query, parsed.fragment))
+            # Si es un proxy estático/rotativo contratado, se entrega directamente
+            # permitiendo que el gateway rote la IP de salida en cada conexión sin techo artificial.
             return self._static_proxy
             
         end_time = time.time() + (timeout if timeout is not None else 10.0)
@@ -264,11 +267,11 @@ class BurstProxyManager:
         Registra un proxy que alcanzó el límite estricto de 100 consultas diarias en ENACOM.
         Queda vetado por el resto de la jornada y NUNCA se volverá a cosechar o encolar.
         """
-        if self._static_proxy and "smartproxy" in proxy_url.lower():
+        if self._static_proxy and (self.is_rotating_proxy(proxy_url) or self.is_rotating_proxy(self._static_proxy)):
             with self._lock:
                 self.stats["daily_limits"] += 1
                 self.stats["proxies_exhausted"] += 1
-            logger.info("🔄 [SMARTPROXY ROTACIÓN] Sesión previa alcanzó límite de 100 en ENACOM. Siguiente worker obtendrá nueva IP argentina limpia.")
+            logger.info("🔄 [PROXY ROTATIVO] IP de salida alcanzó límite de 100 en ENACOM. Siguiente consulta saldrá por una nueva IP rotativa.")
             return
 
         with self._lock:
@@ -288,10 +291,10 @@ class BurstProxyManager:
         Registra un proxy que alcanzó el límite de 5 consultas por minuto en ENACOM.
         Entra en cooldown temporal para volver al pool una vez transcurrido el tiempo.
         """
-        if self._static_proxy and "smartproxy" in proxy_url.lower():
+        if self._static_proxy and (self.is_rotating_proxy(proxy_url) or self.is_rotating_proxy(self._static_proxy)):
             with self._lock:
                 self.stats["minute_limits"] += 1
-            logger.info("🔄 [SMARTPROXY ROTACIÓN] Sesión previa en límite 5/min. Siguiente worker rotará a una nueva sesión limpia.")
+            logger.info("🔄 [PROXY ROTATIVO] IP de salida en límite 5/min. Siguiente consulta rotará a otra IP limpia.")
             return
 
         with self._lock:

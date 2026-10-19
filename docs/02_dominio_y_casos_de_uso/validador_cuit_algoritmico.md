@@ -1,7 +1,7 @@
 # Módulo de Dominio: Validador y Generador Algorítmico de CUIT/CUIL
 
 > **Capa 02: Dominio y Casos de Uso** | Lógica Pura de Dominio  
-> **Archivo Fuente**: [`core/domain/cuit_validator.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py)  
+> **Archivo Fuente**: [`core/domain/cuit_validator.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py)  
 > **Aislamiento**: 100% Agnóstico de Red e Infraestructura (solo tipos nativos de Python)
 
 ---
@@ -10,7 +10,7 @@
 
 En la República Argentina, cada ciudadano con Documento Nacional de Identidad (DNI) posee un Código Único de Identificación Laboral (CUIL) o Clave Única de Identificación Tributaria (CUIT) asignado por ANSES/AFIP de forma matemáticamente determinista mediante el algoritmo **Módulo 11**.
 
-Cuando servicios de terceros como CuitOnline o Datuar no disponen de un registro (por ejemplo, personas no registradas en AFIP, jubilados, pensionados o economía informal), omitir la consulta a la Central de Deudores del Banco Central (BCRA) provoca una pérdida crítica de información financiera. El módulo [`core/domain/cuit_validator.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py) implementa la generación matemática del CUIL y la inferencia onomástica de género para asegurar una tasa de cobertura de CUIL del 100%.
+Cuando servicios de terceros como CuitOnline o Datuar no disponen de un registro (por ejemplo, personas no registradas en AFIP, jubilados, pensionados o economía informal), omitir la consulta a la Central de Deudores del Banco Central (BCRA) provoca una pérdida crítica de información financiera. El módulo [`core/domain/cuit_validator.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py) implementa la generación matemática del CUIL y la inferencia onomástica de género para asegurar una tasa de cobertura de CUIL del 100%.
 
 ```mermaid
 flowchart TD

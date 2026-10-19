@@ -115,18 +115,52 @@ class ScrapeResult:
     def to_namespace_dict(self) -> Dict[str, Any]:
         """Devuelve el diccionario formateado para persistencia en datos_json."""
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        payload = {
+
+        # 1. Esquema canónico fijo y unificado para scraper_enacom (claves fijas, sin campos inútiles)
+        if self.fuente_scraper in ("scraper_enacom", "enacom_web"):
+            det = self.detalles if isinstance(self.detalles, dict) else {}
+            payload: Dict[str, Any] = {
+                "status": self.status.value,
+                "operador": self.operador or None,
+                "operador_original": det.get("operador_original"),
+                "razon_social": det.get("razon_social"),
+                "razon_social_original": det.get("razon_social_original"),
+                "es_portado": det.get("es_portado"),
+                "intentos": det.get("intentos", 1),
+                "descripcion": self.descripcion or det.get("descripcion") or None,
+                "ultima_modificacion": self.ultima_modificacion or ahora_str
+            }
+            return {self.fuente_scraper: payload}
+
+        # 2. Esquema genérico para otros scrapers del pipeline
+        payload: Dict[str, Any] = {
             "status": self.status.value,
-            "fuente": self.fuente_scraper,
-            "operador": self.operador,
-            "operador_receptor": self.operador_receptor,
-            "titular": self.titular.to_dict() if self.titular else {},
-            "servicio": self.servicio.to_dict() if self.servicio else {},
-            "fechas": self.fechas,
-            "detalles": self.detalles,
-            "raw": self.raw,
-            "ultima_modificacion": self.ultima_modificacion or ahora_str
         }
+        if self.fuente_scraper:
+            payload["fuente"] = self.fuente_scraper
+        if self.operador:
+            payload["operador"] = self.operador
+        if self.operador_receptor and self.operador_receptor != self.operador:
+            payload["operador_receptor"] = self.operador_receptor
+
+        if self.titular:
+            t_dict = {k: v for k, v in self.titular.to_dict().items() if v}
+            if t_dict:
+                payload["titular"] = t_dict
+        if self.servicio:
+            s_dict = {k: v for k, v in self.servicio.to_dict().items() if v}
+            if s_dict:
+                payload["servicio"] = s_dict
+        if self.fechas and any(bool(v) for v in self.fechas.values()):
+            payload["fechas"] = self.fechas
+
+        if self.detalles and isinstance(self.detalles, dict):
+            payload["detalles"] = self.detalles
+
+        if self.raw and isinstance(self.raw, dict):
+            payload["raw"] = self.raw
+
+        payload["ultima_modificacion"] = self.ultima_modificacion or ahora_str
         res = {self.fuente_scraper: payload}
         if "datos_acumulados" in self.detalles and isinstance(self.detalles["datos_acumulados"], dict):
             for k, v in self.detalles["datos_acumulados"].items():

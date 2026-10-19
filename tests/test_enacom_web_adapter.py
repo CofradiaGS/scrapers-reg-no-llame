@@ -32,12 +32,12 @@ class TestEnacomWebAdapter(unittest.TestCase):
     def test_implements_interface(self):
         """Verifica que el adaptador implemente el contrato IScraperEnginePort."""
         self.assertIsInstance(self.adapter, IScraperEnginePort)
-        self.assertEqual(self.adapter.nombre, "enacom_web")
+        self.assertEqual(self.adapter.nombre, "scraper_enacom")
         self.assertTrue(self.adapter.autenticar())
 
     def test_registry_resolution(self):
         """Verifica que el registro resuelva todos los alias oficiales de ENACOM Web."""
-        for alias in ["enacom_web", "enacom", "enacom_numeracion"]:
+        for alias in ["scraper_enacom", "enacom_web", "enacom", "enacom_numeracion"]:
             instance = ScraperRegistry.obtener(alias)
             self.assertIsInstance(instance, EnacomWebAdapter)
             instance.cerrar()

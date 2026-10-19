@@ -1,6 +1,6 @@
 # Supervisor de Producción 24/7 (`supervisor_vps.py` / `runtime/supervisor.py`)
 
-El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
+El componente de supervisión de producción es el núcleo de ejecución tolerante a fallas y auto-regenerativo del sistema. Está compuesto por la capa de CLI ejecutiva [supervisor_vps.py](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py) y el motor orquestador [`SupervisorIndustrial`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py).
 
 ---
 
@@ -51,7 +51,7 @@ graph TD
 
 ## 2. Parámetros y Flags de Línea de Comandos
 
-La interfaz de comandos de [supervisor_vps.py](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
+La interfaz de comandos de [supervisor_vps.py](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L61-L73) expone las siguientes opciones de configuración:
 
 | Flag / Opción | Tipo | Valor por Defecto | Opciones Válidas | Descripción Técnica |
 | :--- | :---: | :---: | :---: | :--- |
@@ -104,7 +104,7 @@ El hilo `_circuit_breaker_loop` realiza cada 25 segundos una petición HTTP de s
 * Cuando el sondeo detecta un código HTTP 200, se ejecuta `self.pause_event.clear()` y los workers reanudan de inmediato el procesamiento.
 
 ### 3.4. Watchdog Sweeper de Huérfanos
-El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
+El hilo centinela `_watchdog_sweeper_loop` despierta cada 600 segundos (10 minutos) y ejecuta el caso de uso [`LiberarHuerfanosUseCase`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/cleanup_orphans_use_case.py) protegido mediante un mutex distribuido MySQL `GET_LOCK`:
 ```sql
 UPDATE `queue_registro_no_llame`
 SET estado = 'pendiente',
@@ -179,7 +179,7 @@ Una vez finalizada la pasada inicial de auditoría, se puede **desactivar la ban
 
 ## 5. Rotación de Logs en Disco
 
-El supervisor implementa un manejador [`ConcurrentRotatingFileHandler`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L48) (de `concurrent-log-handler`) que escribe en `supervisor_247.log`:
+El supervisor implementa un manejador [`ConcurrentRotatingFileHandler`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/supervisor_vps.py#L42-L48) (de `concurrent-log-handler`) que escribe en `supervisor_247.log`:
 * **Soporte Multiproceso Concurrente:** Utiliza bloqueos a nivel de sistema operativo (`portalocker`/`msvcrt` en Windows y `fcntl` en Linux) para sincronizar la rotación atómica entre el proceso maestro y los subprocesos workers sin colisiones de permisos (`WinError 32`).
 * **Tamaño máximo por archivo:** 20 MB (`maxBytes = 20 * 1024 * 1024`).
 * **Copias de respaldo (*backups*):** 5 archivos rotativos (`supervisor_247.log.1`, etc.).

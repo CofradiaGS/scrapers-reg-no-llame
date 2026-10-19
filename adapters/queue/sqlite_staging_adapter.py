@@ -157,6 +157,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = nombre_clean
 
 
+<<<<<<< Updated upstream
             cond_auto = ""
             params_auto = []
             if self.tipo_cola == "cola_automatizacion" and self.auto_id:
@@ -165,6 +166,20 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
 
             if canon == "telcos":
                 cursor = conn.execute(f"""
+=======
+            if canon in ("enacom_web", "scraper_enacom"):
+                cursor = conn.execute("""
+                    SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
+                           scraper_actual, payload_origen, resultado_json, fuente
+                    FROM tareas_staging
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                      AND scraper_actual IN ('enacom_web', 'scraper_enacom')
+                    ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
+                    LIMIT ?;
+                """, (self.tipo_cola, batch_size))
+            elif canon == "telcos":
+                cursor = conn.execute("""
+>>>>>>> Stashed changes
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente
                     FROM tareas_staging
@@ -667,7 +682,14 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 else:
                     canon = nombre_clean
 
-                if canon == "telcos":
+                if canon in ("enacom_web", "scraper_enacom"):
+                    cursor = conn.execute("""
+                        SELECT COUNT(*) as pendientes
+                        FROM tareas_staging
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? 
+                          AND scraper_actual IN ('enacom_web', 'scraper_enacom');
+                    """, (q_type,))
+                elif canon == "telcos":
                     cursor = conn.execute("""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging

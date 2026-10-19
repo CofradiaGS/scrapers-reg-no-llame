@@ -81,11 +81,17 @@ class EnacomWebAdapter(BaseScraperAdapter):
     def _setup_page_routes(self, target: Any) -> None:
         """
         Configura la interceptación y ruteo de red ultra-optimizado a nivel de BrowserContext:
-        1. Fulfill local dinámico de scripts pesados (Google reCAPTCHA v3 runtime ~850 KB y jQuery ~70 KB).
-           Garantiza 0 bytes consumidos de proxy en todos los iframes de reCAPTCHA y scripts de soporte.
-        2. Bloqueo (abort) de fuentes (.woff, .woff2, .ttf), CSS pesados (font-awesome, bootstrap, styles__ltr.css),
-           logos e íconos estéticos (logo-enacom, logo_48.png).
-        3. Paso libre exclusivo para peticiones transaccionales esenciales (portal ENACOM, Captcha.aspx y tokens api.js).
+        1. Fulfill local dinámico de scripts pesados:
+           - Google reCAPTCHA v3 runtime (~850 KB ahorrados por carga)
+           - Google reCAPTCHA loader api.js (~1.6 KB)
+           - Google reCAPTCHA webworker.js (102 B)
+           - jQuery (~70 KB ahorrados por carga)
+           Garantiza 0 bytes consumidos de proxy en todos los assets estáticos de reCAPTCHA y scripts de soporte.
+        2. Bloqueo universal (abort) de:
+           - Todas las hojas de estilo (.css, fonts, media). Chromium headless no requiere render visual.
+           - Todas las imágenes excepto Captcha.aspx (logos, favicons, etc.).
+           - Scripts y rastreadores externos superfluos (bootstrap, popper, font-awesome, analytics).
+        3. Paso libre exclusivo para peticiones transaccionales esenciales (portal ENACOM, Captcha.aspx y tokens api2).
         """
         cache_dir = self._static_cache_dir
 
@@ -94,8 +100,19 @@ class EnacomWebAdapter(BaseScraperAdapter):
                 url = route.request.url
                 clean_url = url.split("?")[0]
                 clean_lower = clean_url.lower()
+                res_type = route.request.resource_type
 
-                # 1. Local Fulfill dinámico para Google reCAPTCHA v3 (~850 KB ahorrados por carga)
+                # 1. Bloqueo total de estilos, fuentes y multimedia (Chromium headless no renderiza visualmente)
+                if res_type in ("stylesheet", "font", "media"):
+                    return route.abort()
+
+                # 2. Bloqueo total de imágenes excepto el Captcha oficial
+                if res_type == "image":
+                    if "captcha.aspx" not in clean_lower:
+                        return route.abort()
+                    return route.continue_()
+
+                # 3. Local Fulfill dinámico para Google reCAPTCHA v3 (~850 KB ahorrados por carga)
                 if "/recaptcha/releases/" in clean_url and ("recaptcha__" in clean_url and clean_url.endswith(".js")):
                     try:
                         file_key = clean_url.split("/releases/")[1].replace("/", "_")
@@ -117,7 +134,40 @@ class EnacomWebAdapter(BaseScraperAdapter):
                         except Exception:
                             return None
 
-                # 2. Local Fulfill para jQuery (~70 KB ahorrados por carga)
+                # 4. Local Fulfill para Google reCAPTCHA api.js loader
+                if "recaptcha/api.js" in clean_lower:
+                    local_api = cache_dir / "recaptcha_api.js"
+                    if not local_api.exists() or local_api.stat().st_size == 0:
+                        try:
+                            import urllib.request
+                            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                            with urllib.request.urlopen(req, timeout=10) as resp:
+                                local_api.write_bytes(resp.read())
+                        except Exception:
+                            pass
+                    if local_api.exists() and local_api.stat().st_size > 0:
+                        return route.fulfill(
+                            path=str(local_api),
+                            content_type="application/javascript",
+                            status=200
+                        )
+
+                # 5. Local Fulfill para webworker.js
+                if "recaptcha/api2/webworker.js" in clean_lower:
+                    local_ww = cache_dir / "webworker.js"
+                    if not local_ww.exists() or local_ww.stat().st_size == 0:
+                        try:
+                            local_ww.write_text("importScripts('https://www.gstatic.com/recaptcha/releases//recaptcha__en.js');", encoding="utf-8")
+                        except Exception:
+                            pass
+                    if local_ww.exists() and local_ww.stat().st_size > 0:
+                        return route.fulfill(
+                            path=str(local_ww),
+                            content_type="application/javascript",
+                            status=200
+                        )
+
+                # 6. Local Fulfill para jQuery (~70 KB ahorrados por carga)
                 if "jquery" in clean_lower and clean_lower.endswith(".js"):
                     local_jq = cache_dir / "jquery-3.4.1.slim.min.js"
                     if local_jq.exists() and local_jq.stat().st_size > 0:
@@ -127,15 +177,14 @@ class EnacomWebAdapter(BaseScraperAdapter):
                             status=200
                         )
 
-                # 3. Bloqueo de recursos estáticos innecesarios para el scraping (< 6 KB wire size total)
-                if any(ext in clean_lower for ext in [
-                    ".woff", ".woff2", ".ttf", ".eot",
-                    "font-awesome", "all.min.css", "bootstrap", "popper",
-                    "favicon.ico", "logo-enacom", "logo_48.png", "styles__ltr.css"
+                # 7. Bloqueo de scripts de soporte y rastreadores innecesarios para el scraping
+                if any(k in clean_lower for k in [
+                    "popper", "bootstrap", "font-awesome", "favicon",
+                    "google-analytics", "doubleclick", "googletagmanager", "stats", "beacon"
                 ]):
                     return route.abort()
 
-                # 4. Continuar tráfico transaccional esencial (Numeracion.aspx, Captcha.aspx, tokens api.js)
+                # 8. Continuar tráfico transaccional esencial (Numeracion.aspx, Captcha.aspx, tokens api2 de Google)
                 return route.continue_()
             except Exception:
                 pass
@@ -144,7 +193,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
 
     @property
     def nombre(self) -> str:
-        return "enacom_web"
+        return "scraper_enacom"
 
     def iniciar(self) -> None:
         """Inicializa los recursos de Playwright."""
@@ -212,7 +261,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     "--disable-software-rasterizer",
                     "--disable-extensions",
                     "--disable-blink-features=AutomationControlled",
-                    "--js-flags=--max-old-space-size=256",
+                    "--js-flags=--max-old-space-size=128 --lite-mode",
                     "--mute-audio",
                     "--no-first-run",
                     "--no-default-browser-check",
@@ -226,6 +275,16 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     "--disable-sync",
                     "--disable-translate",
                     "--metrics-recording-only",
+                    "--renderer-process-limit=1",
+                    "--disable-site-isolation-trials",
+                    "--disable-breakpad",
+                    "--disable-ipc-flooding-protection",
+                    "--disable-backgrounding-occluded-windows",
+                    "--disable-component-update",
+                    "--disable-domain-reliability",
+                    "--disable-features=Translate,BackForwardCache,AcceptCHFrame,MediaRouter,OptimizationHints,AudioServiceOutOfProcess",
+                    "--force-device-scale-factor=1",
+                    "--window-size=400,300",
                 ]
             }
             if self.proxy:
@@ -236,7 +295,11 @@ class EnacomWebAdapter(BaseScraperAdapter):
 
         context_kwargs: Dict[str, Any] = {
             "ignore_https_errors": True,
-            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "viewport": {"width": 400, "height": 300},
+            "device_scale_factor": 1,
+            "has_touch": False,
+            "is_mobile": False,
         }
         if self.proxy:
             p_cfg = self._formatear_proxy_playwright(self.proxy)
@@ -292,7 +355,11 @@ class EnacomWebAdapter(BaseScraperAdapter):
 
             context_kwargs: Dict[str, Any] = {
                 "ignore_https_errors": True,
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "viewport": {"width": 400, "height": 300},
+                "device_scale_factor": 1,
+                "has_touch": False,
+                "is_mobile": False,
             }
             if self.proxy:
                 p_cfg = self._formatear_proxy_playwright(self.proxy)
@@ -352,7 +419,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
             return ScrapeResult(
                 ani=ani_clean,
                 status=StatusScraping.ERROR,
-                fuente_scraper="enacom_web",
+                fuente_scraper="scraper_enacom",
                 descripcion=f"ANI inválido para ENACOM (requiere 10 dígitos sin 0 ni 15): {ani_clean}"
             )
 
@@ -372,24 +439,46 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     if not page.url.startswith(self.PORTAL_URL):
                         page.goto(self.PORTAL_URL, wait_until="domcontentloaded", timeout=15000)
 
-                    # 2. Capturar y resolver captcha (bucle interno hasta asegurar 5 caracteres alfanuméricos válidos)
+                    # 2. Capturar y resolver captcha en RAM (< 5ms vía DOM Canvas)
                     code = ""
                     for sub_intento in range(6):
-                        captcha_elem = page.locator("#imgCaptcha")
-                        if captcha_elem.count() == 0:
+                        try:
+                            # Asegurar que la imagen del captcha esté completamente cargada en el DOM
+                            page.wait_for_function(
+                                "() => { const img = document.getElementById('imgCaptcha'); return img && img.complete && (img.naturalWidth > 50 || img.width > 50); }",
+                                timeout=4000
+                            )
+                        except Exception:
                             page.reload(wait_until="domcontentloaded")
                             continue
 
-                        img_bytes = captcha_elem.screenshot(timeout=8000)
+                        b64_img = page.evaluate("""() => {
+                            const img = document.getElementById('imgCaptcha');
+                            if (!img) return '';
+                            const canvas = document.createElement('canvas');
+                            canvas.width = img.naturalWidth || img.width || 180;
+                            canvas.height = img.naturalHeight || img.height || 50;
+                            const ctx = canvas.getContext('2d');
+                            ctx.drawImage(img, 0, 0);
+                            return canvas.toDataURL('image/png').split(',')[1] || '';
+                        }""")
+
+                        if not b64_img:
+                            # Fallback seguro a screenshot si canvas está vacío
+                            img_bytes = page.locator("#imgCaptcha").screenshot(timeout=3000)
+                        else:
+                            import base64
+                            img_bytes = base64.b64decode(b64_img)
+
                         cand = self.solver.solve_bytes(img_bytes)
                         if len(cand) == 5:
                             code = cand
-                            logger.info(f"[{ani_clean}] Captcha resuelto: '{code}' (Sub-intento #{sub_intento + 1}).")
+                            logger.info(f"[{ani_clean}] Captcha resuelto en memoria: '{code}' (Sub-intento #{sub_intento + 1}).")
                             break
 
                         # Si el OCR leyó menos o más de 5 caracteres, recargar imagen sin gastar intento de envío
                         page.evaluate("() => RecargarCaptcha()")
-                        page.wait_for_timeout(500)
+                        page.wait_for_timeout(200)
 
                     if len(code) != 5:
                         logger.warning(f"[{ani_clean}] No se logró resolver captcha de 5 caracteres tras 6 sub-intentos. Recargando página...")
@@ -407,37 +496,66 @@ class EnacomWebAdapter(BaseScraperAdapter):
                         if (msg) msg.style.display = 'none';
                     }""")
 
-                    # Completar campos y simular ritmo humano para alimentar reCAPTCHA v3
+                    # Completar campos
                     page.fill("#TxtNumero", ani_clean)
-                    page.wait_for_timeout(80)
                     page.fill("#TxtCaptcha", code)
-                    page.wait_for_timeout(120)
                     logger.info(f"[{ani_clean}] Enviando formulario con captcha '{code}'...")
-                    page.click("#BtnBuscar")
 
-                    # 4. Esperar respuesta (resultado poblado para este número específico o mensaje de error)
+                    # 4. Esperar respuesta POST del servidor de forma reactiva por evento
+                    try:
+                        with page.expect_response(
+                            lambda r: "Numeracion.aspx" in r.url and r.request.method == "POST",
+                            timeout=12000
+                        ):
+                            page.click("#BtnBuscar")
+                    except Exception as e_post:
+                        logger.debug(f"[{ani_clean}] Espera de evento POST finalizada ({e_post})")
+
+                    # 5. Lectura atómica instantánea del resultado (1 sola llamada DOM evaluate por ciclo)
                     encontrado = False
-                    for _ in range(40):
+                    orig = ""
+                    act = ""
+                    num_confirmado = ani_clean
+                    for _ in range(30):
                         try:
-                            val_num = page.input_value("#TxtRtaNumero", timeout=300).strip()
-                            val_actual = page.input_value("#TxtPrestadorActual", timeout=300).strip()
-                            if val_num == ani_clean and val_actual:
-                                encontrado = True
-                                break
+                            dom_res = page.evaluate("""() => {
+                                const num = document.getElementById('TxtRtaNumero')?.value?.trim() || '';
+                                const actual = document.getElementById('TxtPrestadorActual')?.value?.trim() || '';
+                                const orig = document.getElementById('TxtPrestadorOriginal')?.value?.trim() || '';
+                                const msgEl = document.getElementById('DivMensaje');
+                                const msg = (msgEl && msgEl.style.display !== 'none' && msgEl.offsetWidth > 0) ? (msgEl.innerText || msgEl.textContent).trim() : '';
+                                return { num, actual, orig, msg };
+                            }""")
                         except Exception:
-                            pass
+                            dom_res = {}
 
-                        # Verificar si saltó error de captcha incorrecto u otro mensaje
-                        div_msg = page.locator("#DivMensaje")
-                        if div_msg.count() > 0 and div_msg.is_visible():
-                            msg_txt = div_msg.inner_text().strip()
+                        num_c = dom_res.get("num", "")
+                        actual_c = dom_res.get("actual", "")
+                        orig_c = dom_res.get("orig", "")
+                        msg_txt = dom_res.get("msg", "")
+
+                        if (num_c == ani_clean or not num_c) and (actual_c or orig_c):
+                            encontrado = True
+                            orig = orig_c
+                            act = actual_c
+                            num_confirmado = num_c or ani_clean
+                            break
+
+                        if msg_txt:
                             if "incorrecto" in msg_txt.lower():
                                 break
                             if any(kw in msg_txt.lower() for kw in ["no se encontr", "no asignado", "no existe", "inexistente", "no posee"]):
                                 return ScrapeResult(
                                     ani=ani_clean,
                                     status=StatusScraping.SIN_COINCIDENCIA,
-                                    fuente_scraper="enacom_web",
+                                    fuente_scraper="scraper_enacom",
+                                    detalles={
+                                        "operador_original": None,
+                                        "razon_social": None,
+                                        "razon_social_original": None,
+                                        "es_portado": None,
+                                        "intentos": intento,
+                                    },
                                     descripcion=f"ENACOM Oficial: {msg_txt}"
                                 )
                             if "límite" in msg_txt.lower() or "limite" in msg_txt.lower() or "diarias" in msg_txt.lower() or "minuto" in msg_txt.lower():
@@ -448,8 +566,15 @@ class EnacomWebAdapter(BaseScraperAdapter):
                                 return ScrapeResult(
                                     ani=ani_clean,
                                     status=StatusScraping.ERROR,
-                                    fuente_scraper="enacom_web",
-                                    detalles={"error_tipo": err_tipo, "mensaje_enacom": msg_txt},
+                                    fuente_scraper="scraper_enacom",
+                                    detalles={
+                                        "operador_original": None,
+                                        "razon_social": None,
+                                        "razon_social_original": None,
+                                        "es_portado": None,
+                                        "intentos": intento,
+                                        "error_tipo": err_tipo,
+                                    },
                                     descripcion=f"Límite alcanzado: {msg_txt} (Requiere rotar de IP/Proxy)"
                                 )
                             if "seguridad" in msg_txt.lower() or "recaptcha" in msg_txt.lower():
@@ -457,53 +582,63 @@ class EnacomWebAdapter(BaseScraperAdapter):
                                 return ScrapeResult(
                                     ani=ani_clean,
                                     status=StatusScraping.ERROR,
-                                    fuente_scraper="enacom_web",
-                                    detalles={"error_tipo": "seguridad_recaptcha", "mensaje_enacom": msg_txt},
+                                    fuente_scraper="scraper_enacom",
+                                    detalles={
+                                        "operador_original": None,
+                                        "razon_social": None,
+                                        "razon_social_original": None,
+                                        "es_portado": None,
+                                        "intentos": intento,
+                                        "error_tipo": "seguridad_recaptcha",
+                                    },
                                     descripcion=f"Fallo de seguridad reCAPTCHA v3: {msg_txt} (Requiere rotar de IP/Proxy)"
                                 )
 
-                        page.wait_for_timeout(100)
+                        page.wait_for_timeout(40)
 
                     if encontrado:
-                        orig = page.input_value("#TxtPrestadorOriginal").strip()
-                        act = page.input_value("#TxtPrestadorActual").strip()
-                        num_confirmado = page.input_value("#TxtRtaNumero").strip() or ani_clean
 
                         es_portado = (orig.lower() != act.lower())
                         op_norm = self._normalizar_operador(act)
                         op_orig_norm = self._normalizar_operador(orig)
 
-                        detalles = {
-                            "numero": num_confirmado,
-                            "prestador_original": orig,
-                            "prestador_actual": act,
-                            "operador_comercial_actual": op_norm,
-                            "operador_comercial_original": op_orig_norm,
-                            "es_portado": es_portado,
-                            "intentos_resolucion": intento,
-                        }
-
-                        desc = (
-                            f"ENACOM Oficial: Línea {num_confirmado} asignada a {orig} "
-                            f"y operada actualmente por {act}"
-                        )
                         if es_portado:
-                            desc += " (PORTABILIDAD CONFIRMADA)"
+                            detalles = {
+                                "operador_original": op_orig_norm,
+                                "razon_social": act,
+                                "razon_social_original": orig,
+                                "es_portado": True,
+                                "intentos": intento,
+                            }
+                            desc = (
+                                f"ENACOM Oficial: Línea {num_confirmado} asignada a {orig} "
+                                f"y operada actualmente por {act} (PORTABILIDAD CONFIRMADA)"
+                            )
+                        else:
+                            detalles = {
+                                "operador_original": None,
+                                "razon_social": act,
+                                "razon_social_original": None,
+                                "es_portado": False,
+                                "intentos": intento,
+                            }
+                            desc = (
+                                f"ENACOM Oficial: Línea {num_confirmado} asignada a {orig} "
+                                f"y operada actualmente por {act}"
+                            )
 
                         return ScrapeResult(
                             ani=ani_clean,
                             status=StatusScraping.COINCIDENCIA,
-                            fuente_scraper="enacom_web",
-                            operador=op_orig_norm or op_norm,
-                            operador_receptor=op_norm or op_orig_norm,
+                            fuente_scraper="scraper_enacom",
+                            operador=op_norm,
                             detalles=detalles,
-                            raw={"prestador_original": orig, "prestador_actual": act},
                             descripcion=desc
                         )
 
                     # Si el captcha falló, recargar para siguiente intento
                     page.evaluate("() => RecargarCaptcha()")
-                    page.wait_for_timeout(600)
+                    page.wait_for_timeout(300)
 
                 except Exception as exc:
                     logger.warning(f"Excepción en intento {intento} para ANI {ani_clean}: {exc}")
@@ -517,7 +652,14 @@ class EnacomWebAdapter(BaseScraperAdapter):
             return ScrapeResult(
                 ani=ani_clean,
                 status=StatusScraping.SIN_COINCIDENCIA,
-                fuente_scraper="enacom_web",
+                fuente_scraper="scraper_enacom",
+                detalles={
+                    "operador_original": None,
+                    "razon_social": None,
+                    "razon_social_original": None,
+                    "es_portado": None,
+                    "intentos": self.max_retries,
+                },
                 descripcion=f"No se pudo resolver o línea no localizada en ENACOM tras {self.max_retries} intentos."
             )
 

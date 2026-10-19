@@ -30,6 +30,7 @@ class ScraperRegistry:
         "bcra": BcraAdapter,
         "bcra_central_deudores": BcraAdapter,
         "bcra_api": BcraAdapter,
+        "scraper_enacom": EnacomWebAdapter,
         "enacom_web": EnacomWebAdapter,
         "enacom": EnacomWebAdapter,
         "enacom_numeracion": EnacomWebAdapter,

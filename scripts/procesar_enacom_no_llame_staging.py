@@ -167,14 +167,36 @@ class IPPacer:
     1. Intervalo mínimo entre consultas consecutivas sobre la misma IP: min_interval_sec (default: 8.5s).
     2. Ventana deslizante (Sliding Window): Máximo 4 consultas cada 60 segundos por IP, 
        impidiendo matemáticamente que ENACOM dispare el 'límite de 5 consultas por minuto'.
+    3. Bypass Automático para Proxies Rotativos: Si se detecta un gateway rotativo multi-IP (ej: Smartproxy),
+       la espera artificial se suprime a 0.0s ya que cada consulta sale por una IP argentina distinta.
     """
     _locks: Dict[str, threading.Lock] = {}
     _last_times: Dict[str, float] = {}
     _query_timestamps: Dict[str, collections.deque] = {}
     _master_lock = threading.Lock()
+    _bypass_all: bool = False
+
+    @classmethod
+    def set_bypass_all(cls, bypass: bool = True) -> None:
+        cls._bypass_all = bypass
+
+    @classmethod
+    def es_proxy_rotativo(cls, proxy_url: Optional[str]) -> bool:
+        """Determina si una URL corresponde a un gateway de proxy rotativo multi-IP."""
+        if not proxy_url:
+            return False
+        p_clean = proxy_url.lower().strip()
+        return any(k in p_clean for k in (
+            "smartproxy", "decodo", "rotating", "luminati", "brightdata",
+            "oxylabs", "iproyal", "proxy.smartproxy.net"
+        )) or "area-ar" in p_clean or ":3120" in p_clean or ":7000" in p_clean
 
     @classmethod
     def esperar_turno(cls, proxy_url: Optional[str], min_interval_sec: float = 8.5):
+        # SI EL PROXY ES ROTATIVO: Cero espera artificial, cada consulta sale por una IP argentina diferente
+        if cls._bypass_all or cls.es_proxy_rotativo(proxy_url):
+            return
+
         key = (proxy_url or "direct_ip").strip().lower()
         with cls._master_lock:
             if key not in cls._locks:
@@ -245,11 +267,12 @@ def procesar_registro_robusto(
         # Asegurar que el adapter tenga un proxy válido y NO probado previamente para esta línea
         p_actual = getattr(adapter, "proxy", None)
         blocked_proxies = proxy_manager.get_blocked_proxies() if proxy_manager else set()
+        es_rotativo = IPPacer.es_proxy_rotativo(p_actual)
         
         necesita_rotacion = (
             (proxy_manager is not None and not p_actual) or
-            (p_actual in proxies_intentados) or
-            (p_actual in blocked_proxies)
+            (not es_rotativo and p_actual in proxies_intentados) or
+            (not es_rotativo and p_actual in blocked_proxies)
         )
 
         if necesita_rotacion and proxy_manager:
@@ -278,7 +301,7 @@ def procesar_registro_robusto(
         if p_actual:
             proxies_intentados.add(p_actual)
 
-        # Cadencia protegida por proxy (8.5 segundos + max 4/min)
+        # Cadencia protegida por proxy (8.5 segundos + max 4/min, 0s si es rotativo)
         IPPacer.esperar_turno(p_actual, min_interval_sec=8.5)
 
         t0 = time.time()
@@ -297,8 +320,10 @@ def procesar_registro_robusto(
                 if es_portado and orig and orig.lower() != str(prestador_act).lower():
                     desc_str += f" (Portado desde {orig})"
 
-                # Preparar enriquecimiento de datos acumulativos
+                # Preparar enriquecimiento de datos acumulativos (separado del enacom offline)
                 datos_actualizados = dict(datos_previos) if isinstance(datos_previos, dict) else {}
+                datos_actualizados.pop("enacom", None)
+                datos_actualizados.pop("enacom_web", None)
                 ns_enacom = resultado.to_namespace_dict()
                 datos_actualizados.update(ns_enacom)
 
@@ -311,8 +336,9 @@ def procesar_registro_robusto(
                         fuente_actual = [fuente_actual]
                 if not isinstance(fuente_actual, list):
                     fuente_actual = []
-                if "enacom_web" not in fuente_actual:
-                    fuente_actual.append("enacom_web")
+                fuente_actual = [f for f in fuente_actual if f not in ("enacom", "enacom_web")]
+                if "scraper_enacom" not in fuente_actual:
+                    fuente_actual.append("scraper_enacom")
 
                 return {
                     "id": reg_id,
@@ -331,6 +357,8 @@ def procesar_registro_robusto(
             if resultado.status == StatusScraping.SIN_COINCIDENCIA:
                 desc_str = f"ENACOM: {resultado.descripcion or 'Línea no asignada'}"
                 datos_actualizados = dict(datos_previos) if isinstance(datos_previos, dict) else {}
+                datos_actualizados.pop("enacom", None)
+                datos_actualizados.pop("enacom_web", None)
                 ns_enacom = resultado.to_namespace_dict()
                 datos_actualizados.update(ns_enacom)
 
@@ -342,8 +370,9 @@ def procesar_registro_robusto(
                         fuente_actual = [fuente_actual]
                 if not isinstance(fuente_actual, list):
                     fuente_actual = []
-                if "enacom_web" not in fuente_actual:
-                    fuente_actual.append("enacom_web")
+                fuente_actual = [f for f in fuente_actual if f not in ("enacom", "enacom_web")]
+                if "scraper_enacom" not in fuente_actual:
+                    fuente_actual.append("scraper_enacom")
 
                 return {
                     "id": reg_id,
@@ -449,9 +478,14 @@ def main():
     parser.add_argument("--proxy", type=str, default=None, help="Proxy único a usar prioritariamente (ej: http://ip:puerto o socks5://ip:puerto)")
     parser.add_argument("--proxy-file", type=str, default=None, help="Ruta a archivo .txt con lista de proxies (uno por línea)")
     parser.add_argument("--limit", type=int, default=None, help="Cantidad máxima de líneas a procesar en esta sesión (ej: --limit 200)")
+    parser.add_argument("--no-pacer", action="store_true", help="Desactivar IPPacer por completo (cero espera entre consultas)")
     parser.add_argument("--no-proxy", action="store_true", help="Forzar salida por IP local directa (solo testing)")
     parser.add_argument("--force-push", action="store_true", help="Forzar subida al VPS ignorando la ventana nocturna 00:00-08:00 (solo testing)")
     args = parser.parse_args()
+
+    if args.no_pacer:
+        IPPacer.set_bypass_all(True)
+        logger.info("⚡ [--no-pacer ACTIVO] Espera artificial de IPPacer desactivada por completo (0.0s).")
 
     signal.signal(signal.SIGINT, handle_signal)
     signal.signal(signal.SIGTERM, handle_signal)
@@ -477,7 +511,9 @@ def main():
         logger.warning("⚠️  [MODO DIRECTO FORZADO] --no-proxy activado: Las peticiones saldrán por tu IP local.")
     elif proxy_target:
         clean_repr = proxy_target.split("@")[-1] if "@" in proxy_target else proxy_target
-        logger.info(f"🔑 [SMARTPROXY RESIDENCIAL ACTIVO] Enrutando tráfico ENACOM vía Smartproxy ({clean_repr})")
+        es_rotativo = IPPacer.es_proxy_rotativo(proxy_target)
+        tag_rot = " (IP Rotativa por consulta: IPPacer 0s)" if es_rotativo else ""
+        logger.info(f"🔑 [SMARTPROXY RESIDENCIAL ACTIVO] Enrutando tráfico ENACOM vía Smartproxy ({clean_repr}){tag_rot}")
         proxy_manager = BurstProxyManager.get_instance()
         proxy_manager.set_static_proxy(proxy_target)
         proxy_manager.start()
@@ -500,6 +536,7 @@ def main():
     total_confirmadas = 0
     desde_ultimo_push = 0
 
+    executor = ThreadPoolExecutor(max_workers=args.workers, thread_name_prefix="EnacomWorker")
     try:
         while not stop_requested.is_set():
             if args.limit and total_confirmadas >= args.limit:
@@ -557,50 +594,46 @@ def main():
             resultados_exitosos = []
             ids_a_revertir = []
 
-            executor = ThreadPoolExecutor(max_workers=min(args.workers, len(registros)))
             futures = {}
-            try:
-                for reg in registros:
-                    if stop_requested.is_set():
-                        ids_a_revertir.append(reg.id)
-                        continue
-                    fut = executor.submit(
-                        procesar_registro_robusto,
-                        proxy_manager,
-                        reg.id,
-                        reg.linea.ani,
-                        reg.datos_existentes,
-                        max_intentos=2 if not proxy_manager else 4
-                    )
-                    futures[fut] = reg.id
-
-                for f in as_completed(futures):
-                    if stop_requested.is_set():
-                        for pending_fut in futures:
-                            pending_fut.cancel()
-                        break
-                    reg_id = futures[f]
-                    try:
-                        res = f.result()
-                        if res:
-                            # Persistencia streaming inmediata en SQLite (cero pérdida de datos ante interrupción)
-                            sqlite_repo.persistir_resultados([res])
-                            total_confirmadas += 1
-                            desde_ultimo_push += 1
-                            print(f"  ✅ [CONFIRMADO] ANI: {res['ani']} | {res['descripcion']} (Lat: {res['latencia']}s | Intento: #{res['intentos']})")
-                        else:
-                            ids_a_revertir.append(reg_id)
-                    except Exception as exc:
-                        logger.warning(f"Error en worker para registro {reg_id}: {exc}")
-                        ids_a_revertir.append(reg_id)
-
+            for reg in registros:
                 if stop_requested.is_set():
-                    for fut, reg_id in futures.items():
-                        if not fut.done() or fut.cancelled():
-                            if reg_id not in ids_a_revertir:
-                                ids_a_revertir.append(reg_id)
-            finally:
-                executor.shutdown(wait=False, cancel_futures=True)
+                    ids_a_revertir.append(reg.id)
+                    continue
+                fut = executor.submit(
+                    procesar_registro_robusto,
+                    proxy_manager,
+                    reg.id,
+                    reg.linea.ani,
+                    reg.datos_existentes,
+                    max_intentos=2 if not proxy_manager else 4
+                )
+                futures[fut] = reg.id
+
+            for f in as_completed(futures):
+                if stop_requested.is_set():
+                    for pending_fut in futures:
+                        pending_fut.cancel()
+                    break
+                reg_id = futures[f]
+                try:
+                    res = f.result()
+                    if res:
+                        # Persistencia streaming inmediata en SQLite (cero pérdida de datos ante interrupción)
+                        sqlite_repo.persistir_resultados([res])
+                        total_confirmadas += 1
+                        desde_ultimo_push += 1
+                        print(f"  ✅ [CONFIRMADO] ANI: {res['ani']} | {res['descripcion']} (Lat: {res['latencia']}s | Intento: #{res['intentos']})")
+                    else:
+                        ids_a_revertir.append(reg_id)
+                except Exception as exc:
+                    logger.warning(f"Error en worker para registro {reg_id}: {exc}")
+                    ids_a_revertir.append(reg_id)
+
+            if stop_requested.is_set():
+                for fut, reg_id in futures.items():
+                    if not fut.done() or fut.cancelled():
+                        if reg_id not in ids_a_revertir:
+                            ids_a_revertir.append(reg_id)
 
             # Revertir limpiamente los casos transitorios a 'pendiente' para reintento futuro
             if ids_a_revertir:
@@ -615,6 +648,10 @@ def main():
     finally:
         # Cierre seguro, purgado y push final
         logger.info("\n🛑 Cerrando workers de Chromium y deteniendo Harvester...")
+        try:
+            executor.shutdown(wait=False, cancel_futures=True)
+        except Exception:
+            pass
         if proxy_manager:
             proxy_manager.stop()
         cerrar_todos_los_adapters()

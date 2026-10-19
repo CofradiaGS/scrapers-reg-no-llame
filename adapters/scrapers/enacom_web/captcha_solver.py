@@ -24,10 +24,12 @@ try:
     import winsdk.windows.media.ocr as win_ocr
     import winsdk.windows.graphics.imaging as win_imaging
     import winsdk.windows.storage as win_storage
+    import winsdk.windows.storage.streams as win_streams
 except (ImportError, ModuleNotFoundError):
     win_ocr = None
     win_imaging = None
     win_storage = None
+    win_streams = None
 
 # Singleton de OcrEngine y Lock para serializar el procesamiento OCR en Windows
 _ocr_engine_instance = None
@@ -95,11 +97,15 @@ class EnacomCaptchaSolver:
         resized = cv2.resize(cleaned, (w * 3, h * 3), interpolation=cv2.INTER_CUBIC)
         return resized
 
-    async def _recognize_async(self, file_path: str) -> str:
-        """Invoca el motor OCR nativo de Windows 10/11 protegiendo la memoria COM."""
-        abs_path = os.path.abspath(file_path)
-        storage_file = await win_storage.StorageFile.get_file_from_path_async(abs_path)
-        stream = await storage_file.open_async(win_storage.FileAccessMode.READ)
+    async def _recognize_bytes_async(self, png_bytes: bytes) -> str:
+        """Invoca el motor OCR nativo de Windows 10/11 directamente desde memoria RAM (0 I/O de disco)."""
+        if win_streams is None:
+            return ""
+        stream = win_streams.InMemoryRandomAccessStream()
+        writer = win_streams.DataWriter(stream)
+        writer.write_bytes(png_bytes)
+        await writer.store_async()
+        stream.seek(0)
         try:
             decoder = await win_imaging.BitmapDecoder.create_async(stream)
             bitmap = await decoder.get_software_bitmap_async()
@@ -117,29 +123,21 @@ class EnacomCaptchaSolver:
             except Exception:
                 pass
 
-    def _sync_recognize(self, file_path: str) -> str:
-        return asyncio.run(self._recognize_async(file_path))
-
     def solve_bytes(self, img_bytes: bytes) -> str:
-        """Procesa y resuelve el código del captcha a partir de los bytes crudos."""
+        """Procesa y resuelve el código del captcha 100% en memoria RAM (sin tocar el disco)."""
         cleaned_mat = self.clean_image_bytes(img_bytes)
-        # Guardar en archivo temporal para la API de Windows Storage
-        fd, temp_path = tempfile.mkstemp(suffix=".png")
-        os.close(fd)
+        success, enc = cv2.imencode(".png", cleaned_mat)
+        if not success:
+            return ""
+        png_bytes = enc.tobytes()
+
         try:
-            cv2.imwrite(temp_path, cleaned_mat)
             with _ocr_lock:
                 executor = _get_ocr_executor()
-                future = executor.submit(self._sync_recognize, temp_path)
+                future = executor.submit(lambda: asyncio.run(self._recognize_bytes_async(png_bytes)))
                 solved_text = future.result(timeout=6.0)
                 return solved_text.strip()
         except Exception:
             # Falla controlada si el subsistema COM de Windows está sin memoria (0x8007000e)
             return ""
-        finally:
-            if os.path.exists(temp_path):
-                try:
-                    os.remove(temp_path)
-                except OSError:
-                    pass
 

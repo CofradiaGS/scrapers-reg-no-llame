@@ -6,7 +6,7 @@ Este documento detalla el diseño, la especificación de protocolo, la arquitect
 
 ## 1. Ciclo de Vida del Pipeline y Regla de No-Cortocircuito
 
-En el sistema, CuitOnline opera como un **eslabón de enriquecimiento fiscal y tributario no-terminal** formalizado en [`ReglaPipeline`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
+En el sistema, CuitOnline opera como un **eslabón de enriquecimiento fiscal y tributario no-terminal** formalizado en [`ReglaPipeline`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
 
 ```text
 CADENA_DEFAULT: ["iris", "datuar", "cuitonline", "claro", "movistar", "personal"]
@@ -38,9 +38,9 @@ flowchart TD
 ```
 
 ### Reglas de Pipeline para CuitOnline
-1. **Paso No-Terminal**: Al igual que Datuar y a diferencia de las operadoras telefónicas, [`CuitOnlineAdapter.consultar_linea`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) **NUNCA cortocircuita** la línea a `finalizado`. Encuentre o no el CUIT, [`ReglaPipeline.resolver_siguiente_etapa`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) avanza siempre a `scraper_actual = 'claro'` y `estado = 'pendiente'`.
-2. **Bypass Inteligente para Líneas sin DNI**: Cuando [`IrisHttpAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) no encuentra Port Out ni datos de titular, la línea no posee DNI. Dado que Datuar, CuitOnline y Claro exigen DNI para operar, [`ReglaPipeline`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) deriva automáticamente a `scraper_actual = 'movistar'`, saltando Datuar, CuitOnline y Claro para optimizar el rendimiento y evitar consultas inútiles.
-3. **Persistencia Acumulativa**: Los datos extraídos por CuitOnline se preservan de forma atómica en `datos_json["cuitonline"]` y enriquecen la entidad [`Titular`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) inyectando el valor verificado en el campo `cuil`.
+1. **Paso No-Terminal**: Al igual que Datuar y a diferencia de las operadoras telefónicas, [`CuitOnlineAdapter.consultar_linea`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) **NUNCA cortocircuita** la línea a `finalizado`. Encuentre o no el CUIT, [`ReglaPipeline.resolver_siguiente_etapa`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) avanza siempre a `scraper_actual = 'claro'` y `estado = 'pendiente'`.
+2. **Bypass Inteligente para Líneas sin DNI**: Cuando [`IrisHttpAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) no encuentra Port Out ni datos de titular, la línea no posee DNI. Dado que Datuar, CuitOnline y Claro exigen DNI para operar, [`ReglaPipeline`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) deriva automáticamente a `scraper_actual = 'movistar'`, saltando Datuar, CuitOnline y Claro para optimizar el rendimiento y evitar consultas inútiles.
+3. **Persistencia Acumulativa**: Los datos extraídos por CuitOnline se preservan de forma atómica en `datos_json["cuitonline"]` y enriquecen la entidad [`Titular`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py) inyectando el valor verificado en el campo `cuil`.
 
 ---
 
@@ -96,11 +96,11 @@ El adaptador realiza una captura exhaustiva en dos fases (búsqueda y ficha deta
 CuitOnline cuenta con mecanismos defensivos agresivos y paywalls dinámicos orientados a envenenar bases de datos automatizadas:
 
 1. **Aislamiento Zero-Cookies por Consulta**:
-   - Si una sesión acumula cookies entre peticiones, el portal detecta uso automatizado e inyecta enlaces falsos con hashes MD5 (`/detalle/[a-f0-9]{32}/`) y anagramas. [`CuitOnlineAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) ejecuta `_session.cookies.clear()` antes de cada petición, garantizando un estado prístino e indetectable.
+   - Si una sesión acumula cookies entre peticiones, el portal detecta uso automatizado e inyecta enlaces falsos con hashes MD5 (`/detalle/[a-f0-9]{32}/`) y anagramas. [`CuitOnlineAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) ejecuta `_session.cookies.clear()` antes de cada petición, garantizando un estado prístino e indetectable.
 2. **Escudo 1: Rechazo de Enlaces MD5**:
    - Todo resultado cuyo enlace no contenga el patrón numérico estricto `/detalle/(\\d{11})/` es descartado de inmediato como trampa honeypot.
 3. **Escudo 2: Verificación Algorítmica Módulo 11**:
-   - Cada CUIT candidato es validado con [`validar_cuit_modulo11`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py). Si el dígito verificador es inconsistente, se descarta y se rota el circuito.
+   - Cada CUIT candidato es validado con [`validar_cuit_modulo11`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/cuit_validator.py). Si el dígito verificador es inconsistente, se descarta y se rota el circuito.
 4. **Normalización Taxonómica de Condición AFIP**:
    - Se procesan los impuestos activos para derivar categorías formales:
      * `"Monotributo Social"`: Contiene `MONOTRIBUTO` y `SOCIAL`.
@@ -109,7 +109,7 @@ CuitOnline cuenta con mecanismos defensivos agresivos y paywalls dinámicos orie
      * `"IVA Exento"`: Declara condición exenta en IVA.
      * `"No Inscripto (Solo CUIL / Empleado o Jubilado)"`: Sin impuestos activos comerciales.
 
-Para eliminar peticiones redundantes y garantizar latencias de 0 ms en consultas repetidas de un mismo DNI, [`CuitOnlineAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) implementa una base de datos local SQLite con persistencia relacional y JSON íntegro:
+Para eliminar peticiones redundantes y garantizar latencias de 0 ms en consultas repetidas de un mismo DNI, [`CuitOnlineAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) implementa una base de datos local SQLite con persistencia relacional y JSON íntegro:
 
 ```sql
 CREATE TABLE IF NOT EXISTS cache (
@@ -143,7 +143,7 @@ Cuando un DNI ya existe en la base local:
 
 ## 4. Implementación del Adaptador Hexagonal
 
-El adaptador reside en [`adapters/scrapers/cuitonline/cuitonline_adapter.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) y cumple con el contrato abstracto [`IScraperEnginePort`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py):
+El adaptador reside en [`adapters/scrapers/cuitonline/cuitonline_adapter.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/cuitonline/cuitonline_adapter.py) y cumple con el contrato abstracto [`IScraperEnginePort`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/scraper_port.py):
 
 ```python
 class CuitOnlineAdapter(BaseScraperAdapter):
@@ -160,7 +160,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
 ```
 
 ### Registro en ScraperRegistry
-El motor está registrado en [`ScraperRegistry`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo los alias:
+El motor está registrado en [`ScraperRegistry`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo los alias:
 - `"cuitonline"`
 - `"cuit_online"`
 
