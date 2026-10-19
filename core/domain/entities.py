@@ -208,16 +208,26 @@ class ReglaPipeline:
     CADENA_COLA_AUTOMATIZACION = ["telcos", "claro", "personal", "movistar"]
 
     @classmethod
-    def resolver_cadena(cls, tipo_cola: Optional[str], cadena: Optional[List[str]] = None) -> Optional[List[str]]:
+    def resolver_cadena(
+        cls, 
+        tipo_cola: Optional[str], 
+        cadena: Optional[List[str]] = None,
+        scraper_actual: Optional[str] = None
+    ) -> Optional[List[str]]:
         """
         Devuelve la cadena efectiva según el tipo de cola.
         - Si se inyectó una cadena explícita, se respeta.
-        - Si la cola es 'cola_automatizacion', se usa CADENA_COLA_AUTOMATIZACION (Telcos terminal).
+        - Si la cola es 'cola_automatizacion':
+            * Si el scraper ejecutado es 'iris' (o variantes), la cadena es ['iris'] (terminal tras IRIS).
+            * En caso contrario, se usa CADENA_COLA_AUTOMATIZACION (Telcos terminal).
         - En cualquier otro caso retorna None (CADENA_DEFAULT).
         """
         if cadena:
             return list(cadena)
         if str(tipo_cola or "").lower().strip() == "cola_automatizacion":
+            sc = str(scraper_actual or "").lower()
+            if "iris" in sc:
+                return ["iris"]
             return list(cls.CADENA_COLA_AUTOMATIZACION)
         return None
 

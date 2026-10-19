@@ -26,6 +26,7 @@ import config
 from adapters.scrapers.iris.parser import parse_iris_detail
 
 logger = logging.getLogger("IrisHttpBot")
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 
 
 class IrisHttpBot:
@@ -176,7 +177,7 @@ class IrisHttpBot:
                 "loginForm:submitbutton": "Login",
                 "loginForm": "loginForm"
             }
-            r2 = self.session.post(r1.url, data=payload, timeout=25, allow_redirects=True)
+            r2 = self.session.post(r1.url, data=payload, timeout=35, allow_redirects=True)
             if "workspace.xhtml" not in r2.url:
                 logger.error(f"Fallo en login HTTP. URL resultante: {r2.url}")
                 return False
@@ -343,7 +344,7 @@ class IrisHttpBot:
                 "": "undefined"
             }
 
-            r_post = self.session.post(post_url, data=query_payload, timeout=25)
+            r_post = self.session.post(post_url, data=query_payload, timeout=35)
 
             # Sanidad: Si durante el POST la sesión expiró o redirigió al login
             if "login.xhtml" in r_post.url or "loginForm" in r_post.text:
@@ -357,7 +358,7 @@ class IrisHttpBot:
                     self.search_form_action = form_action
                     post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={int(time.time() * 1000)}"
                     query_payload["xo$DocSessKey"] = doc_key
-                    r_post = self.session.post(post_url, data=query_payload, timeout=25)
+                    r_post = self.session.post(post_url, data=query_payload, timeout=35)
 
             finish_url_match = re.search(r'url="([^"]+)"', r_post.text)
             if not finish_url_match:
@@ -375,7 +376,7 @@ class IrisHttpBot:
             finish_url = finish_url_match.group(1).replace("'", "")
 
             # 3. GET de la tabla de resultados
-            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=25)
+            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=35)
 
             doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table.text)
             action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table.text, re.IGNORECASE)
@@ -434,14 +435,14 @@ class IrisHttpBot:
                         "xo$executionType": "rscript"
                     }
 
-                    r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=25)
+                    r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=35)
                     detail_match = re.search(r'url="([^"]+)"', r_detail_post.text)
                     if not detail_match:
                         logger.warning(f"Línea {linea_limpia}: No se extrajo URL de detalle para {lupa_id}.")
                         continue
 
                     detail_finish_url = detail_match.group(1).replace("'", "")
-                    r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=25)
+                    r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=35)
 
                     det_datos = parse_iris_detail(r_detail.text)
                     op["detalle"] = det_datos
@@ -465,13 +466,13 @@ class IrisHttpBot:
                         "xo$ScreenSessKey": "0",
                         "xo$executionType": "rscript"
                     }
-                    r_back = self.session.post(back_url, data=back_payload, timeout=25)
+                    r_back = self.session.post(back_url, data=back_payload, timeout=35)
                     back_match = re.search(r'url="([^"]+)"', r_back.text)
                     if not back_match:
                         logger.warning(f"Línea {linea_limpia}: No se obtuvo URL de retorno a la tabla tras {lupa_id}.")
                         break
 
-                    r_table_next = self.session.get("http://iris.tmoviles.com.ar" + back_match.group(1).replace("'", ""), timeout=25)
+                    r_table_next = self.session.get("http://iris.tmoviles.com.ar" + back_match.group(1).replace("'", ""), timeout=35)
                     k_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table_next.text)
                     act_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table_next.text, re.IGNORECASE)
                     if not k_match or not act_match:
@@ -560,7 +561,7 @@ class IrisHttpBot:
                 "": "undefined"
             }
 
-            r_post = self.session.post(post_url, data=query_payload, timeout=25)
+            r_post = self.session.post(post_url, data=query_payload, timeout=35)
 
             # Auto-sanación si la sesión expiró
             if "login.xhtml" in r_post.url or "loginForm" in r_post.text:
@@ -574,7 +575,7 @@ class IrisHttpBot:
                     self.search_form_action = form_action
                     post_url = f"http://iris.tmoviles.com.ar{form_action}&C=undefined&U={int(time.time() * 1000)}"
                     query_payload["xo$DocSessKey"] = doc_key
-                    r_post = self.session.post(post_url, data=query_payload, timeout=25)
+                    r_post = self.session.post(post_url, data=query_payload, timeout=35)
 
             finish_url_match = re.search(r'url="([^"]+)"', r_post.text)
             if not finish_url_match:
@@ -592,7 +593,7 @@ class IrisHttpBot:
             finish_url = finish_url_match.group(1).replace("'", "")
 
             # 3. GET de la tabla de resultados
-            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=25)
+            r_table = self.session.get("http://iris.tmoviles.com.ar" + finish_url, timeout=35)
 
             doc_key_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table.text)
             action_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table.text, re.IGNORECASE)
@@ -660,10 +661,10 @@ class IrisHttpBot:
                         "att$nroLinea": "",
                         "": "undefined"
                     }
-                    r_p = self.session.post(p_url, data=q_payload, timeout=25)
+                    r_p = self.session.post(p_url, data=q_payload, timeout=35)
                     m = re.search(r'url="([^"]+)"', r_p.text)
                     if m:
-                        r_t = self.session.get("http://iris.tmoviles.com.ar" + m.group(1).replace("'", ""), timeout=25)
+                        r_t = self.session.get("http://iris.tmoviles.com.ar" + m.group(1).replace("'", ""), timeout=35)
                         km = re.search(r"var docKey\s*=\s*'([^']+)'", r_t.text)
                         am = re.search(r'<FORM[^>]*action="([^"]+)"', r_t.text, re.IGNORECASE)
                         if km and am:
@@ -699,7 +700,7 @@ class IrisHttpBot:
                         "xo$executionType": "rscript"
                     }
 
-                    r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=25)
+                    r_detail_post = self.session.post(detail_post_url, data=detail_payload, timeout=35)
                     detail_match = re.search(r'url="([^"]+)"', r_detail_post.text)
                     if not detail_match:
                         logger.warning(f"DNI {dni_limpio}: No se extrajo URL de detalle para {lupa_id}. Continuando...")
@@ -707,7 +708,7 @@ class IrisHttpBot:
                         continue
 
                     detail_finish_url = detail_match.group(1).replace("'", "")
-                    r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=25)
+                    r_detail = self.session.get("http://iris.tmoviles.com.ar" + detail_finish_url, timeout=35)
 
                     if "bpmWorkspaceError" in r_detail.text:
                         logger.debug(f"DNI {dni_limpio}: Detalle {lupa_id} ({form_name}) retornó error en BPM. Continuando con siguientes...")
@@ -750,13 +751,13 @@ class IrisHttpBot:
                         "xo$ScreenSessKey": "0",
                         "xo$executionType": "rscript"
                     }
-                    r_back = self.session.post(back_url, data=back_payload, timeout=25)
+                    r_back = self.session.post(back_url, data=back_payload, timeout=35)
                     back_match = re.search(r'url="([^"]+)"', r_back.text)
                     if not back_match:
                         current_doc_key, current_action = _reabrir_tabla_fresca()
                         continue
 
-                    r_table_next = self.session.get("http://iris.tmoviles.com.ar" + back_match.group(1).replace("'", ""), timeout=25)
+                    r_table_next = self.session.get("http://iris.tmoviles.com.ar" + back_match.group(1).replace("'", ""), timeout=35)
                     k_match = re.search(r"var docKey\s*=\s*'([^']+)'", r_table_next.text)
                     act_match = re.search(r'<FORM[^>]*action="([^"]+)"', r_table_next.text, re.IGNORECASE)
                     if not k_match or not act_match:

@@ -79,6 +79,8 @@ logging.basicConfig(
 logging.getLogger("mysql.connector").setLevel(logging.WARNING)
 logging.getLogger("stem").setLevel(logging.WARNING)
 logging.getLogger("stem.control").setLevel(logging.ERROR)
+logging.getLogger("urllib3").setLevel(logging.ERROR)
+logging.getLogger("urllib3.connectionpool").setLevel(logging.ERROR)
 logger = logging.getLogger("SupervisorVPS")
 
 

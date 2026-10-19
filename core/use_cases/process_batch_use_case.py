@@ -110,8 +110,13 @@ class ProcesarLoteUseCase:
             try:
                 # 2. Consultar a través del puerto de scraper
                 linea_consulta = Linea(ani=reg.linea.ani, dni=reg.linea.dni or getattr(reg, 'dni', None))
-                # Cadena efectiva según la cola (cola_automatizacion => Telcos terminal)
-                cadena_efectiva = ReglaPipeline.resolver_cadena(getattr(reg, "tipo_cola", None), self.cadena)
+                # Cadena efectiva según la cola (cola_automatizacion => Telcos terminal, o IRIS terminal si corre iris)
+                sc_nombre = getattr(self.scraper, "nombre", None) or getattr(reg, "scraper_actual", None)
+                cadena_efectiva = ReglaPipeline.resolver_cadena(
+                    getattr(reg, "tipo_cola", None), 
+                    self.cadena,
+                    scraper_actual=sc_nombre
+                )
 
                 # Parsear datos_json previos
                 if isinstance(reg.datos_existentes, dict):

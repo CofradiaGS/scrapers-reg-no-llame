@@ -157,29 +157,24 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = nombre_clean
 
 
-<<<<<<< Updated upstream
             cond_auto = ""
             params_auto = []
             if self.tipo_cola == "cola_automatizacion" and self.auto_id:
                 cond_auto = "AND auto_id = ?"
                 params_auto = [self.auto_id]
 
-            if canon == "telcos":
-                cursor = conn.execute(f"""
-=======
             if canon in ("enacom_web", "scraper_enacom"):
-                cursor = conn.execute("""
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto}
                       AND scraper_actual IN ('enacom_web', 'scraper_enacom')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
-                """, (self.tipo_cola, batch_size))
+                """, [self.tipo_cola] + params_auto + [batch_size])
             elif canon == "telcos":
-                cursor = conn.execute("""
->>>>>>> Stashed changes
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente
                     FROM tareas_staging
@@ -306,6 +301,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     scraper_actual == "finalizado"
                     or str(item.get("estado") or "").lower() in ("completado", "completed")
                     or not scraper_actual
+                    or (self.tipo_cola == "cola_automatizacion" and "iris" in str(item.get("fuente_scraper") or item.get("operador") or scraper_actual).lower())
                 )
 
                 if status_raw in ("error", "failed", "fallido"):
@@ -313,6 +309,8 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     error_msg = desc or "Error en procesamiento local"
                 elif is_finished:
                     estado_local = "listo_para_subir"
+                    if self.tipo_cola == "cola_automatizacion" and "iris" in str(item.get("fuente_scraper") or item.get("operador") or scraper_actual).lower():
+                        scraper_actual = "finalizado"
                     error_msg = None
                 else:
                     # Posta intermedia del pipeline local (ej: iris -> telcos -> cuitonline/datuar -> bcra).
