@@ -88,11 +88,16 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     fecha_procesado DATETIME,
                     fecha_sincronizado DATETIME,
                     fecha_lease DATETIME,
+                    active INTEGER DEFAULT 0,
                     PRIMARY KEY (id_vps, tipo_cola)
                 );
             """)
             try:
                 conn.execute("ALTER TABLE tareas_staging ADD COLUMN fecha_lease DATETIME;")
+            except Exception:
+                pass
+            try:
+                conn.execute("ALTER TABLE tareas_staging ADD COLUMN active INTEGER DEFAULT 0;")
             except Exception:
                 pass
             conn.execute("CREATE INDEX IF NOT EXISTS idx_staging_tipo_estado ON tareas_staging(tipo_cola, estado_local);")
@@ -157,33 +162,30 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = nombre_clean
 
 
-<<<<<<< Updated upstream
             cond_auto = ""
             params_auto = []
             if self.tipo_cola == "cola_automatizacion" and self.auto_id:
                 cond_auto = "AND auto_id = ?"
                 params_auto = [self.auto_id]
 
-            if canon == "telcos":
-                cursor = conn.execute(f"""
-=======
+            cond_active = "AND (active IS NULL OR active = 0)" if self.tipo_cola == "registro_no_llame" else ""
+
             if canon in ("enacom_web", "scraper_enacom"):
-                cursor = conn.execute("""
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
-                           scraper_actual, payload_origen, resultado_json, fuente
+                           scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ?
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
                       AND scraper_actual IN ('enacom_web', 'scraper_enacom')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
                 """, (self.tipo_cola, batch_size))
             elif canon == "telcos":
-                cursor = conn.execute("""
->>>>>>> Stashed changes
+                cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
-                           scraper_actual, payload_origen, resultado_json, fuente
+                           scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto}
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
                       AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
@@ -191,9 +193,9 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
             else:
                 cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
-                           scraper_actual, payload_origen, resultado_json, fuente
+                           scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto}
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
                       AND scraper_actual = ?
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
@@ -227,6 +229,10 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     except Exception:
                         payload_dict = {}
 
+                active_val = None
+                if "active" in f.keys() and f["active"] is not None:
+                    active_val = bool(f["active"])
+
                 linea_ent = Linea(ani=num_linea, dni=dni_val)
                 reg = RegistroCola(
                     id=f["id_vps"],
@@ -237,7 +243,8 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     scraper_actual=f["scraper_actual"] or scraper_nombre,
                     fuente=f["fuente"],
                     datos_existentes=payload_dict,
-                    tipo_cola=f["tipo_cola"]
+                    tipo_cola=f["tipo_cola"],
+                    active=active_val
                 )
                 registros.append(reg)
 
@@ -514,9 +521,10 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     fuente_str = str(fuente_raw)
                 else:
                     fuente_str = None
+                active_val = 1 if t.get("active") else 0
 
                 valores.append((
-                    id_vps, q_type, linea, dni, auto_id, target_pc, scraper_act, payload_str, fuente_str
+                    id_vps, q_type, linea, dni, auto_id, target_pc, scraper_act, payload_str, fuente_str, active_val
                 ))
 
             # Medir pendientes antes de la inserción para detectar si las tareas ya existían procesadas
@@ -525,8 +533,8 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
 
             cursor = conn.executemany("""
                 INSERT INTO tareas_staging (
-                    id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, estado_local
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
+                    id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, scraper_actual, payload_origen, fuente, active, estado_local
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pendiente')
                 ON CONFLICT(id_vps, tipo_cola) DO UPDATE SET
                     numero_de_linea = excluded.numero_de_linea,
                     dni = excluded.dni,
@@ -535,6 +543,7 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     scraper_actual = excluded.scraper_actual,
                     payload_origen = excluded.payload_origen,
                     fuente = excluded.fuente,
+                    active = excluded.active,
                     estado_local = 'pendiente',
                     resultado_json = NULL,
                     error_msg = NULL,
@@ -681,32 +690,33 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     canon = "telcos"
                 else:
                     canon = nombre_clean
-
+                cond_active = "AND (active IS NULL OR active = 0)" if q_type == "registro_no_llame" else ""
                 if canon in ("enacom_web", "scraper_enacom"):
-                    cursor = conn.execute("""
+                    cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? 
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
                           AND scraper_actual IN ('enacom_web', 'scraper_enacom');
                     """, (q_type,))
                 elif canon == "telcos":
-                    cursor = conn.execute("""
+                    cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? 
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
                           AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar');
                     """, (q_type,))
                 else:
-                    cursor = conn.execute("""
+                    cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? AND scraper_actual = ?;
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active} AND scraper_actual = ?;
                     """, (q_type, canon))
             else:
-                cursor = conn.execute("""
+                cond_active = "AND (active IS NULL OR active = 0)" if q_type == "registro_no_llame" else ""
+                cursor = conn.execute(f"""
                     SELECT COUNT(*) as pendientes
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ?;
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active};
                 """, (q_type,))
             row = cursor.fetchone()
             return row["pendientes"] if row else 0

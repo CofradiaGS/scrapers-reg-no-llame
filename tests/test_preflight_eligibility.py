@@ -8,8 +8,8 @@ import unittest
 from core.use_cases.process_batch_use_case import ProcesarLoteUseCase
 from adapters.queue.memory_adapter import MemoryQueueAdapter
 from core.ports.scraper_port import IScraperEnginePort
-from core.domain.entities import ScrapeResult, Linea
-from core.domain.enums import StatusScraping
+from core.domain.entities import ScrapeResult, Linea, ReglaPipeline
+from core.domain.enums import StatusScraping, EstadoRegistro
 
 class DummyScraper(IScraperEnginePort):
     def __init__(self, nombre="claro"):
@@ -186,5 +186,95 @@ class TestPreflightEligibility(unittest.TestCase):
         self.assertEqual(len(cola.calls_persist[0]), 1)
         self.assertEqual(len(cola.calls_persist[1]), 1)
 
+    def test_active_en_reg_no_llame_rechazado_en_dominio_para_todos_los_scrapers(self):
+        """
+        ReglaPipeline.es_elegible_para_scraper debe rechazar tajantemente cualquier
+        línea con active=True para TODOS los scrapers sin excepción.
+        """
+        scrapers = ["iris", "telcos", "claro", "personal", "movistar", "datuar", "cuitonline", "bcra"]
+        for sc in scrapers:
+            apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+                scraper_nombre=sc,
+                ani="1123456789",
+                dni="30112233",
+                datos_json={},
+                active=True
+            )
+            self.assertFalse(apto, f"El scraper {sc} no debió admitir una línea con active=True")
+            self.assertIn("active=True", motivo)
+
+    def test_active_false_o_none_permite_evaluacion_normal(self):
+        """
+        Si active es False o None, la línea debe evaluarse según sus reglas habituales.
+        """
+        for act in (False, None):
+            apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+                scraper_nombre="iris",
+                ani="1123456789",
+                active=act
+            )
+            self.assertTrue(apto, f"IRIS debió aceptar la línea con active={act}")
+
+    def test_active_true_en_use_case_no_scrapea_y_rerevierte_a_pendiente(self):
+        """
+        Si un registro con active=True llega al caso de uso, se debe abortar la consulta HTTP,
+        no mutar sus datos y revertirlo a 'pendiente' para no quemarlo ni finalizarlo.
+        """
+        class IngestaQueue(MemoryQueueAdapter):
+            pass
+
+        # Forzar un registro con active=True
+        cola = IngestaQueue([
+            {
+                "id": 601,
+                "ani": "1144556677",
+                "scraper_actual": "iris",
+                "estado": "pendiente",
+                "active": False  # Para que reservar_lote lo tome en la prueba
+            }
+        ])
+
+        # Simulamos que al reclamarlo se detectó active=True
+        lote_reservado = cola.reservar_lote(batch_size=1)
+        self.assertEqual(len(lote_reservado), 1)
+        lote_reservado[0].active = True
+        lote_reservado[0].tipo_cola = "registro_no_llame"
+
+        scraper = DummyScraper(nombre="iris")
+        use_case = ProcesarLoteUseCase(cola_repo=cola, scraper_engine=scraper)
+
+        # Mockeamos reservar_lote para que retorne directamente este lote con active=True
+        cola.reservar_lote = lambda *args, **kwargs: lote_reservado
+
+        items_procesados = []
+        proc, sin_proc = use_case.ejecutar_lote(
+            batch_size=1,
+            on_item_procesado=lambda it: items_procesados.append(it)
+        )
+
+        self.assertEqual(scraper.consultar_llamado, 0, "No debe invocar consultar_linea para registros activos en No Llame")
+        self.assertEqual(proc, 1)
+        self.assertEqual(items_procesados[0]["estado"], EstadoRegistro.PENDIENTE.value)
+        self.assertEqual(items_procesados[0]["scraper_actual"], "iris")
+        self.assertIn("Línea activa en Registro No Llame", items_procesados[0]["descripcion"])
+
+    def test_memory_queue_adapter_filtra_active_true(self):
+        """
+        MemoryQueueAdapter.reservar_lote no debe reclamar registros que tengan active=True.
+        """
+        cola = MemoryQueueAdapter([
+            {"id": 701, "ani": "1111111111", "scraper_actual": "iris", "estado": "pendiente", "active": True},
+            {"id": 702, "ani": "1122222222", "scraper_actual": "iris", "estado": "pendiente", "active": False},
+            {"id": 703, "ani": "1133333333", "scraper_actual": "iris", "estado": "pendiente"}  # None
+        ])
+
+        lote = cola.reservar_lote(batch_size=10)
+        ids_reservados = [r.id for r in lote]
+
+        self.assertNotIn(701, ids_reservados, "El registro con active=True no debe ser reservado")
+        self.assertIn(702, ids_reservados, "El registro con active=False sí debe ser reservado")
+        self.assertIn(703, ids_reservados, "El registro con active=None sí debe ser reservado")
+
 if __name__ == "__main__":
     unittest.main()
+

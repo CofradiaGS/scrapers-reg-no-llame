@@ -144,7 +144,8 @@ class ProcesarLoteUseCase:
                     ani=linea_consulta.ani,
                     dni=linea_consulta.dni,
                     datos_json=datos_previos,
-                    solo_sin_coincidencia=solo_sin_coincidencia
+                    solo_sin_coincidencia=solo_sin_coincidencia,
+                    active=getattr(reg, "active", None)
                 )
 
                 if not es_apto:
@@ -159,12 +160,16 @@ class ProcesarLoteUseCase:
 
                     # Salvaguarda de Dominio: Aplica EXCLUSIVAMENTE a queue_registro_no_llame.
                     # En cola_automatizacion el flujo telcos es independiente y no requiere IRIS previo.
-                    # En queue_registro_no_llame, toda línea debe haber pasado primero por IRIS.
+                    # En queue_registro_no_llame, toda línea debe haber pasado primero por IRIS y no estar activa en No Llame.
                     is_reg_no_llame = getattr(reg, "tipo_cola", None) == "registro_no_llame" or (
                         getattr(reg, "tipo_cola", None) is None and (self.cadena is None or "iris" in self.cadena)
                     )
                     nombre_sc = self.scraper.nombre.lower()
-                    if is_reg_no_llame and (nombre_sc in ReglaPipeline.TELCOS or nombre_sc == "telcos") and getattr(reg, "scraper_actual", None) == "iris":
+                    if is_reg_no_llame and getattr(reg, "active", None) is True:
+                        sig_scraper = getattr(reg, "scraper_actual", "iris")
+                        sig_estado = EstadoRegistro.PENDIENTE.value
+                        motivo = "Línea activa en Registro No Llame. Revertida a pendiente sin modificar"
+                    elif is_reg_no_llame and (nombre_sc in ReglaPipeline.TELCOS or nombre_sc == "telcos") and getattr(reg, "scraper_actual", None) == "iris":
                         sig_scraper = "iris"
                         sig_estado = EstadoRegistro.PENDIENTE.value
                         motivo = "Línea de Reg No Llame pertenece a IRIS. Revertida a IRIS pendiente"

@@ -89,22 +89,34 @@ def obtener_id_minimo_mes_vigente(conn, fecha_inicio_mes: str) -> int:
     return row_fb["id"] if row_fb and row_fb.get("id") else 0
 
 
+def calcular_fecha_desde(meses: int = 2) -> str:
+    """Calcula el primer día (00:00:00) de la ventana de los últimos N meses vigentes."""
+    ahora = datetime.now()
+    mes = ahora.month - (meses - 1)
+    anio = ahora.year
+    while mes < 1:
+        mes += 12
+        anio -= 1
+    return f"{anio:04d}-{mes:02d}-01 00:00:00"
+
+
 def alimentar_enacom(
     batch_size: int = 5000,
     target_pc: str = "PC-08",
     limit_total: Optional[int] = None,
     dry_run: bool = False,
-    fecha_mes: Optional[str] = None
+    meses: int = 2,
+    fecha_desde: Optional[str] = None
 ):
     start_time = time.time()
     ahora = datetime.now()
-    if not fecha_mes:
-        fecha_mes = ahora.strftime("%Y-%m-01 00:00:00")
+    if not fecha_desde:
+        fecha_desde = calcular_fecha_desde(meses)
 
     print("=" * 80)
     print("ALIMENTADOR COLA AUTOMATIZACIÓN: Cobro Express -> ENACOM Web")
     print(f"Fecha/Hora inicio:       {ahora.strftime('%Y-%m-%d %H:%M:%S')}")
-    print(f"Mes vigente filtro:      >= {fecha_mes}")
+    print(f"Ventana temporal:        Últimos {meses} meses (>= {fecha_desde})")
     print(f"Tamaño de lote (batch):  {batch_size:,} registros")
     print(f"Target PC destino:       {target_pc}")
     print(f"Límite total a insertar: {f'{limit_total:,}' if limit_total else 'Sin límite (todos los elegibles)'}")
@@ -113,10 +125,10 @@ def alimentar_enacom(
 
     conn = conectar_bd()
 
-    # 1. Determinar ID base del mes
-    print("\n🔍 Calculando ID inicial para el mes vigente...")
-    min_id = obtener_id_minimo_mes_vigente(conn, fecha_mes)
-    print(f"   -> ID mínimo detectado para {fecha_mes[:7]}: {min_id:,}")
+    # 1. Determinar ID base de la ventana
+    print(f"\n🔍 Calculando ID inicial para la ventana desde {fecha_desde[:10]}...")
+    min_id = obtener_id_minimo_mes_vigente(conn, fecha_desde)
+    print(f"   -> ID mínimo detectado para {fecha_desde[:7]}: {min_id:,}")
 
     # Query de selección por lotes (Keyset pagination ultra-rápida por Clustered Primary Index)
     query_select = """
@@ -126,13 +138,14 @@ def alimentar_enacom(
         WHERE c.id > %s
           AND c.auto_id = 'scraper_cobro_express'
           AND c.estado = 'completado'
+          AND c.fecha_fin >= %s
           AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.claro.status')) = 'sin_coincidencia'
           AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.personal.status')) = 'sin_coincidencia'
           AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.movistar.status')) = 'sin_coincidencia'
         LIMIT %s;
     """
 
-    # Query de inserción atómica
+    # Query de inserción atómica (nota: paso_por_iris es columna generada automáticamente por MySQL)
     query_insert = """
         INSERT IGNORE INTO cola_automatizacion (
             prioridad,
@@ -151,10 +164,9 @@ def alimentar_enacom(
             numero_de_linea,
             dni,
             fecha_actualizacion,
-            scrapers_intentados,
-            paso_por_iris
+            scrapers_intentados
         ) VALUES (
-            %s, %s, %s, %s, NULL, %s, NULL, NULL, 0, NOW(), NULL, NULL, %s, %s, %s, NOW(), %s, %s
+            %s, %s, %s, %s, NULL, %s, NULL, NULL, 0, NOW(), NULL, NULL, %s, %s, %s, NOW(), %s
         );
     """
 
@@ -179,7 +191,7 @@ def alimentar_enacom(
                 pedir_lote = min(batch_size, restante)
 
             t0_batch = time.time()
-            cur_read.execute(query_select, (ultimo_id, pedir_lote))
+            cur_read.execute(query_select, (ultimo_id, fecha_desde, pedir_lote))
             filas = cur_read.fetchall()
 
             if not filas:
@@ -220,13 +232,12 @@ def alimentar_enacom(
                 # Payload en formato JSON string
                 payload_str = json.dumps(pay_dict, ensure_ascii=False) if pay_dict else json.dumps(r.get("payload") or {}, ensure_ascii=False)
 
-                # Paso por iris
-                paso_iris = r.get("paso_por_iris")
-                if paso_iris is None:
-                    paso_iris = 0
+                # scrapers_intentados (preserva iris_scraper si pasó por iris para que la columna generada paso_por_iris sea 1)
+                paso_iris = bool(r.get("paso_por_iris"))
+                scrapers_str = "iris_scraper,scraper_cobro_express" if paso_iris else "scraper_cobro_express"
 
                 # Tupla para el INSERT:
-                # prioridad, target_pc, estado, auto_id, payload, dias_desde_ultimo_cambio, numero_de_linea, dni, scrapers_intentados, paso_por_iris
+                # prioridad, target_pc, estado, auto_id, payload, dias_desde_ultimo_cambio, numero_de_linea, dni, scrapers_intentados
                 record = (
                     prio,
                     target_pc,
@@ -236,8 +247,7 @@ def alimentar_enacom(
                     None,  # dias_desde_ultimo_cambio = NULL según especificación del usuario
                     num_linea,
                     dni_limpio,
-                    "scraper_cobro_express",
-                    paso_iris
+                    scrapers_str
                 )
                 buffer_insert.append(record)
 
@@ -299,7 +309,8 @@ if __name__ == "__main__":
     parser.add_argument("--target-pc", type=str, default="PC-08", help="Target PC asignado (default: PC-08)")
     parser.add_argument("--limit", type=int, default=None, help="Límite máximo total de registros a transferir")
     parser.add_argument("--dry-run", action="store_true", help="Simula la operación sin escribir en MySQL")
-    parser.add_argument("--mes-vigente", type=str, default=None, help="Fecha inicio mes (default: primer día mes actual 00:00:00)")
+    parser.add_argument("--meses", type=int, default=2, help="Cantidad de meses vigentes a incluir hacia atrás (default: 2, ej: septiembre y octubre)")
+    parser.add_argument("--fecha-desde", type=str, default=None, help="Fecha mínima exacta YYYY-MM-DD (default: calcula los últimos N meses)")
 
     args = parser.parse_args()
 
@@ -308,5 +319,6 @@ if __name__ == "__main__":
         target_pc=args.target_pc,
         limit_total=args.limit,
         dry_run=args.dry_run,
-        fecha_mes=args.mes_vigente
+        meses=args.meses,
+        fecha_desde=args.fecha_desde
     )

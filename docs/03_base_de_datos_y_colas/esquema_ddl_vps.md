@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS `queue_registro_no_llame` (
     `descripcion_scraper` VARCHAR(255) NULL DEFAULT '',
     `fuente` VARCHAR(255) NULL DEFAULT '[]',
     `datos_json` JSON NULL,
+    `active` TINYINT(1) NULL DEFAULT 0,
+    `rnl_origen` VARCHAR(100) NULL DEFAULT NULL,
     `created_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     `updated_at` TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (`id`),
@@ -45,8 +47,11 @@ A continuación se detalla cada campo utilizado de forma literal en las consulta
 | `descripcion_scraper` | `VARCHAR(255)` | Sí | `''` | Resumen humano o diagnóstico inmediato generado por el scraper (ej. `"Port Out - Titular: JUAN PEREZ | Doc: 20123456"` o código de error truncado). |
 | `fuente` | `VARCHAR(255)` | Sí | `'[]'` | Cadena con formato JSON array que registra acumulativamente los scrapers por los que transitó el registro (ej. `'["iris", "claro"]'`). |
 | `datos_json` | `JSON` | Sí | `NULL` | Almacén de payload semi-estructurado donde cada scraper inyecta su resultado bajo su propio namespace sin colisionar con etapas previas. |
+| `active` | `TINYINT(1)` | Sí | `NULL` / `0` | Indicador booleano de si el registro figura actualmente activo en el Registro Nacional No Llame (`1` = Inscripto en No Llame; `0` o `NULL` = No figura / scrapeable). Si es `1`, la línea está estrictamente excluida de ser reservada o scrapeada por cualquier automatización mediante cláusula `AND (active IS NULL OR active = 0)`. |
+| `rnl_origen` | `VARCHAR(100)` | Sí | `NULL` | Origen o padrón de importación del Registro No Llame donde se detectó la inscripción de la línea. |
 | `created_at` | `TIMESTAMP` | No | `CURRENT_TIMESTAMP` | Marca temporal de inserción del registro en la cola. |
 | `updated_at` | `TIMESTAMP` | Sí | `NULL` | Marca temporal actualizada obligatoriamente en cada mutación de scraper o script mediante `updated_at = CURRENT_TIMESTAMP`, consumida por el Watchdog Sweeper para detectar workers caídos. |
+
 
 ---
 
@@ -274,6 +279,8 @@ CREATE TABLE `queue_registro_no_llame` (
   `datos_json` longtext,
   `updated_at` timestamp NULL DEFAULT NULL,
   `created_at` date DEFAULT (curdate()),
+  `active` tinyint DEFAULT NULL,
+  `rnl_origen` varchar(100) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_unique` (`ani`,`fuente`),
   KEY `idx_scraper_estado` (`scraper_actual`,`estado`),
@@ -290,11 +297,13 @@ graph LR
         T1 --> C1["Metadatos de Cola: estado, scraper_actual, updated_at"]
         T1 --> C2["Identidad de Línea: ani, created_at"]
         T1 --> C3["Carga Desestructurada: datos_json (longtext), fuente"]
+        T1 --> C4["Bandera No Llame: active, rnl_origen"]
     end
     subgraph Riesgo["Riesgos Detectados y Mitigados"]
         R1["Lock Contention por mezclar Cola con Payload Histórico"]
         R2["Índice redundante idx_estado eliminado"]
         R3["Clave Única (ani, fuente) aislada con fallback fila por fila"]
+        R4["Líneas activas en No Llame (active=1) protegidas contra scraping"]
     end
     Monolito -.-> Riesgo
 ```
@@ -312,6 +321,8 @@ graph LR
    - `idx_ani` **(Eliminado)**: Se removió el índice invisible de 25 MB que consumía memoria y tiempo de disco inútilmente.
    - `idx_estado` **(Eliminado)**: Se eliminó el índice redundante de 803 bytes por entrada, compactando el uso de RAM.
    - `UNIQUE KEY idx_unique (ani, fuente)`: Anomalía histórica donde el mismo ANI puede coexistir si tiene fuentes distintas.
+   - `active tinyint DEFAULT NULL`: Bandera booleana de sincronización con el Registro Nacional No Llame (`1` = Activo en No Llame, `0` o `NULL` = No figura / scrapeable).
+   - `rnl_origen varchar(100) DEFAULT NULL`: Metadato del padrón No Llame de procedencia.
 
 ### 6.3 Mejoras Aplicadas en Base de Datos y Código de Producción
 
@@ -323,4 +334,7 @@ graph LR
    En [`MySQLQueueAdapter.reservar_lote`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L115-L130), se forzó el uso del índice con `FORCE INDEX (idx_scraper_estado)`, reduciendo la latencia de reserva a **30 ms estables**.
 4. **Fallback Transaccional contra Colisiones `IntegrityError` (1062)**:
    En [`MySQLQueueAdapter.persistir_resultados`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L235-L255), si `cursor.executemany` detecta una duplicación de clave única en `(ani, fuente)`, ejecuta un rollback automático y reintenta fila por fila para persistir los registros válidos y aislar la fila conflictiva.
+5. **Aislamiento y Filtrado Preventivo de Líneas en Registro No Llame (`active = 1`)**:
+   En [`MySQLQueueAdapter.reservar_lote`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py), [`VpsSyncAdapter.descargar_lote_vps`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py) y [`SQLiteStagingAdapter.reservar_lote`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py), se incorporó estrictamente la cláusula `AND (active IS NULL OR active = 0)`. Toda línea marcada con `active = 1` permanece intacta en estado `pendiente` sin consumirse ni ser scrapeada por ninguna automatización, garantizando que cuando el padrón bimestral cambie a inactivo (`active = 0`), vuelva a ser naturalmente elegible sin pérdida ni corrupción de datos.
+
 

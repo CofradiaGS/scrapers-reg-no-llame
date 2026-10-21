@@ -203,6 +203,31 @@ class TestSQLiteStagingAdapter(unittest.TestCase):
         self.assertEqual(lote_push[0]["id_vps"], 5001)
         self.assertEqual(lote_push[0]["estado_local"], "en_subida")
 
+    def test_06_filtra_active_true_en_registro_no_llame(self):
+        """
+        Para tipo_cola='registro_no_llame', SqliteStagingAdapter debe ignorar
+        completamente registros con active=1 (active=True) tanto al contar
+        pendientes como al reservar lotes.
+        """
+        db_path_rnl = os.path.join(self.temp_dir.name, "test_rnl.db")
+        adapter_rnl = SQLiteStagingAdapter(db_path=db_path_rnl, tipo_cola="registro_no_llame")
+        tareas = [
+            {"id": 6001, "numero_de_linea": "1111111111", "scraper_actual": "iris", "active": 1},
+            {"id": 6002, "numero_de_linea": "1122222222", "scraper_actual": "iris", "active": 0},
+            {"id": 6003, "numero_de_linea": "1133333333", "scraper_actual": "iris", "active": None},
+        ]
+        adapter_rnl.insertar_tareas_descargadas(tareas)
+
+        # contar_pendientes solo debe ver las 2 no activas en No Llame
+        self.assertEqual(adapter_rnl.contar_pendientes(scraper_actual="iris"), 2)
+
+        # reservar_lote solo debe devolver 6002 y 6003
+        lote = adapter_rnl.reservar_lote(batch_size=10, scraper_nombre="iris")
+        ids = [r.id for r in lote]
+        self.assertNotIn(6001, ids)
+        self.assertIn(6002, ids)
+        self.assertIn(6003, ids)
+        self.assertEqual(len(lote), 2)
 
 
 if __name__ == "__main__":

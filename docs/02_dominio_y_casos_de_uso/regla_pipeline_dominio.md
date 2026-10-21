@@ -92,14 +92,16 @@ class ReglaPipeline:
         dni: Optional[str] = None,
         datos_json: Optional[Dict[str, Any]] = None,
         dias_validez: int = 7,
-        solo_sin_coincidencia: bool = False
+        solo_sin_coincidencia: bool = False,
+        active: Optional[bool] = None
     ) -> tuple[bool, str]:
         """
         Determina si un registro es apto para ser procesado por un scraper específico
-        según las reglas de precedencia, dependencias de datos, ventana temporal de 7 días
-        y la bandera opcional solo_sin_coincidencia.
+        según las reglas de precedencia, dependencias de datos, ventana temporal de 7 días,
+        la bandera opcional solo_sin_coincidencia y el estado en Registro No Llame (active).
 
         Reglas:
+        0.1 REGISTRO NO LLAME: Si active=True, se rechaza inmediatamente para cualquier automatización.
         1. IRIS: Solo necesita ANI. No ejecutado en los últimos 7 días.
         2. CLARO: Exige DNI disponible. Sin coincidencia previa en Personal o Movistar en los últimos 7 días.
            No ejecutado en los últimos 7 días.
@@ -130,6 +132,16 @@ class ReglaPipeline:
             nombre = "cuitonline"
         elif "datuar" in nombre:
             nombre = "datuar"
+
+        # 0. Validación de formato de ANI
+        clean_ani = "".join(filter(str.isdigit, str(ani or ""))).strip()
+        if len(clean_ani) != 10:
+            return False, f"ANI telefónico inválido: '{ani}' (debe contener exactamente 10 dígitos)"
+
+        # 0.1 Bloqueo Registro No Llame: Si el registro está actualmente en Registro No Llame (active=True),
+        # no debe ser scrapeado en ninguna automatización.
+        if active is True:
+            return False, "Registro marcado como activo en Registro No Llame (active=True)"
 
         datos = datos_json if isinstance(datos_json, dict) else {}
         dni_activo = cls.extraer_dni(datos, dni)

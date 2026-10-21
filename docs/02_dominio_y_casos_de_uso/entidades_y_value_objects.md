@@ -190,6 +190,15 @@ class RegistroCola:
     scraper_actual: str = "iris"
     fuente: Optional[str] = None
     datos_existentes: Dict[str, Any] = field(default_factory=dict)
+    dni: Optional[str] = None
+    tipo_cola: Optional[str] = None
+    active: Optional[bool] = None
+
+    def __post_init__(self):
+        if self.dni and self.linea and not self.linea.dni:
+            object.__setattr__(self, "linea", Linea(ani=self.linea.ani, dni=str(self.dni)))
+        elif self.linea and self.linea.dni and not self.dni:
+            self.dni = str(self.linea.dni)
 ```
 
 ### 5.2. Mapeo entre Tabla SQL y Atributos de Dominio
@@ -203,6 +212,9 @@ class RegistroCola:
 | `scraper_actual` | `VARCHAR(50)` | `scraper_actual` | `str` |
 | `fuente` | `TEXT` | `fuente` | `Optional[str]` |
 | `datos_json` | `LONGTEXT` / `JSON` | `datos_existentes` | `Dict[str, Any]` |
+| `dni` | `VARCHAR(15)` | `dni` | `Optional[str]` |
+| (Parámetro de runtime) | N/A | `tipo_cola` | `Optional[str]` |
+| `active` | `TINYINT` | `active` | `Optional[bool]` |
 
 ---
 
@@ -318,6 +330,9 @@ classDiagram
         +str scraper_actual
         +str fuente
         +Dict datos_existentes
+        +str dni
+        +str tipo_cola
+        +bool active
     }
 
     class Prioridad {

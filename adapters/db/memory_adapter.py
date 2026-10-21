@@ -45,6 +45,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
         for r in self.records.values():
             if r.get("estado") != "pendiente":
                 continue
+            if r.get("active") is True:
+                continue
             if r.get("scraper_actual") == canon:
                 apto, _ = ReglaPipeline.es_elegible_para_scraper(
                     scraper_nombre=canon,
@@ -52,7 +54,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                     dni=r.get("dni"),
                     datos_json=r.get("datos_json", {}),
                     dias_validez=7,
-                    solo_sin_coincidencia=solo_sin_coincidencia
+                    solo_sin_coincidencia=solo_sin_coincidencia,
+                    active=r.get("active")
                 )
                 if apto:
                     candidatos.append(r)
@@ -72,7 +75,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                 estado=EstadoRegistro.PROCESANDO,
                 scraper_actual=canon,
                 fuente=r.get("fuente"),
-                datos_existentes=r.get("datos_json", {})
+                datos_existentes=r.get("datos_json", {}),
+                active=r.get("active")
             ))
 
         return resultado

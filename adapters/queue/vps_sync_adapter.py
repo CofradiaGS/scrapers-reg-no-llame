@@ -177,9 +177,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 timeout_lease_min = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(s_nombre)
                 if s_nombre == "enacom_web":
                     query_find = f"""
-                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                         FROM {config.VPS_DB_TABLE}
                         WHERE estado = 'no_coincidencia'
+                          AND (active IS NULL OR active = 0)
                           AND (datos_json NOT LIKE '%"enacom_web"%' OR datos_json IS NULL)
                         ORDER BY id ASC
                         LIMIT %s
@@ -197,10 +198,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
                     # Solo si no cubren el limit, completar con registros sin DNI (Personal + Movistar).
                     query_con_dni = f"""
-                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                         FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
                         WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
                           AND {cond_lease}
+                          AND (active IS NULL OR active = 0)
                           AND (dni IS NOT NULL AND dni != '')
                         ORDER BY id ASC
                         LIMIT %s
@@ -211,10 +213,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     if len(filas) < limit:
                         remanente = limit - len(filas)
                         query_sin_dni = f"""
-                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                             FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
                             WHERE scraper_actual IN ('telcos', 'claro', 'personal', 'movistar') 
                               AND {cond_lease}
+                              AND (active IS NULL OR active = 0)
                               AND (dni IS NULL OR dni = '')
                             ORDER BY id ASC
                             LIMIT %s
@@ -231,9 +234,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     """
                     cond_iris = "AND (fuente IS NULL OR fuente NOT LIKE '%%iris%%')" if "iris" in s_nombre.lower() else ""
                     query_find = f"""
-                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                        SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                         FROM {config.VPS_DB_TABLE} FORCE INDEX (idx_scraper_estado)
-                        WHERE scraper_actual = %s AND {cond_lease} {cond_iris}
+                        WHERE scraper_actual = %s AND {cond_lease} AND (active IS NULL OR active = 0) {cond_iris}
                         ORDER BY id ASC
                         LIMIT %s
                         FOR UPDATE SKIP LOCKED;
@@ -303,6 +306,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         "scraper_actual": sc_destino,
                         "fuente": f.get("fuente"),
                         "tipo_cola": "registro_no_llame",
+                        "active": bool(f.get("active")) if f.get("active") is not None else None,
                         "datos": datos_dict
                     })
                 logger.info(f"📥 [VPS PULL] Reclamadas {len(resultado)} tareas de {config.VPS_DB_TABLE} (scraper='{s_nombre}').")

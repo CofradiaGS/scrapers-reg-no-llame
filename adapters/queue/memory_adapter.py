@@ -26,6 +26,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
         for r in self.records.values():
             if r.get("estado") != "pendiente":
                 continue
+            if r.get("active") is True:
+                continue
             if r.get("scraper_actual") == scraper_nombre:
                 if solo_sin_coincidencia:
                     raw_json = r.get("datos_json", {})
@@ -41,7 +43,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                         dni=str(r.get("dni")) if r.get("dni") else None,
                         datos_json=raw_json,
                         dias_validez=7,
-                        solo_sin_coincidencia=True
+                        solo_sin_coincidencia=True,
+                        active=r.get("active")
                     )
                     if not apto:
                         continue
@@ -72,7 +75,8 @@ class MemoryQueueAdapter(IColaRepositorioPort):
                 scraper_actual=scraper_nombre,
                 fuente=r.get("fuente"),
                 datos_existentes=raw_json,
-                dni=dni_val
+                dni=dni_val,
+                active=r.get("active")
             ))
 
         return resultado

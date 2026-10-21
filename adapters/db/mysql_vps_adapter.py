@@ -107,10 +107,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
                     # Selección con bloqueo SKIP LOCKED
                     select_query = f"""
-                        SELECT id, ani, estado, scraper_actual, fuente, datos_json
+                        SELECT id, ani, estado, scraper_actual, fuente, datos_json, active
                         FROM `{self.table}`
                         WHERE scraper_actual = %s 
                           AND estado = 'pendiente' 
+                          AND (active IS NULL OR active = 0)
                           AND {filtro_sql}
                         ORDER BY id ASC
                         LIMIT %s
@@ -163,7 +164,8 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         scraper_actual=scraper_nombre,
                         fuente=r.get("fuente"),
                         datos_existentes=raw_json,
-                        tipo_cola="registro_no_llame"
+                        tipo_cola="registro_no_llame",
+                        active=bool(r.get("active")) if r.get("active") is not None else None
                     ))
 
                 return registros

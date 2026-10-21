@@ -133,10 +133,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         # Estrategia Telcos: Priorizar registros con DNI (Claro + Personal + Movistar).
                         # Solo si no cubren el batch_size, completar con registros sin DNI (Personal + Movistar).
                         select_con_dni = f"""
-                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                             FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
                             WHERE {cond_scraper} 
                               AND estado = 'pendiente' 
+                              AND (active IS NULL OR active = 0)
                               AND {filtro_sql}
                               AND (dni IS NOT NULL AND dni != '')
                             ORDER BY id ASC
@@ -148,10 +149,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         if len(filas) < batch_size:
                             remanente = batch_size - len(filas)
                             select_sin_dni = f"""
-                                SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                                SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                                 FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
                                 WHERE {cond_scraper} 
                                   AND estado = 'pendiente' 
+                                  AND (active IS NULL OR active = 0)
                                   AND {filtro_sql}
                                   AND (dni IS NULL OR dni = '')
                                 ORDER BY id ASC
@@ -166,10 +168,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
 
                         # Selección con bloqueo SKIP LOCKED forzando índice idx_scraper_estado
                         select_query = f"""
-                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json
+                            SELECT id, ani, dni, estado, scraper_actual, fuente, datos_json, active
                             FROM `{self.table}` FORCE INDEX (idx_scraper_estado)
                             WHERE {cond_scraper} 
                               AND estado = 'pendiente' 
+                              AND (active IS NULL OR active = 0)
                               AND {filtro_sql}
                             ORDER BY id ASC
                             LIMIT %s
@@ -225,7 +228,8 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                         fuente=r.get("fuente"),
                         datos_existentes=raw_json,
                         dni=dni_val,
-                        tipo_cola="registro_no_llame"
+                        tipo_cola="registro_no_llame",
+                        active=bool(r.get("active")) if r.get("active") is not None else None
                     ))
 
                 return registros
