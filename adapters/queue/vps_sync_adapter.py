@@ -115,41 +115,67 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 instance_id = f"{target_pc_id}_{os.getpid()}_{random.randint(1000, 9999)}"
                 timeout_lease_min = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(scraper_actual or target_auto_id)
 
-                query_find = f"""
-                    SELECT id, numero_de_linea, dni, auto_id, target_pc, payload, prioridad
-                    FROM cola_automatizacion
+                # Fase 1: Reclamar prioritariamente registros en estado 'pendiente'
+                # Se fuerza idx_cola_auto_estado (auto_id, estado) para evitar scans completos de millones de filas
+                query_pendientes = """
+                    SELECT id, numero_de_linea, dni, auto_id, target_pc, payload, prioridad, fuente
+                    FROM cola_automatizacion FORCE INDEX (idx_cola_auto_estado)
                     WHERE auto_id = %s
+                      AND estado = 'pendiente'
+                      AND fecha_fin IS NULL
+                      AND (resultado IS NULL OR resultado = '')
                       AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
-                      AND (
-                          estado = 'pendiente'
-                          OR (
-                              estado = 'en_proceso'
-                              AND (resultado IS NULL OR resultado = '')
-                              AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
-                          )
-                      )
                     ORDER BY id ASC
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED;
                 """
-                cursor.execute(query_find, (target_auto_id, target_pc_id, limit))
-                filas = cursor.fetchall()
+                cursor.execute(query_pendientes, (target_auto_id, target_pc_id, limit))
+                filas = cursor.fetchall() or []
+
+                # Fase 2: Si no se completó el cupo solicitado, rescatar tareas en 'en_proceso' con lease vencido
+                if len(filas) < limit:
+                    remanente = limit - len(filas)
+                    query_huerfanos = f"""
+                        SELECT id, numero_de_linea, dni, auto_id, target_pc, payload, prioridad, fuente
+                        FROM cola_automatizacion FORCE INDEX (idx_cola_auto_estado)
+                        WHERE auto_id = %s
+                          AND estado = 'en_proceso'
+                          AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
+                          AND fecha_fin IS NULL
+                          AND (resultado IS NULL OR resultado = '')
+                          AND (resultado IS NULL OR (resultado NOT LIKE '%coincidencia%' AND resultado NOT LIKE '%titular%'))
+                          AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
+                        ORDER BY id ASC
+                        LIMIT %s
+                        FOR UPDATE SKIP LOCKED;
+                    """
+                    cursor.execute(query_huerfanos, (target_auto_id, target_pc_id, remanente))
+                    huerfanos = cursor.fetchall()
+                    if huerfanos:
+                        filas.extend(huerfanos)
 
                 if not filas:
                     conn.rollback()
                     return []
 
                 ids = [f["id"] for f in filas]
-                placeholders = ", ".join(["%s"] * len(ids))
-                query_update = f"""
-                    UPDATE cola_automatizacion
-                    SET estado = 'en_proceso',
-                        target_pc = %s,
-                        instance_id = %s,
-                        fecha_inicio = NOW()
-                    WHERE id IN ({placeholders});
-                """
-                cursor.execute(query_update, [target_pc_id, instance_id] + ids)
+                # Actualización en chunks de 1000 para no agotar el buffer de bloqueos de InnoDB (Error 1206)
+                chunk_size = 1000
+                for i in range(0, len(ids), chunk_size):
+                    chunk_ids = ids[i:i + chunk_size]
+                    placeholders = ", ".join(["%s"] * len(chunk_ids))
+                    query_update = f"""
+                        UPDATE cola_automatizacion
+                        SET estado = 'en_proceso',
+                            target_pc = %s,
+                            instance_id = %s,
+                            fecha_inicio = NOW()
+                        WHERE id IN ({placeholders})
+                          AND estado != 'completado'
+                          AND estado NOT IN ('completado', 'finalizado')
+                          AND fecha_fin IS NULL;
+                    """
+                    cursor.execute(query_update, [target_pc_id, instance_id] + chunk_ids)
                 conn.commit()
 
                 # Normalizar resultado
@@ -162,7 +188,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         "auto_id": f.get("auto_id") or target_auto_id,
                         "target_pc": target_pc_id,
                         "scraper_actual": scraper_actual or "telcos",
-                        "fuente": f.get("auto_id") or target_auto_id,
+                        "fuente": f.get("fuente") or f.get("auto_id") or target_auto_id,
                         "tipo_cola": "cola_automatizacion",
                         "datos": f.get("payload") or {}
                     })
@@ -562,23 +588,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             conn.start_transaction()
 
             if tipo_cola_clean == "cola_automatizacion":
-                query_push = """
-                    UPDATE cola_automatizacion
-                    SET estado = %s,
-                        resultado = %s,
-                        error_msg = %s,
-                        scrapers_intentados = %s,
-                        dni = CASE WHEN (dni IS NULL OR dni = '') AND %s IS NOT NULL THEN %s ELSE dni END,
-                        numero_de_linea = CASE WHEN (numero_de_linea IS NULL OR numero_de_linea = '') AND %s IS NOT NULL THEN %s ELSE numero_de_linea END,
-                        fecha_fin = NOW()
-                    WHERE id = %s;
-                """
-                params = []
+                items_prepared = []
                 for item in lote:
                     st_local = str(item.get("estado_local", "")).lower()
                     estado_vps = "fallido" if st_local == "fallido" else "completado"
                     res_raw = item.get("resultado_json")
-                    # SQLite almacena JSON como TEXT; parsear si viene como string
                     if isinstance(res_raw, str):
                         try:
                             res_dict = json.loads(res_raw)
@@ -588,7 +602,6 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_dict = res_raw
                     else:
                         res_dict = {}
-                    # Para IRIS: aplicar agrupamiento canónico de operaciones
                     if isinstance(res_dict, dict) and "iris" in res_dict:
                         res_dict = self._formatear_iris_cola_auto(res_dict)
                     res_str = json.dumps(res_dict, ensure_ascii=False) if res_dict else "{}"
@@ -602,35 +615,40 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     linea_val = str(item.get("numero_de_linea") or "").strip() or None
                     id_vps = item["id_vps"]
 
-                    params.append((
-                        estado_vps,
-                        res_str,
-                        err,
-                        scrapers,
-                        dni_val, dni_val,
-                        linea_val, linea_val,
-                        id_vps
-                    ))
+                    items_prepared.append((id_vps, estado_vps, res_str, err, scrapers, dni_val, linea_val))
 
-                cursor.executemany(query_push, params)
+                # Batch UPDATE atómico de ultra-alta velocidad usando JOIN VALUES de MySQL 8 (1 solo round-trip por bloque de 500)
+                batch_size = 500
+                total_afectados = 0
+                for b_i in range(0, len(items_prepared), batch_size):
+                    sub_lote = items_prepared[b_i:b_i + batch_size]
+                    row_placeholders = ", ".join(["ROW(%s, %s, %s, %s, %s, %s, %s)"] * len(sub_lote))
+                    sub_params = []
+                    for id_vps, est, res, err, sc, dni, lin in sub_lote:
+                        sub_params.extend([id_vps, est, res, err, sc, dni, lin])
+
+                    query_push_batch = f"""
+                        UPDATE cola_automatizacion c
+                        JOIN (VALUES {row_placeholders}) AS t(id, estado, resultado, error_msg, scrapers_intentados, dni, numero_de_linea)
+                        ON c.id = t.id
+                        SET c.estado = t.estado,
+                            c.resultado = t.resultado,
+                            c.error_msg = t.error_msg,
+                            c.scrapers_intentados = t.scrapers_intentados,
+                            c.dni = CASE WHEN (c.dni IS NULL OR c.dni = '') AND t.dni IS NOT NULL THEN t.dni ELSE c.dni END,
+                            c.numero_de_linea = CASE WHEN (c.numero_de_linea IS NULL OR c.numero_de_linea = '') AND t.numero_de_linea IS NOT NULL THEN t.numero_de_linea ELSE c.numero_de_linea END,
+                            c.fecha_fin = NOW();
+                    """
+                    cursor.execute(query_push_batch, sub_params)
+                    total_afectados += len(sub_lote)
+
                 conn.commit()
-                logger.info(f"📤 [VPS PUSH] Commited {len(params)} filas en cola_automatizacion (Chunk atómico de 5.000).")
-                return len(params)
+                logger.info(f"📤 [VPS PUSH] Commited {total_afectados} filas en cola_automatizacion (Batch turbo JOIN VALUES).")
+                return total_afectados
 
             else:
                 # Caso queue_registro_no_llame
-                query_push = f"""
-                    UPDATE {config.VPS_DB_TABLE}
-                    SET estado = %s,
-                        scraper_actual = %s,
-                        fuente = %s,
-                        datos_json = %s,
-                        dni = CASE WHEN (dni IS NULL OR dni = '') AND %s IS NOT NULL THEN %s ELSE dni END,
-                        descripcion_scraper = %s,
-                        updated_at = CURRENT_TIMESTAMP
-                    WHERE id = %s;
-                """
-                params = []
+                items_prepared = []
                 for item in lote:
                     st_local = str(item.get("estado_local", "")).lower()
                     s_raw = item.get("scraper_actual") or "finalizado"
@@ -659,21 +677,35 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     desc = str(item.get("descripcion") or item.get("descripcion_scraper") or "")[:195]
                     id_vps = item["id_vps"]
 
-                    params.append((
-                        estado_vps,
-                        s_actual,
-                        fuente_str,
-                        res_str,
-                        dni_val, dni_val,
-                        desc,
-                        id_vps
-                    ))
+                    items_prepared.append((id_vps, estado_vps, s_actual, fuente_str, res_str, dni_val, desc))
 
+                batch_size = 500
+                total_afectados = 0
+                for b_i in range(0, len(items_prepared), batch_size):
+                    sub_lote = items_prepared[b_i:b_i + batch_size]
+                    row_placeholders = ", ".join(["ROW(%s, %s, %s, %s, %s, %s, %s)"] * len(sub_lote))
+                    sub_params = []
+                    for id_vps, est, sc, fuente, res, dni, desc in sub_lote:
+                        sub_params.extend([id_vps, est, sc, fuente, res, dni, desc])
 
-                cursor.executemany(query_push, params)
+                    query_push_batch = f"""
+                        UPDATE {config.VPS_DB_TABLE} q
+                        JOIN (VALUES {row_placeholders}) AS t(id, estado, scraper_actual, fuente, datos_json, dni, descripcion_scraper)
+                        ON q.id = t.id
+                        SET q.estado = t.estado,
+                            q.scraper_actual = t.scraper_actual,
+                            q.fuente = t.fuente,
+                            q.datos_json = t.datos_json,
+                            q.dni = CASE WHEN (q.dni IS NULL OR q.dni = '') AND t.dni IS NOT NULL THEN t.dni ELSE q.dni END,
+                            q.descripcion_scraper = t.descripcion_scraper,
+                            q.updated_at = CURRENT_TIMESTAMP;
+                    """
+                    cursor.execute(query_push_batch, sub_params)
+                    total_afectados += len(sub_lote)
+
                 conn.commit()
-                logger.info(f"📤 [VPS PUSH] Commited {len(params)} filas en {config.VPS_DB_TABLE} (Chunk atómico de 5.000).")
-                return len(params)
+                logger.info(f"📤 [VPS PUSH] Commited {total_afectados} filas en {config.VPS_DB_TABLE} (Batch turbo JOIN VALUES).")
+                return total_afectados
 
         except Exception as e:
             if conn:
@@ -745,17 +777,21 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
 
             if tipo_cola_clean == "cola_automatizacion":
                 query = """
-                    UPDATE cola_automatizacion
+                    UPDATE cola_automatizacion FORCE INDEX (idx_cola_auto_estado)
                     SET estado = 'pendiente',
                         instance_id = NULL
-                    WHERE estado = 'en_proceso'
-                      AND auto_id = %s
+                    WHERE auto_id = %s
+                      AND estado = 'en_proceso'
+                      AND estado != 'completado'
+                      AND estado NOT IN ('completado', 'finalizado')
                       AND (resultado IS NULL OR resultado = '')
-                      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%')
+                      AND (resultado IS NULL OR (resultado NOT LIKE '%coincidencia%' AND resultado NOT LIKE '%titular%'))
+                      AND fecha_fin IS NULL
                       AND (
                           (target_pc = %s AND fecha_inicio < NOW() - INTERVAL %s MINUTE)
                           OR fecha_inicio < NOW() - INTERVAL %s MINUTE
                       )
+                    LIMIT 2000;
                 """
                 # Para la máquina actual usamos minutos_inactividad (ej. 720m = 12h), para cualquier otra máquina 24h
                 timeout_otras_pcs = max(minutos_inactividad * 2, minutos_inactividad + 60)
@@ -774,6 +810,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     SET estado = 'pendiente',
                         updated_at = CURRENT_TIMESTAMP
                     WHERE estado = 'procesando'
+                      AND estado != 'completado'
+                      AND estado NOT IN ('completado', 'finalizado')
+                      AND scraper_actual != 'finalizado'
+                      AND (datos_json IS NULL OR datos_json = '' OR (datos_json NOT LIKE '%coincidencia%' AND datos_json NOT LIKE '%titular%'))
                       AND scraper_actual IN {scrapers_filter}
                       AND (updated_at IS NULL OR updated_at < NOW() - INTERVAL %s MINUTE)
                 """

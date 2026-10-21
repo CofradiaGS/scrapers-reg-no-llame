@@ -34,7 +34,8 @@ conn_vps = mysql.connector.connect(
     password=os.getenv("COLA_AUTO_DBPASS"),
     database=os.getenv("VPS_DBNAME"),
     port=int(os.getenv("VPS_DBPORT", 3306)),
-    autocommit=False
+    autocommit=False,
+    use_pure=True
 )
 cur_vps = conn_vps.cursor(dictionary=True)
 
@@ -100,21 +101,34 @@ for i in range(0, total_candidatos, chunk_size):
     if not resultados_locales:
         continue
     
-    # Preparar parámetros para MySQL VPS
-    params = []
-    ids_actualizados = []
-    for id_vps, res_json, sc_int in resultados_locales:
-        params.append((res_json, sc_int or "telcos", id_vps))
-        ids_actualizados.append(id_vps)
-        if id_to_estado.get(id_vps) == 'en_proceso':
-            sincronizados_en_proceso += 1
-        else:
-            sincronizados_pendiente += 1
-            
-    # Impactar en MySQL VPS
-    cur_vps.executemany(query_vps_update, params)
-    conn_vps.commit()
-    total_sincronizados += len(params)
+    # Impactar en MySQL VPS usando UPDATE masivo atómico con JOIN (VALUES ROW(...)) de MySQL 8
+    # En lugar de 1.000 round-trips TCP individuales, se ejecuta en 1 solo round-trip por bloque
+    sub_chunk_size = 500
+    for sc_i in range(0, len(resultados_locales), sub_chunk_size):
+        sub_lote = resultados_locales[sc_i:sc_i + sub_chunk_size]
+        row_placeholders = ", ".join(["ROW(%s, %s, %s)"] * len(sub_lote))
+        sub_params = []
+        for id_vps, res_json, sc_int in sub_lote:
+            sub_params.extend([id_vps, res_json, sc_int or "telcos"])
+            if id_to_estado.get(id_vps) == 'en_proceso':
+                sincronizados_en_proceso += 1
+            else:
+                sincronizados_pendiente += 1
+                
+        query_batch_vps = f"""
+            UPDATE cola_automatizacion c
+            JOIN (VALUES {row_placeholders}) AS t(id, resultado, scrapers_intentados)
+            ON c.id = t.id
+            SET c.estado = 'completado',
+                c.resultado = t.resultado,
+                c.scrapers_intentados = t.scrapers_intentados,
+                c.fecha_fin = NOW();
+        """
+        cur_vps.execute(query_batch_vps, sub_params)
+        conn_vps.commit()
+        total_sincronizados += len(sub_lote)
+    
+    ids_actualizados = [r[0] for r in resultados_locales]
     
     # Actualizar estado a 'sincronizado' en SQLite local
     pl_up = ",".join("?" * len(ids_actualizados))

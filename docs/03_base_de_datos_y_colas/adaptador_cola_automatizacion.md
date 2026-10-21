@@ -52,10 +52,13 @@ CREATE TABLE IF NOT EXISTS `cola_automatizacion` (
   `id` bigint NOT NULL AUTO_INCREMENT,
   `auto_id` varchar(50) NOT NULL,
   `estado` enum('pendiente','en_proceso','completado','fallido') NOT NULL DEFAULT 'pendiente',
-  `datos` json NOT NULL,
+  `datos` json DEFAULT NULL,
+  `payload` json DEFAULT NULL,
   `numero_de_linea` varchar(30) DEFAULT NULL,
   `dni` varchar(20) DEFAULT NULL,
   `target_pc` varchar(100) DEFAULT NULL,
+  `prioridad` tinyint DEFAULT 2,
+  `fuente` varchar(255) DEFAULT 'GSS_PROD',
   `reintentos` int NOT NULL DEFAULT '0',
   `fecha_creacion` datetime DEFAULT CURRENT_TIMESTAMP,
   `fecha_inicio` datetime DEFAULT NULL,
@@ -64,10 +67,18 @@ CREATE TABLE IF NOT EXISTS `cola_automatizacion` (
   `error_msg` text,
   `scrapers_intentados` text,
   PRIMARY KEY (`id`),
-  KEY `idx_auto_estado_pc` (`auto_id`,`estado`,`target_pc`),
+  UNIQUE KEY `idx_upsert_telefono` (`auto_id`,`numero_de_linea`),
+  KEY `idx_cola_auto_estado` (`auto_id`,`estado`),
+  KEY `idx_fuente` (`fuente`),
   KEY `idx_numero_linea` (`numero_de_linea`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 ```
+
+#### 2.1.1 Columna `fuente` y Unificación de Auto IDs
+La columna `fuente` permite particionar y rastrear el origen de las bases (`GSS_PROD`, `gss_produccion`, `datos_mendoza`) dentro de un mismo identificador unificado de automatización (como `scraper_cobro_express`). De este modo:
+- Se preserva la unicidad de línea por automatización mediante `idx_upsert_telefono(auto_id, numero_de_linea)`.
+- El motor de staging [`VpsSyncAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py) y el adaptador [`ColaAutomatizacionAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) leen y propagan la columna `fuente` a la entidad [`RegistroCola`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L139), manteniéndola intacta en SQLite WAL local.
+- Las consultas y reportes pueden discriminar métricas por `fuente` sin necesidad de fragmentar la cola en múltiples `auto_id`s dispersos.
 
 ### 2.2 Telemetría y Heartbeats: `worker_heartbeats`
 

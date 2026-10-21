@@ -99,7 +99,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         registros: List[RegistroCola] = []
 
         query_find = f"""
-            SELECT id, numero_de_linea, dni, payload, prioridad
+            SELECT id, numero_de_linea, dni, payload, prioridad, fuente
             FROM {self.table}
             WHERE estado = 'pendiente' AND auto_id = %s
               AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
@@ -181,7 +181,7 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                     prioridad_nombre=f"P{prio_int}",
                     estado=EstadoRegistro.PROCESANDO,
                     scraper_actual=scraper_nombre,
-                    fuente=f.get("auto_id"),
+                    fuente=f.get("fuente") or f.get("auto_id"),
                     datos_existentes=payload_dict,
                     tipo_cola="cola_automatizacion"
                 )
@@ -664,7 +664,12 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                 UPDATE {self.table}
                 SET estado = 'pendiente',
                     instance_id = NULL
-                WHERE id IN ({placeholders}) AND estado = 'en_proceso'
+                WHERE id IN ({placeholders}) 
+                  AND estado = 'en_proceso'
+                  AND estado != 'completado'
+                  AND estado NOT IN ('completado', 'finalizado')
+                  AND (resultado IS NULL OR resultado = '')
+                  AND fecha_fin IS NULL;
             """
             cursor.execute(query, ids)
             conn.commit()
@@ -715,10 +720,13 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
                 SET estado = 'pendiente',
                     instance_id = NULL
                 WHERE estado = 'en_proceso'
+                  AND estado != 'completado'
+                  AND estado NOT IN ('completado', 'finalizado')
                   AND auto_id = %s
                   AND (resultado IS NULL OR resultado = '')
-                  AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%')
-                  AND fecha_inicio < NOW() - INTERVAL %s MINUTE
+                  AND (resultado IS NULL OR (resultado NOT LIKE '%coincidencia%' AND resultado NOT LIKE '%titular%'))
+                  AND fecha_fin IS NULL
+                  AND fecha_inicio < NOW() - INTERVAL %s MINUTE;
             """
             cursor.execute(query, (self.auto_id, minutos_inactividad))
             conn.commit()
