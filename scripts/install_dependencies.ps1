@@ -142,6 +142,7 @@ if (-not $SkipTor) {
 
     $torCandidates = @(
         (Join-Path $RepoRoot "tor\tor.exe"),
+        (Join-Path $RepoRoot "tor\tor\tor.exe"),
         (Join-Path $RepoRoot "tor\Tor\tor.exe"),
         (Join-Path $RepoRoot "Tor\tor.exe"),
         (Join-Path $env:USERPROFILE "Desktop\Tor Browser\Browser\TorBrowser\Tor\tor.exe"),
@@ -183,7 +184,7 @@ if (-not $SkipTor) {
             Write-Host "Extrayendo en $torDestDir..." -ForegroundColor Yellow
             & tar -xzf $torArchive -C $torDestDir
 
-            if (Test-Path (Join-Path $torDestDir "tor.exe") -or (Test-Path (Join-Path $torDestDir "Tor\tor.exe"))) {
+            if ((Test-Path (Join-Path $torDestDir "tor.exe")) -or (Test-Path (Join-Path $torDestDir "Tor\tor.exe")) -or (Test-Path (Join-Path $torDestDir "tor\tor.exe"))) {
                 Write-Success "Tor Portable instalado correctamente en $torDestDir."
             } else {
                 Write-WarningMsg "Se extrajo el archivo, pero tor.exe se ubica en un subdirectorio."

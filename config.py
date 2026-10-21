@@ -129,6 +129,7 @@ def _detectar_tor_path() -> str:
     user_profile = Path(os.getenv("USERPROFILE", str(user_home)))
     candidatos = [
         Path(__file__).parent / "tor" / "tor.exe",
+        Path(__file__).parent / "tor" / "tor" / "tor.exe",
         Path(__file__).parent / "tor" / "Tor" / "tor.exe",
         Path(__file__).parent / "Tor" / "tor.exe",
         user_home / "Desktop" / "Tor Browser" / "Browser" / "TorBrowser" / "Tor" / "tor.exe",

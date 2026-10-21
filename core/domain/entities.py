@@ -653,6 +653,11 @@ class ReglaPipeline:
             else:
                 idx = len(pipeline)
 
+        if idx == -1:
+            # Si el motor ejecutado no forma parte de la cadena (ej: Datuar en cola_automatizacion),
+            # no reiniciar desde el principio de la lista; dar la cadena por concluida.
+            idx = len(pipeline)
+
         for candidato in pipeline[idx + 1:]:
             # Si el candidato es una telco y ya corrió telcos, saltearlo
             if (scraper_actual == "telcos" or sc_canonico == "telcos") and (candidato in cls.TELCOS or candidato == "telcos"):

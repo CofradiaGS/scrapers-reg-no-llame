@@ -160,8 +160,6 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 canon = "enacom_web"
             else:
                 canon = nombre_clean
-
-
             cond_auto = ""
             params_auto = []
             if self.tipo_cola == "cola_automatizacion" and self.auto_id:
@@ -175,11 +173,11 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
                       AND scraper_actual IN ('enacom_web', 'scraper_enacom')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
                     LIMIT ?;
-                """, (self.tipo_cola, batch_size))
+                """, [self.tipo_cola] + params_auto + [batch_size])
             elif canon == "telcos":
                 cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
