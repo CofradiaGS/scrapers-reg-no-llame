@@ -268,7 +268,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                     UPDATE `{self.table}`
                     SET estado = 'pendiente',
                         updated_at = CURRENT_TIMESTAMP
-                    WHERE id IN ({format_ids}) AND estado = 'procesando'
+                    WHERE id IN ({format_ids}) 
+                      AND estado = 'procesando'
+                      AND estado != 'completado'
+                      AND estado NOT IN ('completado', 'finalizado')
+                      AND scraper_actual != 'finalizado';
                 """
                 cursor.execute(query, ids)
                 conn.commit()
@@ -307,7 +311,11 @@ class MySQLQueueAdapter(IColaRepositorioPort):
                 SET estado = 'pendiente',
                     updated_at = CURRENT_TIMESTAMP
                 WHERE estado = 'procesando'
-                  AND updated_at < NOW() - INTERVAL %s MINUTE
+                  AND estado != 'completado'
+                  AND estado NOT IN ('completado', 'finalizado')
+                  AND scraper_actual != 'finalizado'
+                  AND (datos_json IS NULL OR datos_json = '' OR (datos_json NOT LIKE '%coincidencia%' AND datos_json NOT LIKE '%titular%'))
+                  AND updated_at < NOW() - INTERVAL %s MINUTE;
             """
             cursor.execute(query, (minutos_inactividad,))
             conn.commit()

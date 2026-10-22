@@ -303,7 +303,7 @@ HTML_CONTENT = """<!DOCTYPE html>
       <div class="subtitle">Auditoría de Enriquecimiento y Match de Titularidad (Claro • Movistar • Personal)</div>
     </div>
     <div class="header-right">
-      <div><strong>Base:</strong> ce_datosmendoza</div>
+      <div><strong>Base:</strong> scraper_cobro_express (fuente: datos_mendoza)</div>
       <div><strong>Cola Central:</strong> cola_automatizacion</div>
       <div><strong>Fecha de Ejecución:</strong> Octubre 2026</div>
       <div><strong>Estado:</strong> 100% Completado</div>

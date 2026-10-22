@@ -59,14 +59,17 @@ cur_vps.execute("""
         fecha_fin = NULL
     WHERE auto_id = 'scraper_cobro_express'
       AND estado = 'fallido'
-      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%');
+      AND estado != 'completado'
+      AND estado NOT IN ('completado', 'finalizado')
+      AND (resultado IS NULL OR (resultado NOT LIKE '%coincidencia%' AND resultado NOT LIKE '%titular%'))
+      AND fecha_fin IS NULL;
 """)
 fallidos_reseteados = cur_vps.rowcount
 conn_vps.commit()
 print(f"   -> Reseteadas {fallidos_reseteados:,} tareas que estaban en 'fallido' a 'pendiente'.", flush=True)
 
-# 4. Resetear en lotes las 41.887 tareas que estaban en 'completado' pero con error WAF
-print(f"\n4. Reseteando en VPS los {len(ids_error_staging):,} registros con error WAF (chunks de 2.000)...", flush=True)
+# 4. Resetear en lotes tareas con error que NO estén completadas
+print(f"\n4. Reseteando en VPS los registros con error que no estén completados...", flush=True)
 chunk_size = 2000
 total_waf_reseteados = 0
 
@@ -79,8 +82,11 @@ query_reset = """
         fecha_fin = NULL
     WHERE id = %s 
       AND auto_id = 'scraper_cobro_express'
+      AND estado != 'completado'
+      AND estado NOT IN ('completado', 'finalizado')
+      AND fecha_fin IS NULL
       AND (resultado IS NULL OR resultado = '' OR resultado LIKE '%error%' OR resultado LIKE '%Error%')
-      AND (resultado IS NULL OR resultado NOT LIKE '%coincidencia%');
+      AND (resultado IS NULL OR (resultado NOT LIKE '%coincidencia%' AND resultado NOT LIKE '%titular%'));
 """
 
 # Usar executemany por chunk
