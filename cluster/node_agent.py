@@ -146,7 +146,7 @@ class ProcessManager:
             batch_size = int(params.get("batch_size", 50))
             max_queries = int(params.get("max_queries_worker", 350))
             prioridad = params.get("prioridad", "auto")
-            use_tor = bool(params.get("tor", getattr(config, "TOR_ENABLED", False)))
+            use_tor = bool(params.get("tor", False))
             use_proxy_pool = bool(params.get("proxy_pool", False))
             solo_sin_coincidencia = bool(params.get("solo_sin_coincidencia", False))
             forzar_horario = bool(params.get("forzar_horario", False))

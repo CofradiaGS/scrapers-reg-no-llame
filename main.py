@@ -85,8 +85,6 @@ def cmd_test_line(args):
         scraper_kwargs = {"forzar_horario": args.forzar_horario}
         if getattr(args, "use_tor", None) is not None:
             scraper_kwargs["use_tor"] = args.use_tor
-        elif getattr(config, "TOR_ENABLED", False):
-            scraper_kwargs["use_tor"] = True
         if getattr(args, "use_proxy_pool", False):
             scraper_kwargs["use_proxy_pool"] = True
             scraper_kwargs["use_tor"] = False
@@ -147,8 +145,6 @@ def cmd_test_batch(args):
         scraper_kwargs = {"forzar_horario": args.forzar_horario}
         if getattr(args, "use_tor", None) is not None:
             scraper_kwargs["use_tor"] = args.use_tor
-        elif getattr(config, "TOR_ENABLED", False):
-            scraper_kwargs["use_tor"] = True
         if getattr(args, "use_proxy_pool", False):
             scraper_kwargs["use_proxy_pool"] = True
             scraper_kwargs["use_tor"] = False
@@ -198,8 +194,6 @@ def cmd_supervise(args):
         scraper_kwargs["headless"] = not args.visible
     if getattr(args, "use_tor", None) is not None:
         scraper_kwargs["use_tor"] = args.use_tor
-    elif getattr(config, "TOR_ENABLED", False):
-        scraper_kwargs["use_tor"] = True
     if getattr(args, "use_proxy_pool", False):
         scraper_kwargs["use_proxy_pool"] = True
         scraper_kwargs["use_tor"] = False
@@ -215,6 +209,8 @@ def cmd_supervise(args):
         scraper_kwargs=scraper_kwargs,
         forzar_horario=args.forzar_horario,
         solo_sin_coincidencia=args.solo_sin_coincidencia,
+        queue_type=getattr(args, "queue_type", None),
+        auto_id=getattr(args, "auto_id", None),
         buffer_flush_size=getattr(args, "buffer_size", None),
         buffer_max_delay=getattr(args, "buffer_timeout", None),
         empty_queue_pause_max_sec=getattr(args, "empty_queue_pause", None)
@@ -275,6 +271,8 @@ def main():
     p_sup.add_argument("--no-tor", dest="use_tor", action="store_false", help="Deshabilitar proxy Tor (conexión directa)")
     p_sup.add_argument("--proxy-pool", dest="use_proxy_pool", action="store_true", default=False, help="Usar pool de proxies públicos rotativos (alta velocidad)")
     p_sup.add_argument("--solo-sin-coincidencia", action="store_true", default=False, help="Filtrar solo registros sin coincidencia en ninguna de las 3 compañías (Claro, Personal, Movistar)")
+    p_sup.add_argument("--queue-type", type=str, default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Tipo de cola (registro_no_llame o cola_automatizacion)")
+    p_sup.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "scraper_datuar"), help="Identificador auto_id para cola_automatizacion")
 
     args = parser.parse_args()
 

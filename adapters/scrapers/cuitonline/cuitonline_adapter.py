@@ -48,7 +48,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         timeout: Optional[int] = None,
         delay_min: Optional[float] = None,
         delay_max: Optional[float] = None,
-        use_tor: Optional[bool] = None,
+        use_tor: bool = False,
         tor_controller: Optional[TorController] = None,
         tor_external_daemon: bool = False,
         tor_rotate_every: int = 19,
@@ -62,7 +62,7 @@ class CuitOnlineAdapter(BaseScraperAdapter):
         self.timeout = timeout or getattr(config, "CUITONLINE_TIMEOUT", 15)
         self.delay_min = delay_min if delay_min is not None else getattr(config, "CUITONLINE_DELAY_MIN", 0.2)
         self.delay_max = delay_max if delay_max is not None else getattr(config, "CUITONLINE_DELAY_MAX", 0.6)
-        self.use_tor = use_tor if use_tor is not None else kwargs.get("tor", getattr(config, "TOR_ENABLED", False))
+        self.use_tor = use_tor
         self.tor_controller = tor_controller
         self.tor_external_daemon = tor_external_daemon
         self.tor_rotate_every = tor_rotate_every
