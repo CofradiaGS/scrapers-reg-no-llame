@@ -85,6 +85,8 @@ def cmd_test_line(args):
         scraper_kwargs = {"forzar_horario": args.forzar_horario}
         if getattr(args, "use_tor", None) is not None:
             scraper_kwargs["use_tor"] = args.use_tor
+        elif getattr(config, "TOR_ENABLED", False):
+            scraper_kwargs["use_tor"] = True
         if getattr(args, "use_proxy_pool", False):
             scraper_kwargs["use_proxy_pool"] = True
             scraper_kwargs["use_tor"] = False
@@ -145,6 +147,8 @@ def cmd_test_batch(args):
         scraper_kwargs = {"forzar_horario": args.forzar_horario}
         if getattr(args, "use_tor", None) is not None:
             scraper_kwargs["use_tor"] = args.use_tor
+        elif getattr(config, "TOR_ENABLED", False):
+            scraper_kwargs["use_tor"] = True
         if getattr(args, "use_proxy_pool", False):
             scraper_kwargs["use_proxy_pool"] = True
             scraper_kwargs["use_tor"] = False
@@ -194,6 +198,8 @@ def cmd_supervise(args):
         scraper_kwargs["headless"] = not args.visible
     if getattr(args, "use_tor", None) is not None:
         scraper_kwargs["use_tor"] = args.use_tor
+    elif getattr(config, "TOR_ENABLED", False):
+        scraper_kwargs["use_tor"] = True
     if getattr(args, "use_proxy_pool", False):
         scraper_kwargs["use_proxy_pool"] = True
         scraper_kwargs["use_tor"] = False

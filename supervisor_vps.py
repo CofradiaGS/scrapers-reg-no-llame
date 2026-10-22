@@ -160,6 +160,8 @@ def main():
         scraper_kwargs["headless"] = not args.visible
     if args.tor is not None:
         scraper_kwargs["use_tor"] = args.tor
+    elif getattr(config, "TOR_ENABLED", False):
+        scraper_kwargs["use_tor"] = True
     if args.proxy_pool:
         scraper_kwargs["use_proxy_pool"] = True
 

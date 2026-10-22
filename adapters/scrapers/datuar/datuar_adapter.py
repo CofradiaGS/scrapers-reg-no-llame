@@ -62,7 +62,7 @@ class DatuarAdapter(BaseScraperAdapter):
         timeout: int = 15,
         delay_min: float = 0.2,
         delay_max: float = 0.6,
-        use_tor: bool = False,
+        use_tor: Optional[bool] = None,
         tor_controller: Optional[TorController] = None,
         tor_external_daemon: bool = False,
         tor_rotate_every: int = 25,
@@ -76,7 +76,7 @@ class DatuarAdapter(BaseScraperAdapter):
         self.timeout = timeout
         self.delay_min = delay_min
         self.delay_max = delay_max
-        self.use_tor = use_tor
+        self.use_tor = use_tor if use_tor is not None else kwargs.get("tor", getattr(config, "TOR_ENABLED", False))
         self.tor_controller = tor_controller
         self.tor_external_daemon = tor_external_daemon
         self.tor_rotate_every = tor_rotate_every
@@ -134,14 +134,15 @@ class DatuarAdapter(BaseScraperAdapter):
         self._session.mount("https://", adapter)
 
         if self.use_tor:
+            socks_base, ctrl_base = TorController.resolve_ports_for_worker(self.worker_slot)
             if not self.tor_port:
-                self.tor_port = detectar_puerto_tor()
+                self.tor_port = socks_base
 
             if not self.tor_controller:
                 self.tor_controller = TorController(
                     data_dir=getattr(config, "TOR_DATA_DIR", "tor_data"),
-                    socks_port=self.tor_port or getattr(config, "TOR_SOCKS_PORT_BASE", 9050),
-                    control_port=getattr(config, "TOR_CONTROL_PORT_BASE", 9051),
+                    socks_port=self.tor_port,
+                    control_port=ctrl_base,
                     tor_path=getattr(config, "TOR_PATH", "tor.exe"),
                     is_owner=(not self.tor_external_daemon)
                 )
@@ -156,7 +157,7 @@ class DatuarAdapter(BaseScraperAdapter):
                 "http": self._proxy_url,
                 "https": self._proxy_url
             }
-            logger.debug(f"DatuarAdapter enrutando por Tor Stream Isolation puerto {self.tor_port} (Slot {self.worker_slot}).")
+            logger.info(f"🧅 DatuarAdapter enrutando por Tor Stream Isolation puerto {self.tor_port} (Slot {self.worker_slot}).")
 
 
         # Establecer cookies iniciales
