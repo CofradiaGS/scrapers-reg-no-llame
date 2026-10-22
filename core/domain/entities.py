@@ -13,6 +13,7 @@ class Linea:
     """Value Object que representa una línea telefónica normalizada en Argentina."""
     ani: str
     dni: Optional[str] = None
+    nombre: Optional[str] = None
 
     def __post_init__(self):
         clean_ani = "".join(filter(str.isdigit, str(self.ani))).strip()
@@ -20,6 +21,8 @@ class Linea:
         if self.dni is not None:
             clean_dni = "".join(filter(str.isdigit, str(self.dni))).strip()
             object.__setattr__(self, "dni", clean_dni)
+        if self.nombre is not None:
+            object.__setattr__(self, "nombre", str(self.nombre).strip())
 
     @property
     def es_valida(self) -> bool:
@@ -183,12 +186,16 @@ class RegistroCola:
     dni: Optional[str] = None
     tipo_cola: Optional[str] = None
     active: Optional[bool] = None
+    nombre: Optional[str] = None
 
     def __post_init__(self):
+        nom_efectivo = getattr(self.linea, "nombre", None) or self.nombre
         if self.dni and self.linea and not self.linea.dni:
-            object.__setattr__(self, "linea", Linea(ani=self.linea.ani, dni=str(self.dni)))
+            object.__setattr__(self, "linea", Linea(ani=self.linea.ani, dni=str(self.dni), nombre=nom_efectivo))
         elif self.linea and self.linea.dni and not self.dni:
             self.dni = str(self.linea.dni)
+        if self.nombre and self.linea and not getattr(self.linea, "nombre", None):
+            object.__setattr__(self, "linea", Linea(ani=self.linea.ani, dni=self.linea.dni, nombre=str(self.nombre)))
 
 
 
@@ -368,6 +375,29 @@ class ReglaPipeline:
 
         return None
 
+    @classmethod
+    def extraer_nombre(cls, datos_json: Optional[Dict[str, Any]], nombre_directo: Optional[str] = None) -> Optional[str]:
+        """Extrae el Nombre/Titular disponible desde la línea o desde cualquier namespace de datos_json."""
+        if nombre_directo and str(nombre_directo).strip():
+            return str(nombre_directo).strip()
+        if not datos_json or not isinstance(datos_json, dict):
+            return None
+        for ns in ["iris", "movistar", "claro", "personal", "cobro_express", "enacom", "datuar"]:
+            sub = datos_json.get(ns)
+            if isinstance(sub, dict):
+                tit = sub.get("titular")
+                if isinstance(tit, dict):
+                    nom = tit.get("nombre_completo") or f"{tit.get('apellido', '')} {tit.get('nombre', '')}".strip()
+                    if nom and len(nom) >= 3:
+                        return nom
+                if isinstance(sub.get("detalles"), dict):
+                    nom_det = sub["detalles"].get("nombre_completo")
+                    if nom_det and len(nom_det) >= 3:
+                        return nom_det
+        if datos_json.get("nombre"):
+            return str(datos_json["nombre"]).strip()
+        return None
+
 
     @classmethod
     def es_elegible_para_scraper(
@@ -520,8 +550,9 @@ class ReglaPipeline:
             return True, "Apto para Movistar"
 
         if nombre == "datuar":
-            if not dni_activo:
-                return False, "Datuar requiere DNI disponible"
+            nombre_activo = cls.extraer_nombre(datos)
+            if not dni_activo and not nombre_activo:
+                return False, "Datuar requiere DNI o Nombre disponible"
             return True, "Apto para Datuar"
 
         if nombre == "cuitonline":

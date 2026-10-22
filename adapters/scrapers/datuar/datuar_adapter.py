@@ -13,7 +13,8 @@ import random
 import hashlib
 import logging
 import uuid
-from typing import Dict, Any, Optional
+import urllib.parse
+from typing import Dict, Any, Optional, List, Tuple
 import requests
 from requests.adapters import HTTPAdapter
 
@@ -69,6 +70,7 @@ class DatuarAdapter(BaseScraperAdapter):
         worker_slot: int = 1,
         cache_db_path: Optional[str] = None,
         tor_port: Optional[int] = None,
+        prefer_name: bool = False,
         **kwargs
     ):
         super().__init__()
@@ -82,6 +84,7 @@ class DatuarAdapter(BaseScraperAdapter):
         self.tor_rotate_every = tor_rotate_every
         self.worker_slot = worker_slot
         self.tor_port = tor_port
+        self.prefer_name = prefer_name
         self.request_count = 0
         self.circuit_id = 0
 
@@ -202,30 +205,115 @@ class DatuarAdapter(BaseScraperAdapter):
             "Connection": "keep-alive"
         }
 
+    def _parse_personas_html(self, html: str, query: str) -> Tuple[List[Dict[str, Any]], int]:
+        """Extrae la lista completa de personas y el total reportado por Datuar."""
+        names = re.findall(r'data-nombre-completo="([^"]+)"', html)
+        first_names = re.findall(r'data-nombre="([^"]+)"', html)
+        cdus = re.findall(r'data-cdu="([^"]+)"', html)
+        edades = re.findall(r'data-edad="([^"]+)"', html)
+        generos = re.findall(r'data-genero="([^"]+)"', html)
+        provincias = re.findall(r'data-provincia="([^"]+)"', html)
+        ciudades = re.findall(r'data-ciudad="([^"]+)"', html)
+        municipios = re.findall(r'data-municipio="([^"]+)"', html)
+
+        # Contador de resultados (admite separadores de miles con punto o coma)
+        m_cnt = re.search(r'id="contador-resultados">\s*([0-9.,]+)\s*<', html)
+        total_cnt = 0
+        if m_cnt:
+            raw_cnt = m_cnt.group(1).replace(".", "").replace(",", "").strip()
+            total_cnt = int(raw_cnt) if raw_cnt.isdigit() else 0
+
+        personas = []
+        if names:
+            for i in range(len(names)):
+                raw_name = names[i].strip()
+                cuil = cdus[i].strip() if i < len(cdus) else None
+                edad_raw = edades[i].strip() if i < len(edades) else None
+                gen_raw = generos[i].strip().lower() if i < len(generos) else ""
+                provincia = provincias[i].strip().title() if i < len(provincias) else None
+                ciudad = ciudades[i].strip().title() if i < len(ciudades) else None
+                municipio = municipios[i].strip().title() if i < len(municipios) else None
+
+                genero = ""
+                if gen_raw in ("m", "masculino"):
+                    genero = "Masculino"
+                elif gen_raw in ("f", "femenino"):
+                    genero = "Femenino"
+
+                edad = int(edad_raw) if edad_raw and edad_raw.isdigit() else None
+
+                # Extraer DNI de 7 u 8 dígitos desde el CUIL (caracteres 2 a 10 de 11 dígitos)
+                dni_person = ""
+                if cuil and len(cuil) == 11 and cuil.isdigit():
+                    dni_person = cuil[2:-1]
+                elif query.isdigit():
+                    dni_person = query
+
+                parts = [p.strip() for p in raw_name.split(",") if p.strip()]
+                if len(parts) >= 2:
+                    apellidos = parts[0].upper()
+                    nombres = parts[1].title()
+                elif i < len(first_names):
+                    nombres = first_names[i].strip().title()
+                    apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
+                else:
+                    apellidos = raw_name.upper()
+                    nombres = ""
+
+                nombre_completo = f"{apellidos}, {nombres}".strip(", ")
+                personas.append({
+                    "nombre_completo": nombre_completo,
+                    "nombres": nombres,
+                    "apellidos": apellidos,
+                    "cuil": cuil,
+                    "dni": dni_person,
+                    "edad": edad,
+                    "genero": genero,
+                    "provincia": provincia,
+                    "ciudad": ciudad,
+                    "municipio": municipio
+                })
+
+        return personas, total_cnt
+
     def consultar_linea(self, linea: Linea) -> ScrapeResult:
         """
-        Consulta Datuar a partir del DNI asociado a la línea.
-        Si no se cuenta con DNI, retorna SIN_COINCIDENCIA en fast-path (<1 ms).
+        Consulta Datuar a partir del DNI o del Nombre asociado a la línea.
+        Implementa exactamente 3 intentos con rotación de circuito Tor y manejo estricto de errores.
+        Captura todas las coincidencias cuando existen múltiples resultados.
         """
         dni = (linea.dni or "").strip()
         dni_limpio = "".join(filter(str.isdigit, dni))
+        nombre = getattr(linea, "nombre", None) or ""
+        nombre_limpio = str(nombre).strip()
 
-        if not dni_limpio or len(dni_limpio) < 6:
-            logger.debug(f"Línea {linea.ani} sin DNI para consultar Datuar. Saltando fast-path.")
+        # Determinar término y modo de búsqueda (Nombre o DNI)
+        if self.prefer_name and nombre_limpio and len(nombre_limpio) >= 3:
+            termino_busqueda = nombre_limpio
+            es_busqueda_dni = False
+        elif dni_limpio and len(dni_limpio) >= 6:
+            termino_busqueda = dni_limpio
+            es_busqueda_dni = True
+        elif nombre_limpio and len(nombre_limpio) >= 3:
+            termino_busqueda = nombre_limpio
+            es_busqueda_dni = False
+        else:
+            logger.debug(f"Línea {linea.ani} sin DNI ni Nombre para consultar Datuar. Saltando fast-path.")
             return ScrapeResult(
                 ani=linea.ani,
                 status=StatusScraping.SIN_COINCIDENCIA,
                 fuente_scraper=self.nombre,
-                descripcion="Sin DNI disponible para consultar en Datuar",
-                detalles={"motivo": "DNI no provisto ni inferido"}
+                descripcion="Sin DNI ni Nombre disponible para consultar en Datuar",
+                detalles={"motivo": "DNI/Nombre no provisto"}
             )
 
-        # Consulta en Red a Datuar con Bucle de Reintentos Multi-Circuito
         if self._session is None:
             self.iniciar()
 
-        url_busqueda = f"{self.base_url}/indext.php?busqueda={dni_limpio}"
-        max_intentos = 4
+        url_busqueda = f"{self.base_url}/indext.php?busqueda={urllib.parse.quote(termino_busqueda)}"
+        max_intentos = 3
+        hubo_error_red = False
+        ultimo_error = ""
 
         for intento in range(1, max_intentos + 1):
             self.request_count += 1
@@ -239,14 +327,14 @@ class DatuarAdapter(BaseScraperAdapter):
                 resp = self._session.get(url_busqueda, headers=headers, timeout=self.timeout)
 
                 if resp.status_code == 429:
-                    logger.warning(f"⚠️ Datuar Rate Limit (HTTP 429). Rotando circuito Tor (intento {intento}/{max_intentos})...")
+                    logger.warning(f"⚠️ Datuar Rate Limit (HTTP 429) para '{termino_busqueda}'. Rotando circuito Tor (intento {intento}/{max_intentos})...")
                     if self.use_tor:
                         self._rotar_circuito_instantaneo()
                     time.sleep(1.5)
                     continue
 
                 if resp.status_code in (403, 503) or resp.status_code != 200:
-                    logger.warning(f"⚠️ Datuar HTTP {resp.status_code} en IP actual. Rotando circuito Tor (intento {intento}/{max_intentos})...")
+                    logger.warning(f"⚠️ Datuar HTTP {resp.status_code} para '{termino_busqueda}'. Rotando circuito Tor (intento {intento}/{max_intentos})...")
                     if self.use_tor:
                         self._rotar_circuito_instantaneo()
                     time.sleep(1.0)
@@ -254,75 +342,23 @@ class DatuarAdapter(BaseScraperAdapter):
 
                 html = resp.text
 
-                # Detección de desafío antibot Cloudflare / Turnstile
-                m_cnt = re.search(r'id="contador-resultados">\s*(\d+)\s*<', html)
-                es_desafio = ("challenges.cloudflare.com" in html or "cf-turnstile" in html or "just a moment" in html.lower()) and not m_cnt
-
+                # Detección real de Cloudflare (sin falsos positivos por modal turnstile en footer)
+                es_desafio = ("just a moment..." in html.lower() or "<title>attention required" in html.lower()) and "contador-resultados" not in html
                 if es_desafio:
-                    logger.warning(f"⚠️ Datuar desafío Cloudflare/Turnstile detectado en IP actual. Rotando circuito Tor (intento {intento}/{max_intentos})...")
+                    logger.warning(f"⚠️ Datuar desafío Cloudflare detectado. Rotando circuito Tor (intento {intento}/{max_intentos})...")
                     if self.use_tor:
                         self._rotar_circuito_instantaneo()
                     time.sleep(1.2)
                     continue
 
-                names = re.findall(r'data-nombre-completo="([^"]+)"', html)
-                first_names = re.findall(r'data-nombre="([^"]+)"', html)
-                cdus = re.findall(r'data-cdu="([^"]+)"', html)
-                edades = re.findall(r'data-edad="([^"]+)"', html)
-                generos = re.findall(r'data-genero="([^"]+)"', html)
-                provincias = re.findall(r'data-provincia="([^"]+)"', html)
-                ciudades = re.findall(r'data-ciudad="([^"]+)"', html)
-                municipios = re.findall(r'data-municipio="([^"]+)"', html)
+                personas, total_cnt = self._parse_personas_html(html, termino_busqueda)
 
-                if names:
-                    personas = []
-                    for i in range(len(names)):
-                        raw_name = names[i].strip()
-                        cuil = cdus[i].strip() if i < len(cdus) else None
-                        edad_raw = edades[i].strip() if i < len(edades) else None
-                        gen_raw = generos[i].strip().lower() if i < len(generos) else ""
-                        provincia = provincias[i].strip().title() if i < len(provincias) else None
-                        ciudad = ciudades[i].strip().title() if i < len(ciudades) else None
-                        municipio = municipios[i].strip().title() if i < len(municipios) else None
-
-                        genero = ""
-                        if gen_raw in ("m", "masculino"):
-                            genero = "Masculino"
-                        elif gen_raw in ("f", "femenino"):
-                            genero = "Femenino"
-
-                        edad = int(edad_raw) if edad_raw and edad_raw.isdigit() else None
-
-                        parts = [p.strip() for p in raw_name.split(",") if p.strip()]
-                        if len(parts) >= 2:
-                            apellidos = parts[0].upper()
-                            nombres = parts[1].title()
-                        elif i < len(first_names):
-                            nombres = first_names[i].strip().title()
-                            apellidos = raw_name.upper().replace(nombres.upper(), "").strip(" ,")
-                        else:
-                            apellidos = raw_name.upper()
-                            nombres = ""
-
-                        nombre_completo = f"{apellidos}, {nombres}".strip(", ")
-                        personas.append({
-                            "nombre_completo": nombre_completo,
-                            "nombres": nombres,
-                            "apellidos": apellidos,
-                            "cuil": cuil,
-                            "dni": dni_limpio,
-                            "edad": edad,
-                            "genero": genero,
-                            "provincia": provincia,
-                            "ciudad": ciudad,
-                            "municipio": municipio
-                        })
-
+                if personas:
                     p_primero = personas[0]
                     titular = Titular(
                         nombre=p_primero["nombres"],
                         apellido=p_primero["apellidos"],
-                        nro_documento=dni_limpio,
+                        nro_documento=p_primero["dni"] or (dni_limpio if es_busqueda_dni else ""),
                         tipo_documento="DNI",
                         cuil=p_primero["cuil"] or "",
                         edad=str(p_primero["edad"]) if p_primero["edad"] is not None else "",
@@ -350,70 +386,75 @@ class DatuarAdapter(BaseScraperAdapter):
                         fuente_scraper=self.nombre,
                         titular=titular,
                         detalles={
+                            "busqueda": termino_busqueda,
+                            "tipo_busqueda": "dni" if es_busqueda_dni else "nombre",
                             "nombre_completo": p_primero["nombre_completo"],
                             "nombres": p_primero["nombres"],
                             "apellidos": p_primero["apellidos"],
                             "cuil": p_primero["cuil"],
-                            "dni": dni_limpio,
+                            "dni": p_primero["dni"] or (dni_limpio if es_busqueda_dni else ""),
                             "edad": p_primero["edad"],
                             "genero": p_primero["genero"],
                             "provincia": p_primero["provincia"],
                             "ciudad": p_primero["ciudad"],
                             "municipio": p_primero["municipio"],
                             "total_coincidencias": len(personas),
+                            "total_reportado": total_cnt or len(personas),
                             "coincidencias": personas,
                             "origen": "datuar_live"
                         },
                         descripcion=descripcion_line
                     )
 
-                # Si no se encontraron nombres, verificar si legítimamente dio 0 resultados
-                total_res = int(m_cnt.group(1)) if m_cnt else None
-                if total_res == 0:
-                    # En Tor, verificar una segunda vez con otra IP para descartar bloqueo silencioso
-                    if self.use_tor and intento < 2:
-                        logger.debug(f"Datuar reportó 0 resultados para DNI {dni_limpio}. Verificando con circuito secundario...")
+                # Si no se encontraron personas y el contador es legítimamente 0
+                if total_cnt == 0 and "contador-resultados" in html:
+                    if self.use_tor and intento < max_intentos:
+                        logger.debug(f"Datuar reportó 0 resultados para '{termino_busqueda}' (intento {intento}/{max_intentos}). Verificando circuito secundario...")
                         self._rotar_circuito_instantaneo()
                         time.sleep(0.5)
                         continue
 
+                    # Confirmado sin coincidencia tras reintentos
                     return ScrapeResult(
                         ani=linea.ani,
                         status=StatusScraping.SIN_COINCIDENCIA,
                         fuente_scraper=self.nombre,
-                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
-                        detalles={"motivo": "DNI no registrado en Datuar", "dni": dni_limpio},
-                        descripcion=f"Datuar - DNI {dni_limpio} sin registros"
+                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI") if dni_limpio else None,
+                        detalles={"motivo": "Sin registros en Datuar", "busqueda": termino_busqueda, "tipo_busqueda": "dni" if es_busqueda_dni else "nombre"},
+                        descripcion=f"Datuar - '{termino_busqueda}' sin registros"
                     )
 
-                # Si no hubo names y tampoco contador = 0 (respuesta truncada o anómala)
-                if self.use_tor and intento < max_intentos:
-                    logger.debug(f"Datuar respuesta anómala sin contador para DNI {dni_limpio}. Rotando circuito...")
-                    self._rotar_circuito_instantaneo()
+                # Si no hubo personas y tampoco contador=0 (respuesta anómala o truncada)
+                if intento < max_intentos:
+                    logger.debug(f"Datuar respuesta anómala para '{termino_busqueda}'. Rotando circuito...")
+                    if self.use_tor:
+                        self._rotar_circuito_instantaneo()
                     time.sleep(0.5)
                     continue
 
-                if intento == max_intentos:
-                    return ScrapeResult(
-                        ani=linea.ani,
-                        status=StatusScraping.SIN_COINCIDENCIA,
-                        fuente_scraper=self.nombre,
-                        titular=Titular(nro_documento=dni_limpio, tipo_documento="DNI"),
-                        detalles={"motivo": "DNI no registrado en Datuar", "dni": dni_limpio},
-                        descripcion=f"Datuar - DNI {dni_limpio} sin registros"
-                    )
-
             except Exception as e:
-                logger.debug(f"Aviso al consultar Datuar para DNI {dni_limpio} (intento {intento}/{max_intentos}): {e}")
+                hubo_error_red = True
+                ultimo_error = str(e)
+                logger.warning(f"⚠️ Error de conexión en Datuar para '{termino_busqueda}' (intento {intento}/{max_intentos}): {e}")
                 if self.use_tor:
                     self._rotar_circuito_instantaneo()
-                time.sleep(0.4)
+                time.sleep(0.8)
+
+        # Si agotó los 3 intentos por fallas de red o timeouts, RETORNAR ERROR (no sin_coincidencia)
+        if hubo_error_red:
+            return ScrapeResult(
+                ani=linea.ani,
+                status=StatusScraping.ERROR,
+                fuente_scraper=self.nombre,
+                descripcion=f"Datuar error de conexión tras {max_intentos} intentos: {ultimo_error}",
+                detalles={"error": ultimo_error, "busqueda": termino_busqueda}
+            )
 
         return ScrapeResult(
             ani=linea.ani,
             status=StatusScraping.SIN_COINCIDENCIA,
             fuente_scraper=self.nombre,
-            descripcion=f"Datuar sin respuesta tras {max_intentos} intentos para DNI {dni_limpio}",
-            detalles={"error": "Agotados intentos en Datuar", "dni": dni_limpio}
+            descripcion=f"Datuar - '{termino_busqueda}' sin registros tras {max_intentos} intentos",
+            detalles={"motivo": "Sin registros confirmados tras reintentos", "busqueda": termino_busqueda}
         )
 

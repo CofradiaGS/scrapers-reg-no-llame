@@ -128,14 +128,17 @@ class ProcesarLoteUseCase:
                     if enacom_data:
                         datos_previos["enacom"] = enacom_data.to_dict()
 
-                # Propagar DNI o CUIT desde etapas previas (ej: IRIS titular, Datuar, CuitOnline, BCRA)
+                # Propagar DNI, CUIT o Nombre desde etapas previas (ej: IRIS titular, Datuar, CuitOnline, BCRA)
                 dni_previo = ReglaPipeline.extraer_dni(datos_previos, linea_consulta.dni)
                 cuit_previo = ReglaPipeline.extraer_cuit(datos_previos)
+                nombre_previo = ReglaPipeline.extraer_nombre(datos_previos, getattr(reg.linea, "nombre", None) or getattr(reg, "nombre", None))
 
                 if self.scraper.nombre == "bcra" and cuit_previo:
-                    linea_consulta = Linea(ani=reg.linea.ani, dni=cuit_previo)
+                    linea_consulta = Linea(ani=reg.linea.ani, dni=cuit_previo, nombre=nombre_previo)
                 elif dni_previo and not linea_consulta.dni:
-                    linea_consulta = Linea(ani=reg.linea.ani, dni=str(dni_previo))
+                    linea_consulta = Linea(ani=reg.linea.ani, dni=str(dni_previo), nombre=nombre_previo)
+                else:
+                    linea_consulta = Linea(ani=reg.linea.ani, dni=linea_consulta.dni, nombre=nombre_previo)
 
 
                 # 2. Pre-flight de Dominio: Validar elegibilidad antes de consultar la red

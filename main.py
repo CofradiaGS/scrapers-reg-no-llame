@@ -96,7 +96,8 @@ def cmd_test_line(args):
             return
 
         dni = getattr(args, "dni", None)
-        res = scraper.consultar_linea(Linea(ani, dni=dni))
+        nombre = getattr(args, "nombre", None)
+        res = scraper.consultar_linea(Linea(ani, dni=dni, nombre=nombre))
         scraper.cerrar()
 
         print("\n" + "=" * 55)
@@ -197,6 +198,8 @@ def cmd_supervise(args):
     if getattr(args, "use_proxy_pool", False):
         scraper_kwargs["use_proxy_pool"] = True
         scraper_kwargs["use_tor"] = False
+    if getattr(args, "prefer_name", False):
+        scraper_kwargs["prefer_name"] = True
 
     supervisor = SupervisorIndustrial(
         scraper_name=args.scraper.lower(),
@@ -232,6 +235,7 @@ def main():
     p_line = subparsers.add_parser("test-line", help="Consultar una línea individual")
     p_line.add_argument("ani", type=str, help="Número de teléfono (10 dígitos)")
     p_line.add_argument("--dni", type=str, default=None, help="DNI del titular (requerido para Claro Cobro Express)")
+    p_line.add_argument("--nombre", type=str, default=None, help="Nombre del titular para búsqueda directa en Datuar")
     p_line.add_argument("--scraper", type=str, default="iris_http", help="Scraper a utilizar (default: iris_http)")
     p_line.add_argument("--forzar-horario", action="store_true", help="Ignorar restricción de horario comercial oficial")
     p_line.add_argument("--tor", dest="use_tor", action="store_true", default=None, help="Forzar enrutamiento por Tor")
@@ -273,6 +277,7 @@ def main():
     p_sup.add_argument("--solo-sin-coincidencia", action="store_true", default=False, help="Filtrar solo registros sin coincidencia en ninguna de las 3 compañías (Claro, Personal, Movistar)")
     p_sup.add_argument("--queue-type", type=str, default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Tipo de cola (registro_no_llame o cola_automatizacion)")
     p_sup.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "scraper_datuar"), help="Identificador auto_id para cola_automatizacion")
+    p_sup.add_argument("--prefer-name", action="store_true", default=False, help="Preferir búsqueda por nombre sobre DNI en Datuar")
 
     args = parser.parse_args()
 
