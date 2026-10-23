@@ -119,6 +119,8 @@ class SyncSchedulerThread(threading.Thread):
 
     def ejecutar_pull_inmediato(self, forzar: bool = True) -> Dict[str, Any]:
         """Ejecuta un pull de forma síncrona y atómica bajo su propio lock de pull."""
+        if not forzar and self._pull_lock.locked():
+            return {"ejecutado": False, "motivo": "pull_en_curso", "descargados": 0, "insertados": 0}
         with self._pull_lock:
             return self._pull_use_case.ejecutar(
                 tipo_cola=self.tipo_cola,
@@ -174,18 +176,27 @@ class SyncSchedulerThread(threading.Thread):
                     )
                     break
 
-                # 2. Comprobación de volumen de lote completo
+                # 2. Comprobación de volumen de lote completo o remanente permisivo
                 listos = self.local_repo.contar_listos_para_subir(tipo_cola=self.tipo_cola)
-                if listos < self.sync_chunk_size and not self.force_push:
+                if listos == 0:
+                    break
+
+                # Determinar si podemos subir remanente parcial (< 5.000)
+                pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
+                cola_agotada = (pendientes == 0 or self._esta_en_pausa_operativa() or (time.time() - self._ultimo_pull_vacio_time < 300.0))
+                permitir_remanente = self.force_push or cola_agotada
+
+                if listos < self.sync_chunk_size and not permitir_remanente:
                     logger.info(
                         f"🏁 [PUSH DRENAJE FINALIZADO] Registros listos ({listos:,}) < lote mínimo ({self.sync_chunk_size:,}). "
                         f"Subida detenida hasta acumular 5.000 nuevos registros. Producción continúa sin pausas."
                     )
                     break
 
+                tam_lote = min(listos, self.sync_chunk_size)
                 logger.info(
                     f"🚀 [PUSH CONTINUO #{lote_num}] {listos:,} registros listos. "
-                    f"Subiendo lote de {self.sync_chunk_size:,} al VPS..."
+                    f"Subiendo lote de {tam_lote:,} al VPS..."
                 )
 
                 def should_stop() -> bool:
@@ -202,7 +213,7 @@ class SyncSchedulerThread(threading.Thread):
                     dias_retencion=self.sync_retention_days,
                     roundrobin_pause_sec=getattr(config, "SYNC_PUSH_ROUNDROBIN_PAUSE_SEC", 0.5),
                     should_stop=should_stop,
-                    exigir_lote_completo=not self.force_push
+                    exigir_lote_completo=not permitir_remanente
                 )
 
                 if not res.get("exito"):
@@ -301,13 +312,23 @@ class SyncSchedulerThread(threading.Thread):
                 en_ventana = self.esta_en_ventana_push(now)
                 lote_completo_listo = listos_subir >= self.sync_chunk_size
 
-                if (self.force_push or en_ventana) and (lote_completo_listo or self.force_push):
+                # Si la cola local está agotada o en pausa y hay registros listos, drenar remanente
+                pendientes_locales = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
+                cola_agotada = (pendientes_locales == 0 or self._esta_en_pausa_operativa() or (time.time() - self._ultimo_pull_vacio_time < 300.0))
+                remanente_drenable = (listos_subir > 0 and cola_agotada)
+
+                if (self.force_push or en_ventana) and (lote_completo_listo or self.force_push or remanente_drenable):
                     # Iniciar hilo de drenaje continuo si no se encuentra ya activo
                     if self._push_thread is None or not self._push_thread.is_alive():
-                        motivo = "Forzado (--force-push)" if self.force_push else f"Lote completo alcanzado ({listos_subir:,} >= {self.sync_chunk_size:,})"
+                        if self.force_push:
+                            motivo = "Forzado (--force-push)"
+                        elif lote_completo_listo:
+                            motivo = f"Lote completo alcanzado ({listos_subir:,} >= {self.sync_chunk_size:,})"
+                        else:
+                            motivo = f"Remanente con cola agotada/pausada ({listos_subir:,} registros)"
                         logger.info(
                             f"🚀 [PUSH VPS DISPARADO ({motivo})] {listos_subir:,} registros listos. "
-                            f"Lanzando hilo de drenaje continuo en lotes de {self.sync_chunk_size:,} sin detener producción..."
+                            f"Lanzando hilo de drenaje continuo sin detener producción..."
                         )
                         self._push_thread = threading.Thread(
                             target=self._run_push_drain_loop,

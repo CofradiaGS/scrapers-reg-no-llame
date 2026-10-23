@@ -132,6 +132,12 @@ class ReglaPipeline:
             nombre = "cuitonline"
         elif "datuar" in nombre:
             nombre = "datuar"
+        elif "bcra" in nombre:
+            nombre = "bcra"
+        elif "telco" in nombre:
+            nombre = "telcos"
+        elif "enacom" in nombre:
+            nombre = "enacom_web"
 
         # 0. Validación de formato de ANI
         clean_ani = "".join(filter(str.isdigit, str(ani or ""))).strip()
@@ -247,6 +253,12 @@ class ReglaPipeline:
             if not paso_datuar or not cuit_activo:
                 return False, "BCRA requiere haber pasado previamente por Datuar y contar con el CUIT extraído"
             return True, "Apto para BCRA Central de Deudores"
+
+        if nombre in ("enacom_web", "scraper_enacom"):
+            ew_data = datos.get("enacom_web") or datos.get("scraper_enacom") or {}
+            if isinstance(ew_data, dict) and ew_data.get("status"):
+                return False, f"ENACOM Web ya posee datos enriquecidos previamente ({ew_data.get('status')})"
+            return True, "Apto para ENACOM Web"
 
         return False, f"Scraper desconocido: {nombre}"
 

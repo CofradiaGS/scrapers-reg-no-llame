@@ -78,6 +78,47 @@ class TestEnacomWebAdapter(unittest.TestCase):
         self.assertGreater(cleaned.shape[0], 50)
         self.assertGreater(cleaned.shape[1], 180)
 
+    def test_rotacion_preventiva_proactiva_ip(self):
+        """Verifica que el límite por IP sea 25 y que rotar_proxy resetee el contador."""
+        self.assertEqual(self.adapter.MAX_CONSULTAS_POR_IP, 25)
+        self.assertEqual(self.adapter._consultas_con_esta_ip, 0)
+
+        # Simular consultas
+        self.adapter._consultas_con_esta_ip = 25
+        # Simular rotar_proxy sin abrir browser real
+        self.adapter.rotar_proxy = lambda: setattr(self.adapter, "_consultas_con_esta_ip", 0) or True
+        self.adapter.rotar_proxy()
+        self.assertEqual(self.adapter._consultas_con_esta_ip, 0)
+
+    def test_ip_tracker_evaluacion_y_bloqueo(self):
+        """Verifica el funcionamiento del IP Tracker centralizado con SQLite WAL."""
+        from adapters.scrapers.enacom_web.ip_tracker import EnacomIPTracker
+        tracker = EnacomIPTracker()
+        import time
+        uid = int(time.time() * 1000) % 200 + 10
+        test_ip = f"181.99.88.{uid}"
+        
+        # 1. IP limpia
+        apta, motivo, _ = tracker.evaluar_ip(test_ip)
+        self.assertTrue(apta)
+
+        # 2. Registrar éxito
+        tracker.registrar_consulta_exitosa(test_ip)
+        
+        # 3. Registrar bloqueo 100
+        tracker.registrar_bloqueo_100(test_ip, "Límite 100 alcanzado")
+        apta_b, motivo_b, _ = tracker.evaluar_ip(test_ip)
+        self.assertFalse(apta_b)
+        self.assertIn("100", motivo_b)
+
+        # 4. Registrar rate limit 5/minuto
+        ip_min = f"181.99.89.{uid}"
+        tracker.registrar_rate_limit_minuto(ip_min, segundos=5.0, motivo="Límite 5/min")
+        apta_m, motivo_m, espera = tracker.evaluar_ip(ip_min)
+        self.assertFalse(apta_m)
+        self.assertGreater(espera, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

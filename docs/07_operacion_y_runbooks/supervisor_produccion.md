@@ -57,7 +57,7 @@ La interfaz de comandos de [supervisor_vps.py](file:///C:/Users/Usuario/Document
 | :--- | :---: | :---: | :---: | :--- |
 | `--scraper` | `str` | `None` | `iris`, `iris_http`, `iris_browser`, etc. | Nombre explícito del scraper en el registro. Si se omite, se deduce automáticamente a partir de `--engine`. |
 | `--engine` | `str` | `"browser"` | `browser`, `http` | Motor de scraping para IRIS. `http`: cliente requests ultrarrápido (4-8s/linea, 35MB RAM). `browser`: Playwright Chromium (15s/linea, 1.2GB RAM). |
-| `--prioridad` | `str` | `"auto"` | `auto`, `1`, `2`, `3` | Estrategia de partición geográfica B-Tree. `auto` aplica cascada P1 -> P2 -> P3. `1` solo AMBA/Mendoza, `2` solo Patagonia, `3` resto del país. |
+| `--prioridad` | `str` | `"auto"` | `auto`, `1`, `2`, `3` | Estrategia de partición geográfica B-Tree. `auto` aplica cascada P1 -> P2 -> P3. `1` solo AMBA/Mendoza, `2` solo Resto de Cuyo, `3` resto del país. |
 | `--workers` | `int` | `9` | Entero positivo | Cantidad de subprocesos workers independientes ejecutándose simultáneamente. |
 | `--batch-size` | `int` | `12` | Entero positivo | Cantidad de registros reclamados atómicamente por worker en cada transacción mediante `FOR UPDATE SKIP LOCKED`. |
 | `--max-queries-worker` | `int` | `350` | Entero positivo | Cuota de consultas por ciclo de vida de worker. Al alcanzar este límite, el worker concluye y el supervisor genera una nueva generación (*anti-leak de memoria*). |

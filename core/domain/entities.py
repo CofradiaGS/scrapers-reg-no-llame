@@ -419,6 +419,8 @@ class ReglaPipeline:
             nombre = "bcra"
         elif "telco" in nombre:
             nombre = "telcos"
+        elif "enacom" in nombre:
+            nombre = "enacom_web"
 
         # 0. Validación de formato de ANI (debe ser numérico de exactamente 10 dígitos)
         clean_ani = "".join(filter(str.isdigit, str(ani or ""))).strip()
@@ -539,6 +541,14 @@ class ReglaPipeline:
                 return False, "BCRA requiere haber pasado previamente por Datuar y contar con el CUIT extraído"
             return True, "Apto para BCRA Central de Deudores"
 
+        if nombre in ("enacom_web", "scraper_enacom"):
+            # ENACOM Web solo requiere un ANI válido de 10 dígitos (ya verificado en paso 0). No exige DNI.
+            # No re-consultar si ya posee datos de ENACOM Web con status confirmado.
+            ew_data = datos.get("enacom_web") or datos.get("scraper_enacom") or {}
+            if isinstance(ew_data, dict) and ew_data.get("status"):
+                return False, f"ENACOM Web ya posee datos enriquecidos previamente ({ew_data.get('status')})"
+            return True, "Apto para ENACOM Web"
+
         return False, f"Scraper desconocido: {nombre}"
 
 
@@ -588,6 +598,8 @@ class ReglaPipeline:
             sc_canonico = "iris"
         elif "telco" in sc_canonico:
             sc_canonico = "telcos"
+        elif "enacom" in sc_canonico:
+            sc_canonico = "enacom_web"
         if sc_canonico in datos and isinstance(datos[sc_canonico], dict):
             datos[sc_canonico]["status"] = resultado.status.value
             datos[sc_canonico]["ultima_modificacion"] = resultado.ultima_modificacion or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -652,6 +664,10 @@ class ReglaPipeline:
                 idx = pipeline.index("telcos")
             else:
                 idx = len(pipeline)
+        elif idx == -1 and sc_canonico == "enacom_web":
+            # ENACOM Web es terminal para auditoría de líneas sin coincidencia;
+            # si no forma parte explícita de la cadena, finaliza la línea sin reciclar a telcos
+            idx = len(pipeline)
 
         if idx == -1:
             # Si el motor ejecutado no forma parte de la cadena (ej: Datuar en cola_automatizacion),

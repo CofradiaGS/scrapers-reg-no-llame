@@ -258,7 +258,8 @@ class ProcesarLoteUseCase:
                     "fuente": fuente_norm,
                     "datos": datos_acumulados,
                     "latencia": lat,
-                    "status": resultado.status.value
+                    "status": resultado.status.value,
+                    "intentos": resultado.detalles.get("intentos", 1) if (resultado.detalles and isinstance(resultado.detalles, dict)) else 1
                 }
                 registrar_resultado(item_res)
 

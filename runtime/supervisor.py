@@ -699,11 +699,9 @@ class SupervisorIndustrial:
             "errores": 0,
             "reciclados": 0,
             "latencias": [],
-            "por_operador": {
-                "claro": 0,
-                "personal": 0,
-                "movistar": 0
-            },
+            "por_operador": {},
+            "pasan_de_1": 0,
+            "con_reintento": 0,
             "t0": time.time()
         }
         last_print = time.time()
@@ -712,19 +710,67 @@ class SupervisorIndustrial:
             try:
                 msg = self.stats_queue.get(timeout=1.0)
                 tipo = msg.get("tipo")
-                operador = str(msg.get("operador", "")).lower().strip()
+                operador = str(msg.get("operador", "")).strip()
+                op_lower = operador.lower()
+
                 if tipo == "completado":
                     stats["completados"] += 1
                     stats["latencias"].append(msg.get("latency", 0))
-                    if "claro" in operador:
-                        stats["por_operador"]["claro"] += 1
-                    elif "personal" in operador:
-                        stats["por_operador"]["personal"] += 1
-                    elif "movistar" in operador:
-                        stats["por_operador"]["movistar"] += 1
+                    if msg.get("intentos", 1) == 1:
+                        stats["pasan_de_1"] += 1
+                    else:
+                        stats["con_reintento"] += 1
+
+                    if "claro" in op_lower or "amx" in op_lower:
+                        op_key = "Claro"
+                    elif "personal" in op_lower or "telecom" in op_lower or "cablevision" in op_lower or "fibertel" in op_lower:
+                        op_key = "Personal"
+                    elif "movistar" in op_lower or "telefonica" in op_lower or "tmoviles" in op_lower or "crm" in op_lower:
+                        op_key = "Movistar"
+                    elif "telecentro" in op_lower:
+                        op_key = "Telecentro"
+                    elif "telmex" in op_lower or "techtel" in op_lower:
+                        op_key = "Telmex"
+                    elif "iplan" in op_lower or "iplace" in op_lower:
+                        op_key = "Iplan"
+                    elif "metrotel" in op_lower or "cps comunic" in op_lower or "c.p.s." in op_lower:
+                        op_key = "Metrotel"
+                    elif "supercanal" in op_lower or "super canal" in op_lower or "superfone" in op_lower:
+                        op_key = "Supercanal"
+                    elif "gigared" in op_lower:
+                        op_key = "Gigared"
+                    elif "directv" in op_lower:
+                        op_key = "DirecTV"
+                    elif "sion" in op_lower:
+                        op_key = "Sion"
+                    elif any(k in op_lower for k in ("cirion", "lumen", "centurylink")):
+                        op_key = "Cirion"
+                    elif "alvis" in op_lower:
+                        op_key = "Alvis"
+                    elif "anura" in op_lower:
+                        op_key = "Anura"
+                    elif "wiltel" in op_lower:
+                        op_key = "Wiltel"
+                    elif "imowi" in op_lower or "catel" in op_lower:
+                        op_key = "iMOWI / Catel"
+                    elif "aguas del colorado" in op_lower:
+                        op_key = "Aguas del Colorado"
+                    elif "coop" in op_lower:
+                        op_key = "Cooperativas"
+                    elif operador and op_lower not in ("desconocido", "enacom", "scraper_enacom", "telcos", "none", ""):
+                        op_key = operador.title()
+                    else:
+                        op_key = "Otros"
+
+                    stats["por_operador"][op_key] = stats["por_operador"].get(op_key, 0) + 1
+
                 elif tipo == "no_coincidencia":
                     stats["no_coincidencias"] += 1
                     stats["latencias"].append(msg.get("latency", 0))
+                    if msg.get("intentos", 1) == 1:
+                        stats["pasan_de_1"] += 1
+                    else:
+                        stats["con_reintento"] += 1
                 elif tipo == "error":
                     stats["errores"] += 1
                 elif tipo == "worker_exit" and msg.get("recycled"):
@@ -751,20 +797,30 @@ class SupervisorIndustrial:
                 print(f"  • Estado Operativo:         {status_operativo}")
                 print(f"  • Workers en paralelo:      {self.workers_count} slots activos")
                 print(f"  • Total procesados:         {total_proc:,} registros | Ritmo: {rpm} reg/min")
-                if "telco" in self.scraper_name.lower():
-                    c_claro = stats["por_operador"]["claro"]
-                    c_pers = stats["por_operador"]["personal"]
-                    c_mov = stats["por_operador"]["movistar"]
-                    print(f"  • Coincidencias positivas:  {stats['completados']:,}")
-                    print(f"      - Claro:                {c_claro:,}")
-                    print(f"      - Personal:             {c_pers:,}")
-                    print(f"      - Movistar:             {c_mov:,}")
-                else:
-                    print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+                mostrar_desglose = (
+                    any(k in self.scraper_name.lower() for k in ("telco", "enacom", "claro", "personal", "movistar"))
+                    or len(stats["por_operador"]) > 0
+                )
+                print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+                if mostrar_desglose and stats["completados"] > 0 and stats["por_operador"]:
+                    items_ordenados = [(k, v) for k, v in sorted(stats["por_operador"].items(), key=lambda x: x[1], reverse=True) if v > 0]
+                    top_items = items_ordenados[:12]
+                    remanente = sum(cant for _, cant in items_ordenados[12:])
+                    for op_nom, cant in top_items:
+                        pct = round((cant / stats['completados']) * 100, 1)
+                        print(f"      - {op_nom + ':':<24} {cant:,} ({pct}%)")
+                    if remanente > 0:
+                        pct_rem = round((remanente / stats['completados']) * 100, 1)
+                        print(f"      - {'Otros prestadores:':<24} {remanente:,} ({pct_rem}%)")
                 print(f"  • Sin coincidencias:        {stats['no_coincidencias']:,}")
                 print(f"  • Errores controlados:      {stats['errores']:,}")
                 print(f"  • Rotaciones preventivas:   {stats['reciclados']:,} relevos anti-leak")
                 print(f"  • Latencia promedio:        {avg_lat}s por consulta")
+                tot_eval = stats["pasan_de_1"] + stats["con_reintento"]
+                if tot_eval > 0:
+                    pct_1 = round((stats["pasan_de_1"] / tot_eval) * 100, 1)
+                    pct_reint = round((stats["con_reintento"] / tot_eval) * 100, 1)
+                    print(f"  • Pasan de 1 (sin reintento):{stats['pasan_de_1']:,} ({pct_1}%) | Con reintentos: {stats['con_reintento']:,} ({pct_reint}%)")
                 buf_len = len(self._write_buffer)
                 buf_age = int(now - self._last_buffer_flush)
                 print(f"  • Buffer en RAM (Binlog):   {buf_len}/{self.buffer_flush_size} en espera (flush cada {int(self.buffer_max_delay)}s / hace {buf_age}s)")

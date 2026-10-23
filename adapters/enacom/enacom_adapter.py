@@ -125,15 +125,39 @@ class EnacomBlockAdapter(IOperatorLookupPort):
 
     def _normalize_operator(self, raw_op: str) -> Tuple[str, str]:
         u = str(raw_op).upper()
-        if "TELECOM" in u:
+        if "COOPERATIVA" in u or "COOP." in u or "COOP " in u:
+            return "Cooperativa", "Cooperativa de Telecomunicaciones / Servicios Públicos"
+        if any(k in u for k in ["TELECOM", "PERSONAL", "CABLEVISION", "FIBERTEL", "NEXTEL"]):
             return "Personal", "Grupo Telecom (Personal / Flow)"
-        if "TELEFONICA" in u or "COMPAÑIA DE RADIOCOMUNICACIONES" in u or "CRM" in u:
+        if any(k in u for k in ["TELEFONICA", "MOVISTAR", "TMOVILES", "RADIOCOMUNICACIONES MOVILES", "CRM", "TUENTI"]):
             return "Movistar", "Telefónica Hispanoamérica (Movistar)"
-        if "AMX" in u or "CLARO" in u or "TELMEX" in u:
+        if "AMX" in u or "CLARO" in u or "CTI" in u:
             return "Claro", "América Móvil (Claro)"
+        if "TELMEX" in u or "TECHTEL" in u:
+            return "Telmex", "América Móvil (Telmex)"
         if "TELECENTRO" in u:
             return "Telecentro", "Grupo Telecentro"
-        return raw_op.strip(), "Cooperativa / Prestador Regional"
+        if "IPLAN" in u or "IPLACE" in u:
+            return "Iplan", "Grupo IPLAN"
+        if "METROTEL" in u or "C.P.S. COMUNICACIONES" in u or "CPS COMUNICACIONES" in u:
+            return "Metrotel", "C.P.S. Comunicaciones (Metrotel)"
+        if "SUPERCANAL" in u or "SUPER CANAL" in u:
+            return "Supercanal", "Grupo Supercanal (Super)"
+        if "GIGARED" in u:
+            return "Gigared", "Gigared S.A."
+        if "DIRECTV" in u:
+            return "DirecTV", "Vrio Corp (DirecTV)"
+        if any(k in u for k in ["CIRION", "LUMEN", "CENTURYLINK", "GLOBAL CROSSING"]):
+            return "Cirion", "Cirion Technologies"
+        if "SION" in u:
+            return "Sion", "Sion Telecomunicaciones"
+        if "ALVIS" in u:
+            return "Alvis", "Alvis S.A."
+        if "ANURA" in u:
+            return "Anura", "Anura S.A."
+        if "CATEL" in u or "IMOWI" in u:
+            return "iMOWI / Catel", "Cámara de Cooperativas (Catel)"
+        return raw_op.strip(), "Prestador Pyme / Regional"
 
     def _resolve_province(self, indicativo: str, localidad: str) -> str:
         match = re.search(r'\(PROV\.\s*([^)]+)\)', localidad)
@@ -260,14 +284,18 @@ class EnacomBlockAdapter(IOperatorLookupPort):
     def _load(self):
         t0 = time.time()
         if self._data_path.endswith(".dat") and os.path.exists(self._data_path):
-            try:
-                with open(self._data_path, "rb") as f:
-                    self._lookup = pickle.load(f)
-                elapsed = round(time.time() - t0, 3)
-                logger.info(f"EnacomBlockAdapter listo: {len(self._lookup):,} bloques cargados desde binario ({elapsed}s)")
-                return
-            except Exception as e:
-                logger.error(f"Error cargando archivo binario {self._data_path}: {e}. Intentando Excel...")
+            for intento in range(3):
+                try:
+                    with open(self._data_path, "rb") as f:
+                        self._lookup = pickle.load(f)
+                    elapsed = round(time.time() - t0, 3)
+                    logger.debug(f"EnacomBlockAdapter listo: {len(self._lookup):,} bloques cargados desde binario ({elapsed}s)")
+                    return
+                except Exception as e:
+                    if intento < 2:
+                        time.sleep(0.15 * (intento + 1))
+                        continue
+                    logger.error(f"Error cargando archivo binario {self._data_path}: {e}. Intentando Excel...")
 
         # Si el .dat no existe o falló, buscar el Excel oficial
         excel_candidato = self._data_path.replace(".dat", ".xls")

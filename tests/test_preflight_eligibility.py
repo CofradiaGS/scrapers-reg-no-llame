@@ -275,6 +275,47 @@ class TestPreflightEligibility(unittest.TestCase):
         self.assertIn(702, ids_reservados, "El registro con active=False sí debe ser reservado")
         self.assertIn(703, ids_reservados, "El registro con active=None sí debe ser reservado")
 
+    def test_enacom_web_elegible_con_ani_sin_dni(self):
+        """
+        ENACOM Web solo requiere un ANI válido de 10 dígitos y no exige DNI.
+        Debe ser reconocido como apto bajo sus diferentes alias ('enacom', 'enacom_web', 'scraper_enacom').
+        """
+        for alias in ("enacom", "enacom_web", "scraper_enacom", "enacom_numeracion"):
+            apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+                scraper_nombre=alias,
+                ani="1142243519",
+                dni=None,
+                datos_json={"iris": {"status": "sin_coincidencia"}}
+            )
+            self.assertTrue(apto, f"Fallo de aptitud para alias {alias}: {motivo}")
+            self.assertIn("Apto para ENACOM Web", motivo)
+
+    def test_enacom_web_rechaza_si_ya_tiene_datos(self):
+        """
+        ENACOM Web no debe re-consultar registros que ya posean status previo de ENACOM Web.
+        """
+        apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="scraper_enacom",
+            ani="1142243519",
+            dni=None,
+            datos_json={"enacom_web": {"status": "coincidencia", "operador": "Claro"}}
+        )
+        self.assertFalse(apto)
+        self.assertIn("ya posee datos enriquecidos", motivo)
+
+    def test_enacom_web_rechaza_ani_invalido(self):
+        """
+        ENACOM Web rechaza ANIs que no contengan exactamente 10 dígitos.
+        """
+        apto, motivo = ReglaPipeline.es_elegible_para_scraper(
+            scraper_nombre="enacom",
+            ani="12345",
+            dni=None
+        )
+        self.assertFalse(apto)
+        self.assertIn("ANI telefónico inválido", motivo)
+
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -125,7 +125,19 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                       AND fecha_fin IS NULL
                       AND (resultado IS NULL OR resultado = '')
                       AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
+<<<<<<< Updated upstream
                     ORDER BY id ASC
+=======
+                      AND (
+                          estado = 'pendiente'
+                          OR (
+                              estado = 'en_proceso'
+                              AND (resultado IS NULL OR resultado = '')
+                              AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
+                          )
+                      )
+                    ORDER BY prioridad ASC, id ASC
+>>>>>>> Stashed changes
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED;
                 """
@@ -154,15 +166,51 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     if huerfanos:
                         filas.extend(huerfanos)
 
+                # Ingesta Automática Cobro Express -> ENACOM:
+                # Si no hay tareas pendientes en el VPS para scraper_enacom, alimentar de inmediato
+                # un nuevo lote de 5.000 tareas desde 'scraper_cobro_express' (sin coincidencia, 2 meses hábiles)
+                # con prioridades geográficas (P1: BSS/Mendoza, P2: Sur/Cuyo, P3: Resto)
+                if not filas and target_auto_id in ("scraper_enacom", "enacom"):
+                    try:
+                        conn.rollback()
+                        logger.info(
+                            f"ℹ️ [PULL ENACOM] 0 pendientes para '{target_auto_id}' en VPS. "
+                            f"Alimentando lote de {limit:,} tareas desde 'scraper_cobro_express' (sin coincidencia, 2 meses)..."
+                        )
+                        from scripts.alimentar_enacom_desde_cobro_express import alimentar_enacom
+                        nuevas = alimentar_enacom(
+                            batch_size=limit,
+                            target_pc=target_pc_id,
+                            limit_total=limit,
+                            silent=True
+                        )
+                        if nuevas > 0:
+                            logger.info(f"✨ [PULL ENACOM] {nuevas:,} nuevas tareas insertadas con prioridades P1/P2/P3. Reclamando lote...")
+                            conn.start_transaction()
+                            cursor.execute(query_find, (target_auto_id, target_pc_id, limit))
+                            filas = cursor.fetchall()
+                    except Exception as e_ce:
+                        logger.error(f"Error al alimentar ENACOM desde Cobro Express: {e_ce}", exc_info=True)
+
                 if not filas:
-                    conn.rollback()
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
                     return []
 
                 ids = [f["id"] for f in filas]
+<<<<<<< Updated upstream
                 # Actualización en chunks de 1000 para no agotar el buffer de bloqueos de InnoDB (Error 1206)
                 chunk_size = 1000
                 for i in range(0, len(ids), chunk_size):
                     chunk_ids = ids[i:i + chunk_size]
+=======
+                # Micro-chunking de 500 IDs para evitar Error 1206 (Total number of locks exceeds lock table size)
+                sub_chunk = 500
+                for i in range(0, len(ids), sub_chunk):
+                    chunk_ids = ids[i:i + sub_chunk]
+>>>>>>> Stashed changes
                     placeholders = ", ".join(["%s"] * len(chunk_ids))
                     query_update = f"""
                         UPDATE cola_automatizacion
@@ -170,25 +218,67 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                             target_pc = %s,
                             instance_id = %s,
                             fecha_inicio = NOW()
+<<<<<<< Updated upstream
                         WHERE id IN ({placeholders})
                           AND estado != 'completado'
                           AND estado NOT IN ('completado', 'finalizado')
                           AND fecha_fin IS NULL;
+=======
+                        WHERE id IN ({placeholders});
+>>>>>>> Stashed changes
                     """
                     cursor.execute(query_update, [target_pc_id, instance_id] + chunk_ids)
                 conn.commit()
 
+                # Doble Buffer Autónomo (Always-Prefetched Pipeline):
+                # El sistema debe mantener siempre tareas en 'en_proceso' (las que acabamos de pasar)
+                # Y tareas de reserva en 'pendiente' en el VPS para que al pasar a completado, la siguiente posta esté lista.
+                if target_auto_id in ("scraper_enacom", "enacom"):
+                    try:
+                        cursor.execute("""
+                            SELECT COUNT(*) AS cant
+                            FROM cola_automatizacion
+                            WHERE auto_id = %s AND estado = 'pendiente';
+                        """, (target_auto_id,))
+                        cnt_row = cursor.fetchone()
+                        pendientes_en_vps = cnt_row["cant"] if cnt_row else 0
+                        if pendientes_en_vps < limit:
+                            deficit = limit - pendientes_en_vps
+                            logger.info(
+                                f"🔄 [DOBLE BUFFER ENACOM] {len(filas):,} tareas pasadas a 'en_proceso'. "
+                                f"Pendientes en VPS: {pendientes_en_vps:,} < {limit:,}. "
+                                f"Reclamando e insertando {deficit:,} registros más desde Cobro Express (P1 -> P2 -> P3)..."
+                            )
+                            from scripts.alimentar_enacom_desde_cobro_express import alimentar_enacom
+                            nuevas_buf = alimentar_enacom(
+                                batch_size=deficit,
+                                target_pc=target_pc_id,
+                                limit_total=deficit,
+                                silent=True
+                            )
+                            logger.info(f"✨ [DOBLE BUFFER ENACOM] {nuevas_buf:,} nuevas tareas insertadas como 'pendiente' en VPS. Buffer de reserva listo.")
+                    except Exception as e_buf:
+                        logger.warning(f"Aviso en recarga de doble buffer ENACOM: {e_buf}")
+
                 # Normalizar resultado
                 resultado = []
                 for f in filas:
+                    sc_dest = scraper_actual or "telcos"
+                    if "enacom" in sc_dest.lower():
+                        sc_dest = "enacom_web"
                     resultado.append({
                         "id": f["id"],
                         "numero_de_linea": f.get("numero_de_linea"),
                         "dni": f.get("dni"),
                         "auto_id": f.get("auto_id") or target_auto_id,
                         "target_pc": target_pc_id,
+<<<<<<< Updated upstream
                         "scraper_actual": scraper_actual or "telcos",
                         "fuente": f.get("fuente") or f.get("auto_id") or target_auto_id,
+=======
+                        "scraper_actual": sc_dest,
+                        "fuente": f.get("auto_id") or target_auto_id,
+>>>>>>> Stashed changes
                         "tipo_cola": "cola_automatizacion",
                         "datos": f.get("payload") or {}
                     })
@@ -198,8 +288,11 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
             else:
                 # Caso queue_registro_no_llame
                 s_nombre = scraper_actual or "iris"
-                if "iris" in (s_nombre or "").lower():
+                s_lower = (s_nombre or "").lower()
+                if "iris" in s_lower:
                     s_nombre = "iris"
+                elif "enacom" in s_lower:
+                    s_nombre = "enacom_web"
                 timeout_lease_min = getattr(config, "obtener_timeout_huerfanos_vps", lambda s: 720)(s_nombre)
                 if s_nombre == "enacom_web":
                     query_find = f"""
@@ -275,25 +368,29 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     return []
 
                 ids = [f["id"] for f in filas]
-                placeholders = ", ".join(["%s"] * len(ids))
-                if s_nombre == "enacom_web":
-                    query_update = f"""
-                        UPDATE {config.VPS_DB_TABLE}
-                        SET estado = 'procesando',
-                            scraper_actual = 'enacom_web',
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id IN ({placeholders});
-                    """
-                    cursor.execute(query_update, ids)
-                else:
-                    query_update = f"""
-                        UPDATE {config.VPS_DB_TABLE}
-                        SET estado = 'procesando',
-                            scraper_actual = %s,
-                            updated_at = CURRENT_TIMESTAMP
-                        WHERE id IN ({placeholders});
-                    """
-                    cursor.execute(query_update, [s_nombre] + ids)
+                # Micro-chunking de 500 IDs para evitar Error 1206 (Total number of locks exceeds lock table size)
+                sub_chunk = 500
+                for i in range(0, len(ids), sub_chunk):
+                    chunk_ids = ids[i:i + sub_chunk]
+                    placeholders = ", ".join(["%s"] * len(chunk_ids))
+                    if s_nombre == "enacom_web":
+                        query_update = f"""
+                            UPDATE {config.VPS_DB_TABLE}
+                            SET estado = 'procesando',
+                                scraper_actual = 'enacom_web',
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id IN ({placeholders});
+                        """
+                        cursor.execute(query_update, chunk_ids)
+                    else:
+                        query_update = f"""
+                            UPDATE {config.VPS_DB_TABLE}
+                            SET estado = 'procesando',
+                                scraper_actual = %s,
+                                updated_at = CURRENT_TIMESTAMP
+                            WHERE id IN ({placeholders});
+                        """
+                        cursor.execute(query_update, [s_nombre] + chunk_ids)
                 conn.commit()
 
                 resultado = []
@@ -309,7 +406,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     else:
                         datos_dict = {}
 
-                    if s_nombre == "enacom_web":
+                    if s_nombre in ("enacom_web", "scraper_enacom", "enacom"):
                         sc_destino = "enacom_web"
                     else:
                         # Regla estricta exclusiva para queue_registro_no_llame:
@@ -652,7 +749,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 for item in lote:
                     st_local = str(item.get("estado_local", "")).lower()
                     s_raw = item.get("scraper_actual") or "finalizado"
-                    if s_raw == "enacom_web":
+                    if s_raw in ("enacom_web", "scraper_enacom", "enacom"):
                         estado_vps = "no_coincidencia" if st_local == "fallido" else "completado"
                         s_actual = "finalizado"
                     else:

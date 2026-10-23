@@ -62,7 +62,7 @@ Diseñado para operar semanas enteras sin intervención humana:
 
 ### 3.1. Objetivos de Negocio
 - **Maximizar la tasa de enriquecimiento:** Transformar números telefónicos anónimos en prospectos completos con Nombre, Apellido, Tipo y Número de Documento, Operador actual y Tecnología.
-- **Priorizar mercados de alto valor:** Procesar con prioridad absoluta los números telefónicos correspondientes a las áreas de mayor rentabilidad comercial (P1: AMBA y Mendoza), seguidos por regiones estratégicas (P2: Patagonia y Sur) y finalmente el resto del país (P3).
+- **Priorizar mercados de alto valor:** Procesar con prioridad absoluta los números telefónicos correspondientes a las áreas de mayor rentabilidad comercial (P1: AMBA y Mendoza), seguidos por regiones estratégicas (P2: Resto de Cuyo) y finalmente el resto del país (P3).
 - **Reducción de costos operativos y latencia:** Cortar la cadena de scraping tan pronto como una fuente fidedigna identifica la línea.
 
 ### 3.2. Objetivos Técnicos
