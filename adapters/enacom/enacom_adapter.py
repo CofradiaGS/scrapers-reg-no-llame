@@ -284,6 +284,7 @@ class EnacomBlockAdapter(IOperatorLookupPort):
     def _load(self):
         t0 = time.time()
         if self._data_path.endswith(".dat") and os.path.exists(self._data_path):
+<<<<<<< Updated upstream
             for intento in range(3):
                 try:
                     with open(self._data_path, "rb") as f:
@@ -296,6 +297,16 @@ class EnacomBlockAdapter(IOperatorLookupPort):
                         time.sleep(0.15 * (intento + 1))
                         continue
                     logger.error(f"Error cargando archivo binario {self._data_path}: {e}. Intentando Excel...")
+=======
+            try:
+                with open(self._data_path, "rb") as f:
+                    self._lookup = pickle.load(f)
+                elapsed = round(time.time() - t0, 3)
+                logger.debug(f"EnacomBlockAdapter listo: {len(self._lookup):,} bloques cargados desde binario ({elapsed}s)")
+                return
+            except Exception as e:
+                logger.error(f"Error cargando archivo binario {self._data_path}: {e}. Intentando Excel...")
+>>>>>>> Stashed changes
 
         # Si el .dat no existe o falló, buscar el Excel oficial
         excel_candidato = self._data_path.replace(".dat", ".xls")

@@ -948,5 +948,69 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                 except Exception:
                     pass
 
+    def sanitizar_pendientes_invalidos_vps(
+        self,
+        tipo_cola: str,
+        auto_id: Optional[str] = None,
+        scraper_actual: Optional[str] = None
+    ) -> int:
+        """
+        Pasa a 'completado' con 'sin_coincidencia' directamente en el VPS cualquier tarea
+        pendiente o en_proceso de Datuar que carezca de DNI o pertenezca a personas jurídicas (CUIT 30/33/34).
+        """
+        s_nombre = (scraper_actual or "").lower().strip()
+        target_auto_id = auto_id or "scraper_datuar"
+        if "datuar" not in s_nombre and "datuar" not in target_auto_id.lower():
+            return 0
+
+        conn = None
+        cursor = None
+        try:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            query = """
+                UPDATE cola_automatizacion
+                SET estado = 'completado',
+                    resultado = %s,
+                    scrapers_intentados = CASE 
+                        WHEN scrapers_intentados IS NULL OR scrapers_intentados = '' THEN %s
+                        WHEN FIND_IN_SET(%s, scrapers_intentados) > 0 THEN scrapers_intentados
+                        ELSE CONCAT(scrapers_intentados, ',', %s)
+                    END,
+                    fecha_fin = NOW()
+                WHERE auto_id = %s
+                  AND estado IN ('pendiente', 'en_proceso')
+                  AND (
+                      (dni IS NULL OR dni = '' OR dni = '0')
+                      OR ((dni LIKE '30%' OR dni LIKE '33%' OR dni LIKE '34%') AND LENGTH(dni) = 11)
+                  );
+            """
+            payload = json.dumps({"status": "sin_coincidencia", "motivo": "formato_invalido_omitido"}, ensure_ascii=False)
+            cursor.execute(query, (payload, target_auto_id, target_auto_id, target_auto_id, target_auto_id))
+            afectados = cursor.rowcount
+            conn.commit()
+            if afectados > 0:
+                logger.info(f"🧹 [AUTO-SANITIZADOR DATUAR] {afectados:,} registros inválidos (sin DNI o empresa) pasados a 'completado' sin coincidencia en VPS.")
+            return afectados
+        except Exception as e:
+            if conn:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            logger.warning(f"Aviso en sanitización automática de cola VPS: {e}")
+            return 0
+        finally:
+            if cursor:
+                try:
+                    cursor.close()
+                except Exception:
+                    pass
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+
 
 

@@ -266,12 +266,18 @@ class TestSyncUseCases(unittest.TestCase):
         self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 3, 30, 0)))
         self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 7, 59, 59)))
 
-        # Horas fuera de la ventana: 08:00, 12:00, 20:00, 22:00, 23:59
+        # Horas fuera de la ventana (Sábado 2026-10-03): 08:00, 12:00, 20:00, 22:00, 23:59
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 8, 0, 0)))
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 12, 0, 0)))
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 20, 0, 0)))
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 22, 0, 0)))
         self.assertFalse(scheduler.esta_en_ventana_push(datetime(2026, 10, 3, 23, 59, 59)))
+
+        # Domingos sin veda (Domingo 2026-10-04): Subida habilitada las 24 horas continuamente
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 4, 2, 0, 0)))
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 4, 12, 0, 0)))
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 4, 22, 0, 0)))
+        self.assertTrue(scheduler.esta_en_ventana_push(datetime(2026, 10, 4, 23, 59, 59)))
 
     def test_08_vps_sync_adapter_descargar_telcos(self):
         """Verifica que VPSSyncAdapter descargue y normalice correctamente tareas para 'telcos' sin sobreescritura vacía."""

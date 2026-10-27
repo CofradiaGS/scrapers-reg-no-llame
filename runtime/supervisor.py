@@ -19,6 +19,7 @@ import logging
 import threading
 from typing import Dict, Any, Optional
 from collections import deque
+from queue import Empty
 from multiprocessing import Process, Queue, Event
 from pathlib import Path
 
@@ -61,7 +62,9 @@ class SupervisorIndustrial:
         watchdog_sweep_interval: Optional[float] = None,
         empty_queue_pause_max_sec: Optional[float] = None,
         use_local_staging: Optional[bool] = None,
-        force_push: bool = False
+        force_push: bool = False,
+        max_records: Optional[int] = None,
+        min_success_rate: float = 95.0
     ):
         self.scraper_name = scraper_name
         self.queue_type = (queue_type or getattr(config, "QUEUE_TYPE", "registro_no_llame")).lower()
@@ -88,6 +91,8 @@ class SupervisorIndustrial:
             else getattr(config, "LOCAL_STAGING_ENABLED", True)
         )
         self.force_push = force_push
+        self.max_records = max_records
+        self.min_success_rate = float(min_success_rate)
         self.sync_scheduler: Optional[Any] = None
 
         # Asegurar que el flag forzar_horario se propague al motor del scraper
@@ -629,6 +634,33 @@ class SupervisorIndustrial:
             except Exception as e:
                 wd_logger.error(f"Error en barrido de huérfanos IPC: {e}")
 
+    def _tor_pool_watchdog_loop(self):
+        """
+        Centinela autónomo de salud y resiliencia del Pool Multi-Instancia de Tor.
+        Audita periódicamente cada puerto SOCKS/Control del pool.
+        Si alguna instancia muere, se bloquea o deja de responder, la recupera de forma
+        aislada e imperceptible sin afectar a los workers de otros puertos.
+        """
+        tor_wd_logger = logging.getLogger("TorPoolWatchdog")
+        tor_wd_logger.info("🛡️ [TOR WATCHDOG] Centinela de resiliencia del Pool de Tor activo.")
+        time.sleep(20.0)  # Pausa inicial post-arranque
+
+        while not self.stop_event.is_set():
+            for _ in range(10):
+                if self.stop_event.is_set():
+                    break
+                time.sleep(1)
+
+            if self.stop_event.is_set():
+                break
+
+            try:
+                from adapters.network.tor_controller import TorController
+                TorController.audit_and_heal_pool()
+                TorController.sync_excluded_exit_nodes()
+            except Exception as e:
+                tor_wd_logger.debug(f"Aviso en auditoría de Tor pool watchdog: {e}")
+
     def _scout_probe_loop(self):
         """
         Centinela Explorador (Scout Probe).
@@ -775,13 +807,20 @@ class SupervisorIndustrial:
                     stats["errores"] += 1
                 elif tipo == "worker_exit" and msg.get("recycled"):
                     stats["reciclados"] += 1
+            except Empty:
+                pass
             except Exception:
                 pass
+
+            total_proc = stats["completados"] + stats["no_coincidencias"] + stats["errores"]
+            if self.max_records and total_proc >= self.max_records:
+                print(f"\n🏁 META ALCANZADA: {total_proc}/{self.max_records} registros procesados. Deteniendo supervisor ordenadamente...\n")
+                self.stop_event.set()
+                break
 
             now = time.time()
             intervalo_print = 300.0 if "horario" in self._pause_reasons else 25.0
             if now - last_print >= intervalo_print:
-                total_proc = stats["completados"] + stats["no_coincidencias"] + stats["errores"]
                 elapsed = now - stats["t0"]
                 rpm = round((total_proc / elapsed) * 60, 1) if elapsed > 0 else 0
                 avg_lat = round(sum(stats["latencias"][-50:]) / len(stats["latencias"][-50:]), 2) if stats["latencias"] else 0
@@ -797,6 +836,7 @@ class SupervisorIndustrial:
                 print(f"  • Estado Operativo:         {status_operativo}")
                 print(f"  • Workers en paralelo:      {self.workers_count} slots activos")
                 print(f"  • Total procesados:         {total_proc:,} registros | Ritmo: {rpm} reg/min")
+<<<<<<< Updated upstream
                 mostrar_desglose = (
                     any(k in self.scraper_name.lower() for k in ("telco", "enacom", "claro", "personal", "movistar"))
                     or len(stats["por_operador"]) > 0
@@ -812,8 +852,23 @@ class SupervisorIndustrial:
                     if remanente > 0:
                         pct_rem = round((remanente / stats['completados']) * 100, 1)
                         print(f"      - {'Otros prestadores:':<24} {remanente:,} ({pct_rem}%)")
+=======
+                if "telco" in self.scraper_name.lower():
+                    c_claro = stats["por_operador"]["claro"]
+                    c_pers = stats["por_operador"]["personal"]
+                    c_mov = stats["por_operador"]["movistar"]
+                    print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+                    print(f"      - Claro:                {c_claro:,}")
+                    print(f"      - Personal:             {c_pers:,}")
+                    print(f"      - Movistar:             {c_mov:,}")
+                print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+>>>>>>> Stashed changes
                 print(f"  • Sin coincidencias:        {stats['no_coincidencias']:,}")
                 print(f"  • Errores controlados:      {stats['errores']:,}")
+                total_exitos = stats["completados"] + stats["no_coincidencias"]
+                tasa_efectividad = round((total_exitos / max(1, total_proc)) * 100, 1)
+                efectividad_estatus = "🟢 OK" if tasa_efectividad >= self.min_success_rate else "⚠️ BAJA"
+                print(f"  • Tasa de efectividad:      {tasa_efectividad}% (Objetivo: >={self.min_success_rate}%) [{efectividad_estatus}]")
                 print(f"  • Rotaciones preventivas:   {stats['reciclados']:,} relevos anti-leak")
                 print(f"  • Latencia promedio:        {avg_lat}s por consulta")
                 tot_eval = stats["pasan_de_1"] + stats["con_reintento"]
@@ -827,9 +882,29 @@ class SupervisorIndustrial:
                 print("=" * 72 + "\n", flush=True)
                 last_print = now
 
+                if self.max_records and total_proc >= self.max_records:
+                    logger.info(
+                        f"🎯 [MAX RECORDS] Alcanzado objetivo de {self.max_records} registros procesados "
+                        f"({total_proc} total). Iniciando detención limpia..."
+                    )
+                    self.stop_event.set()
+                    break
+
     def _spawn_worker(self, slot_id: int, generation: int):
         if slot_id not in self.slot_response_queues:
             self.slot_response_queues[slot_id] = Queue()
+
+        worker_kwargs = dict(self.scraper_kwargs)
+        worker_kwargs["worker_slot"] = slot_id
+        worker_kwargs["delay_min"] = self.delay_min
+        worker_kwargs["delay_max"] = self.delay_max
+        if "datuar" in self.scraper_name.lower():
+            # 8.0s connect timeout permite establecer el circuito Tor sin abortar prematuramente
+            worker_kwargs["timeout"] = (8.0, 12.0)
+        if self.scraper_kwargs.get("use_tor", config.TOR_ENABLED):
+            from adapters.network.tor_controller import TorController
+            chosen_socks, chosen_ctrl = TorController.resolve_ports_for_worker(slot_id)
+            worker_kwargs["tor_port"] = chosen_socks
 
         p = Process(
             target=worker_lifecycle_process,
@@ -845,7 +920,7 @@ class SupervisorIndustrial:
                 self.prioridad,
                 self.delay_min,
                 self.delay_max,
-                self.scraper_kwargs,
+                worker_kwargs,
                 self.solo_sin_coincidencia,
                 self.db_request_queue,
                 self.slot_response_queues[slot_id]
@@ -854,7 +929,7 @@ class SupervisorIndustrial:
         )
         p.start()
         self.worker_slots[slot_id] = {"process": p, "gen": generation}
-        logger.info(f"🚀 Worker Slot {slot_id} lanzado ({self.scraper_name.upper()}, Gen {generation}, PID {p.pid}).")
+        logger.debug(f"🚀 Worker Slot {slot_id} lanzado ({self.scraper_name.upper()}, Gen {generation}, PID {p.pid}).")
 
     def ejecutar(self):
         """Punto de entrada principal para iniciar la supervisión continua."""
@@ -878,6 +953,7 @@ class SupervisorIndustrial:
         persistencia_str = "STAGING LOCAL (SQLite WAL - Push Nocturno 20:00 hs)" if self.use_local_staging else "DIRECTO (MySQL VPS Central)"
         print(f"  • Persistencia:           {persistencia_str}")
         print(f"  • Slots concurrentes:     {self.workers_count} workers")
+        print(f"  • Tasa de éxito objetivo: >={self.min_success_rate}%")
         print(f"  • Rotación preventiva:    Cada {self.max_queries_worker} consultas por worker")
         print(f"  • Buffer de Persistencia: {self.buffer_flush_size} registros / máx {int(self.buffer_max_delay)}s (1 commit masivo)")
         print(f"  • Heartbeat Throttling:   Cada {int(self.heartbeat_interval)}s")
@@ -953,28 +1029,48 @@ class SupervisorIndustrial:
 
 
         # 4. Iniciar demonio Tor o ProxyPool único compartido si el scraper es Claro, Movistar, Personal, Datuar, CuitOnline o Telcos
-        tor_daemon = None
+        use_tor_pool = False
         if any(op in self.scraper_name for op in ("claro", "movistar", "personal", "datuar", "telcos", "cuit")):
+            target_url = "https://datuar.com/" if "datuar" in self.scraper_name else None
             if self.scraper_kwargs.get("use_proxy_pool", config.PROXY_POOL_ENABLED):
                 from adapters.network.proxy_pool import ProxyPoolManager
                 logger.info("🌐 [SUPERVISOR] Inicializando caché y bootstrap inicial de ProxyPoolManager...")
-                ppm = ProxyPoolManager.get_instance()
-                ppm.bootstrap(min_proxies=2, max_wait_sec=20)
+                ppm = ProxyPoolManager.get_instance(test_target=target_url)
+                ppm.bootstrap(min_proxies=15, max_wait_sec=25)
                 ppm.start_background_feeder()
                 self.scraper_kwargs["proxy_pool_shared"] = True
             elif self.scraper_kwargs.get("use_tor", config.TOR_ENABLED):
+                import math
                 from adapters.network.tor_controller import TorController
-                tor_daemon = TorController(
-                    socks_port=config.TOR_SOCKS_PORT_BASE,
-                    control_port=config.TOR_CONTROL_PORT_BASE,
-                    is_owner=True
+                workers_per_port = int(getattr(config, "WORKERS_PER_TOR_PORT", 3))
+                needed_tor_instances = max(1, math.ceil(self.workers_count / workers_per_port))
+                logger.info(
+                    f"🧅 [SUPERVISOR] Inicializando pool multi-instancia de {needed_tor_instances} Tor "
+                    f"(particionado a máx {workers_per_port} workers por puerto SOCKS)..."
                 )
-                logger.info("🧅 [SUPERVISOR] Verificando y asegurando demonio Tor único compartido (Stream Isolation)...")
-                if not tor_daemon.ensure_running(timeout_sec=180):
-                    logger.error("❌ [SUPERVISOR] No se pudo completar el bootstrap de Tor centralizado.")
+                tor_pool = TorController.start_pool(
+                    num_instances=needed_tor_instances,
+                    base_socks=config.TOR_SOCKS_PORT_BASE,
+                    timeout_sec=180
+                )
+                if not tor_pool:
+                    logger.error("❌ [SUPERVISOR] No se pudo completar el bootstrap del Pool de Tor centralizado.")
                 else:
-                    logger.info("✅ [SUPERVISOR] Demonio Tor centralizado 100% operativo. Propagando tor_external_daemon=True a workers.")
+                    logger.info(
+                        f"✅ [SUPERVISOR] Pool de Tor 100% operativo ({len(tor_pool)} instancias). "
+                        "Propagando tor_external_daemon=True a workers."
+                    )
                 self.scraper_kwargs["tor_external_daemon"] = True
+                use_tor_pool = True
+
+                # Para Datuar, precalentar ProxyPoolManager SOLO si está habilitado explícitamente use_proxy_pool
+                if "datuar" in self.scraper_name and self.scraper_kwargs.get("use_proxy_pool", config.PROXY_POOL_ENABLED):
+                    from adapters.network.proxy_pool import ProxyPoolManager
+                    logger.info("🛡️ [SUPERVISOR] Precalentando ProxyPoolManager auxiliar para failover anti-Turnstile en Datuar...")
+                    ppm = ProxyPoolManager.get_instance(test_target="https://datuar.com/")
+                    ppm.bootstrap(min_proxies=20, max_wait_sec=25)
+                    ppm.start_background_feeder()
+                    self.scraper_kwargs["proxy_pool_shared"] = True
 
         # 5. Iniciar hilos centinelas de soporte
         cb_thread = threading.Thread(target=self._circuit_breaker_loop, daemon=True, name="CircuitBreakerThread")
@@ -985,6 +1081,10 @@ class SupervisorIndustrial:
 
         wd_thread = threading.Thread(target=self._watchdog_sweeper_loop, daemon=True, name="WatchdogSweeperThread")
         wd_thread.start()
+
+        if use_tor_pool:
+            tor_wd_thread = threading.Thread(target=self._tor_pool_watchdog_loop, daemon=True, name="TorPoolWatchdogThread")
+            tor_wd_thread.start()
 
         scout_thread = threading.Thread(target=self._scout_probe_loop, daemon=True, name="ScoutProbeThread")
         scout_thread.start()
@@ -1045,9 +1145,10 @@ class SupervisorIndustrial:
         self._dispatcher_stop.set()
         disp_thread.join(timeout=5.0)
 
-        if tor_daemon is not None:
-            logger.info("🧅 Deteniendo demonio Tor compartido...")
-            tor_daemon.stop()
+        if use_tor_pool:
+            logger.info("🧅 Deteniendo pool multi-instancia de Tor...")
+            from adapters.network.tor_controller import TorController
+            TorController.stop_pool()
 
         print("\n" + "*" * 75)
         print("🏁 Supervisión 24/7 finalizada ordenadamente. Base de datos protegida.")

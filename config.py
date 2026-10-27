@@ -172,6 +172,12 @@ TOR_SOCKS_PORT_BASE = int(os.getenv("TOR_SOCKS_PORT_BASE", os.getenv("TOR_SOCKS_
 TOR_CONTROL_PORT_BASE = int(os.getenv("TOR_CONTROL_PORT_BASE", os.getenv("TOR_CONTROL_PORT", "9051")))
 TOR_CONTROL_PASSWORD = os.getenv("TOR_CONTROL_PASSWORD", "")
 TOR_ROTATE_EVERY = int(os.getenv("TOR_ROTATE_EVERY", "19"))
+WORKERS_PER_TOR_PORT = int(os.getenv("WORKERS_PER_TOR_PORT", "3"))
+TOR_CIRCUIT_BUILD_TIMEOUT = int(os.getenv("TOR_CIRCUIT_BUILD_TIMEOUT", "30"))
+TOR_MAX_CIRCUIT_DIRTINESS = int(os.getenv("TOR_MAX_CIRCUIT_DIRTINESS", "300"))
+TOR_MAX_PENDING_CIRCUITS = int(os.getenv("TOR_MAX_PENDING_CIRCUITS", "64"))
+DATUAR_TOR_ROTATE_EVERY = int(os.getenv("DATUAR_TOR_ROTATE_EVERY", "30"))
+DATUAR_SIN_COINCIDENCIA_CONFIRMACIONES = int(os.getenv("DATUAR_SIN_COINCIDENCIA_CONFIRMACIONES", "3"))
 TOR_GEOIP_PATH = _detectar_geoip_path("geoip")
 TOR_GEOIPV6_PATH = _detectar_geoip_path("geoip6")
 
@@ -188,6 +194,7 @@ LOCAL_STAGING_ENABLED = os.getenv("LOCAL_STAGING_ENABLED", "True").strip().lower
 LOCAL_STAGING_DB_PATH = os.getenv("LOCAL_STAGING_DB_PATH", os.path.join(os.path.dirname(__file__), "data", "staging_local.db"))
 PULL_CHUNK_SIZE = int(os.getenv("PULL_CHUNK_SIZE", "5000"))
 LOW_WATERMARK_THRESHOLD = int(os.getenv("LOW_WATERMARK_THRESHOLD", "2000"))
+MAX_LOCAL_STAGING_BACKLOG = int(os.getenv("MAX_LOCAL_STAGING_BACKLOG", "10000"))
 PULL_DAILY_LIMIT = int(os.getenv("PULL_DAILY_LIMIT", "50000"))
 
 # Ventana de Subida al VPS: Permitido a cualquier hora EXCEPTO Veda de 21:00 a 00:00 hs (Horario de Argentina)

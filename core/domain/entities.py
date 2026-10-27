@@ -480,7 +480,7 @@ class ReglaPipeline:
         # NO aplica regla de 7 días. Solo nutrir registros que aún NO tengan datos del motor.
         if nombre not in cls.TELCOS and nombre != "telcos":
             sc_data = datos.get(nombre, {})
-            if isinstance(sc_data, dict) and sc_data.get("status"):
+            if isinstance(sc_data, dict) and sc_data.get("status") == StatusScraping.COINCIDENCIA.value:
                 return False, f"{nombre} ya posee datos enriquecidos previamente (no requiere re-consulta)"
 
         # Para motores de compañía (claro, personal, movistar):
@@ -555,6 +555,9 @@ class ReglaPipeline:
             nombre_activo = cls.extraer_nombre(datos)
             if not dni_activo and not nombre_activo:
                 return False, "Datuar requiere DNI o Nombre disponible"
+            clean_doc = "".join(filter(str.isdigit, str(dni or "")))
+            if len(clean_doc) == 11 and clean_doc.startswith(("30", "33", "34")):
+                return False, "Datuar solo indexa personas físicas (CUIT empresa no elegible)"
             return True, "Apto para Datuar"
 
         if nombre == "cuitonline":

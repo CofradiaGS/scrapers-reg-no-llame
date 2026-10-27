@@ -72,6 +72,12 @@ class ScraperRegistry:
             kwargs["use_tor"] = False
             return PersonalAdapter(**kwargs)
 
+        if alias_clean == "datuar_fast":
+            kwargs.setdefault("use_proxy_pool", True)
+            kwargs["use_tor"] = False
+            from adapters.scrapers.datuar.datuar_adapter import DatuarAdapter
+            return DatuarAdapter(**kwargs)
+
         scraper_cls = cls._registry.get(alias_clean)
         if not scraper_cls:
             disponibles = ", ".join(cls._registry.keys())

@@ -36,6 +36,10 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)]
 )
 logging.getLogger("mysql.connector").setLevel(logging.WARNING)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
+logging.getLogger("requests").setLevel(logging.WARNING)
+logging.getLogger("stem").setLevel(logging.WARNING)
+logging.getLogger("ProxyPoolManager").setLevel(logging.WARNING)
 logger = logging.getLogger("MainCLI")
 
 
@@ -135,11 +139,21 @@ def cmd_test_batch(args):
     print("=" * 60)
 
     try:
+        q_type = getattr(args, "queue_type", getattr(config, "QUEUE_TYPE", "registro_no_llame"))
+        auto_id = getattr(args, "auto_id", getattr(config, "COLA_AUTO_ID", None))
+        use_staging = getattr(config, "LOCAL_STAGING_ENABLED", True)
+
         if dry_run:
             cola_repo = MemoryQueueAdapter([
                 {"id": 99901, "ani": "2604275327", "dni": "33517690", "scraper_actual": scraper_name, "estado": "pendiente"},
                 {"id": 99902, "ani": "2614556677", "scraper_actual": scraper_name, "estado": "pendiente"}
             ])
+        elif use_staging:
+            from adapters.queue.sqlite_staging_adapter import SQLiteStagingAdapter
+            cola_repo = SQLiteStagingAdapter(tipo_cola=q_type, auto_id=auto_id)
+        elif q_type == "cola_automatizacion":
+            from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
+            cola_repo = ColaAutomatizacionAdapter(pool_size=2, pool_name="cli_test_batch")
         else:
             cola_repo = MySQLQueueAdapter(pool_size=2, pool_name="cli_test_batch")
 
@@ -216,7 +230,9 @@ def cmd_supervise(args):
         auto_id=getattr(args, "auto_id", None),
         buffer_flush_size=getattr(args, "buffer_size", None),
         buffer_max_delay=getattr(args, "buffer_timeout", None),
-        empty_queue_pause_max_sec=getattr(args, "empty_queue_pause", None)
+        empty_queue_pause_max_sec=getattr(args, "empty_queue_pause", None),
+        max_records=getattr(args, "max_records", None),
+        min_success_rate=getattr(args, "min_success_rate", 95.0)
     )
     supervisor.ejecutar()
 
@@ -252,6 +268,8 @@ def main():
     p_batch.add_argument("--no-tor", dest="use_tor", action="store_false", help="Deshabilitar proxy Tor (conexión directa)")
     p_batch.add_argument("--proxy-pool", dest="use_proxy_pool", action="store_true", default=False, help="Usar pool de proxies públicos rotativos (alta velocidad)")
     p_batch.add_argument("--solo-sin-coincidencia", action="store_true", default=False, help="Filtrar solo registros sin coincidencia en ninguna de las 3 compañías")
+    p_batch.add_argument("--queue-type", type=str, default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Tipo de cola (registro_no_llame o cola_automatizacion)")
+    p_batch.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "scraper_datuar"), help="Identificador auto_id para cola_automatizacion")
 
     # sweep-orphans
     p_sweep = subparsers.add_parser("sweep-orphans", help="Liberar registros colgados en procesando")
@@ -278,6 +296,8 @@ def main():
     p_sup.add_argument("--queue-type", type=str, default=getattr(config, "QUEUE_TYPE", "registro_no_llame"), help="Tipo de cola (registro_no_llame o cola_automatizacion)")
     p_sup.add_argument("--auto-id", type=str, default=getattr(config, "COLA_AUTO_ID", "scraper_datuar"), help="Identificador auto_id para cola_automatizacion")
     p_sup.add_argument("--prefer-name", action="store_true", default=False, help="Preferir búsqueda por nombre sobre DNI en Datuar")
+    p_sup.add_argument("--max-records", type=int, default=None, help="Límite máximo de registros a procesar antes de detener el supervisor")
+    p_sup.add_argument("--min-success-rate", type=float, default=95.0, help="Tasa mínima de éxito requerida en consultas (default: 95.0%%)")
 
     args = parser.parse_args()
 

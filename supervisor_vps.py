@@ -115,6 +115,7 @@ def main():
     parser.add_argument("--local-staging", dest="local_staging", action="store_true", default=None, help="Habilita persistencia local desacoplada SQLite WAL (default según config.LOCAL_STAGING_ENABLED)")
     parser.add_argument("--no-local-staging", dest="local_staging", action="store_false", help="Deshabilita persistencia local y conecta directo al VPS")
     parser.add_argument("--orphan-timeout", type=int, default=None, help="Tiempo en minutos de inactividad antes de considerar huérfano un registro en VPS (default: 720 = 12 horas)")
+    parser.add_argument("--min-success-rate", type=float, default=95.0, help="Tasa mínima de éxito requerida en consultas (default: 95.0%)")
 
     args = parser.parse_args()
 
@@ -202,7 +203,8 @@ def main():
         empty_queue_pause_max_sec=args.empty_queue_pause,
         use_local_staging=args.local_staging,
         force_push=args.force_push,
-        minutos_inactividad_huerfanos=args.orphan_timeout
+        minutos_inactividad_huerfanos=args.orphan_timeout,
+        min_success_rate=getattr(args, "min_success_rate", 95.0)
     )
 
     supervisor.ejecutar()

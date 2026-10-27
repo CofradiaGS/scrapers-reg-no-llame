@@ -17,7 +17,12 @@ from typing import Optional, List, Set, Tuple
 import requests
 import config
 
-logger = logging.getLogger("ProxyPoolManager")
+def extract_proxy_ip(proxy_url: str) -> str:
+    """Extrae la IP o host limpio de una URL de proxy."""
+    clean = proxy_url.split("://")[-1]
+    if "@" in clean:
+        clean = clean.split("@")[-1]
+    return clean.split(":")[0]
 
 
 class ProxyPoolManager:
@@ -105,38 +110,70 @@ class ProxyPoolManager:
         except Exception as e:
             logger.debug(f"Error al guardar caché de proxies: {e}")
 
-    def get_proxy(self) -> Optional[str]:
+    def get_proxy(self, timeout: float = 0.0) -> Optional[str]:
         """
         Retorna el siguiente proxy del pool rotándolo al final.
-        Si el pool está vacío o muy bajo (< 3), dispara un refresco en segundo plano si allow_feeder está activo.
+        Filtra automáticamente cualquier proxy cuya IP esté en 'lista de descanso'.
         """
-        with self._lock:
-            if not self._pool:
-                # Si el pool está totalmente vacío, intentar recarga síncrona mínima solo si está permitido el feeder
+        t_deadline = time.time() + max(0.0, float(timeout))
+        while True:
+            with self._lock:
+                if self._pool:
+                    from adapters.network.cooldown_manager import IPCooldownManager
+                    cd_mgr = IPCooldownManager.get_instance()
+                    proxy = None
+                    for cand in list(self._pool):
+                        cand_ip = extract_proxy_ip(cand)
+                        if not cd_mgr.esta_en_descanso(cand_ip):
+                            proxy = cand
+                            break
+                        else:
+                            self._pool.remove(cand)
+
+                    if proxy:
+                        self._pool.remove(proxy)
+                        self._pool.append(proxy)
+                        if len(self._pool) < 5 and not self._is_refreshing and self.allow_feeder:
+                            self._is_refreshing = True
+                            threading.Thread(target=self._refresh_worker, daemon=True).start()
+                        return proxy
+
+                # Pool vacío
                 if not self._is_refreshing and self.allow_feeder:
                     self._is_refreshing = True
                     threading.Thread(target=self._refresh_worker, daemon=True).start()
+
+            if time.time() >= t_deadline:
                 return None
-
-            proxy = self._pool.popleft()
-            self._pool.append(proxy)
-
-            if len(self._pool) < 5 and not self._is_refreshing and self.allow_feeder:
-                self._is_refreshing = True
-                threading.Thread(target=self._refresh_worker, daemon=True).start()
-
-            return proxy
+            time.sleep(0.15)
 
     def report_failure(self, proxy_url: str) -> None:
         """Descarta de inmediato un proxy defectuoso, caído o lento."""
         with self._lock:
             if proxy_url in self._pool:
                 self._pool.remove(proxy_url)
-                logger.info(f"🗑️ Proxy descartado por falla/timeout: {proxy_url} (Restantes: {len(self._pool)})")
+                logger.debug(f"🗑️ Proxy descartado por falla/timeout: {proxy_url} (Restantes: {len(self._pool)})")
                 self._save_cache()
+
+    def report_block(self, proxy_url: str) -> None:
+        """Registra un captcha o bloqueo de tasa para la IP del proxy y la descarta si alcanza 2 strikes."""
+        from adapters.network.cooldown_manager import IPCooldownManager
+        ip = extract_proxy_ip(proxy_url)
+        strikes, en_descanso = IPCooldownManager.get_instance().registrar_bloqueo(ip)
+        with self._lock:
+            if proxy_url in self._pool:
+                self._pool.remove(proxy_url)
+                self._save_cache()
+        if en_descanso:
+            logger.info(f"💤 [LISTA DE DESCANSO] Proxy IP {ip} acumuló 2 bloqueos/captchas. Puesta en descanso (30m).")
+        else:
+            logger.debug(f"⚠️ Proxy IP {ip} bloqueada (Strike 1/2).")
 
     def report_success(self, proxy_url: str) -> None:
         """Confirma que el proxy respondió exitosamente manteniéndolo en la cola."""
+        from adapters.network.cooldown_manager import IPCooldownManager
+        ip = extract_proxy_ip(proxy_url)
+        IPCooldownManager.get_instance().reportar_exito(ip)
         with self._lock:
             if proxy_url not in self._pool:
                 self._pool.append(proxy_url)
@@ -168,6 +205,10 @@ class ProxyPoolManager:
             )
             lat = round(time.time() - t0, 2)
             if resp.status_code in (200, 400, 404):  # Respondió el servidor destino
+                if "datuar" in self.test_target.lower():
+                    html_l = resp.text.lower()
+                    if "fa-shield-halved" in html_l or "superado el" in html_l or "just a moment" in html_l:
+                        return False, proxy_url, 0.0
                 return True, proxy_url, lat
         except Exception:
             pass
@@ -202,23 +243,23 @@ class ProxyPoolManager:
         random.shuffle(candidates)
         return candidates
 
-    def _refresh_worker(self, target_healthy: int = 15) -> None:
+    def _refresh_worker(self, target_healthy: int = 35) -> None:
         """Trabajador que busca, testea y alimenta el pool de proxies."""
-        logger.info("Iniciando escaneo y validación de proxies públicos rápidos (<2.5s)...")
+        logger.debug("Iniciando escaneo y validación de proxies públicos rápidos (<2.5s)...")
         t0 = time.time()
         candidates = self._fetch_source_candidates()
         if not candidates:
-            logger.warning("No se pudieron descargar candidatos de proxies públicos.")
+            logger.debug("No se pudieron descargar candidatos de proxies públicos.")
             self._is_refreshing = False
             return
 
-        logger.info(f"Descargados {len(candidates)} candidatos. Validando concurrentemente...")
+        logger.debug(f"Descargados {len(candidates)} candidatos. Validando concurrentemente...")
         valid_found = 0
         tested = 0
 
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            # Tomar lotes de candidatos para no sobrecargar
-            batch = candidates[:250]
+            # Tomar lotes de candidatos para garantizar pool suficiente
+            batch = candidates[:800]
             future_to_cand = {
                 executor.submit(self._test_candidate, proto, host): (proto, host)
                 for proto, host in batch
@@ -234,7 +275,7 @@ class ProxyPoolManager:
                             if proxy_url not in self._all_seen:
                                 self._pool.append(proxy_url)
                                 self._all_seen.add(proxy_url)
-                        logger.info(f"  [+] Proxy rápido verificado: {proxy_url} ({lat}s) [Total vivos: {self.size()}]")
+                        logger.debug(f"  [+] Proxy rápido verificado: {proxy_url} ({lat}s) [Total vivos: {self.size()}]")
                         if self.size() >= target_healthy:
                             break
                 except Exception:
@@ -242,7 +283,7 @@ class ProxyPoolManager:
 
         self._save_cache()
         dt = round(time.time() - t0, 1)
-        logger.info(f"Escaneo finalizado en {dt}s. Candidatos probados: {tested}, Nuevos añadidos: {valid_found}. Pool total: {self.size()}")
+        logger.debug(f"Escaneo finalizado en {dt}s. Candidatos probados: {tested}, Nuevos añadidos: {valid_found}. Pool total: {self.size()}")
         self._is_refreshing = False
 
     def bootstrap(self, min_proxies: int = 3, max_wait_sec: int = 15) -> bool:
@@ -251,7 +292,7 @@ class ProxyPoolManager:
         Si ya existen en caché, retorna True de inmediato.
         """
         if self.size() >= min_proxies:
-            logger.info(f"ProxyPool operativo de inmediato con {self.size()} proxies en memoria.")
+            logger.debug(f"ProxyPool operativo de inmediato con {self.size()} proxies en memoria.")
             return True
 
         if not self.allow_feeder:
@@ -264,7 +305,7 @@ class ProxyPoolManager:
                 time.sleep(1.0)
             return self.size() > 0
 
-        logger.info(f"Pool con pocos proxies ({self.size()}). Ejecutando recarga rápida inicial...")
+        logger.debug(f"Pool con pocos proxies ({self.size()}). Ejecutando recarga rápida inicial...")
         t0 = time.time()
         self._refresh_worker(target_healthy=min_proxies + 5)
 

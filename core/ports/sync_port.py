@@ -56,6 +56,19 @@ class ISyncRemoteRepoPort(ABC):
         """
         pass
 
+    def sanitizar_pendientes_invalidos_vps(
+        self,
+        tipo_cola: str,
+        auto_id: Optional[str] = None,
+        scraper_actual: Optional[str] = None
+    ) -> int:
+        """
+        Pasa a 'completado' con 'sin_coincidencia' directamente en el VPS cualquier tarea
+        pendiente que posea un formato incompatible con el scraper (ej. Datuar con DNI nulo o CUIT empresa 30/33/34).
+        Retorna la cantidad de filas sanitizadas.
+        """
+        return 0
+
 
 class ISyncLocalRepoPort(ABC):
     """Contrato abstracto para el almacén local de staging (SQLite WAL)."""

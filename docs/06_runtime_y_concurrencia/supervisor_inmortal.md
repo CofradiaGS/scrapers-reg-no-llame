@@ -8,7 +8,7 @@ Su propósito es proporcionar **resiliencia infinita (inmortalidad)**: garantiza
 
 ## 1. Topología del Supervisor y Subhilos Centinelas
 
-Cuando se ejecuta `supervisor.ejecutar()`, el proceso maestro no realiza tareas de scraping directamente. Su responsabilidad es puramente de control, telemetría y despacho centralizado de datos. Para ello, levanta **5 hilos centinelas de soporte** (`daemon=True`) y administra una tabla de slots de procesos:
+Cuando se ejecuta `supervisor.ejecutar()`, el proceso maestro no realiza tareas de scraping directamente. Su responsabilidad es puramente de control, telemetría y despacho centralizado de datos. Para ello, levanta **hilos centinelas de soporte** (`daemon=True`) y administra una tabla de slots de procesos:
 
 ```mermaid
 graph TD
@@ -19,6 +19,7 @@ graph TD
         CB["CircuitBreakerThread<br/>_circuit_breaker_loop()<br/>(Ping VPN/Web cada 25s)"]
         HC["HorarioComercialThread<br/>_horario_comercial_loop()<br/>(Centinela de horario cada 10s)"]
         WD["WatchdogSweeperThread<br/>_watchdog_sweeper_loop()<br/>(Rescate huérfanos cada 5m)"]
+        TorWD["TorPoolWatchdogThread<br/>_tor_pool_watchdog_loop()<br/>(Resiliencia de Pool Tor cada 30s)"]
         Dash["DashboardThread<br/>_metrics_dashboard_loop()<br/>(Drena stats_queue cada 1s)"]
     end
     
@@ -33,6 +34,7 @@ graph TD
     Sup --> CB
     Sup --> HC
     Sup --> WD
+    Sup --> TorWD
     Sup --> Dash
     Sup -->|Spawn escalonado| W1
     Sup -->|Spawn escalonado| W2
@@ -195,11 +197,45 @@ Para evitar que la recuperación de red de `CircuitBreaker` despause prematurame
 
 ## 6. Centinela de Sincronización Desacoplado (`SyncSchedulerThread`)
 
-Cuando la persistencia opera mediante Staging Local (`SQLiteStagingAdapter`), el supervisor instancia el hilo centinela [`SyncSchedulerThread`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/sync_scheduler.py#L31):
 - **Watermark Pull Permanente**: Prioridad #1 del centinela. Si las tareas pendientes en SQLite bajan a $\le 2.000$, ejecuta de inmediato la recarga bajo `_pull_lock` para abastecer a los workers sin vaciar la cola.
-- **Subida Continua en Ventana (00:00 a 21:00 hs)**: Dispara en segundo plano un hilo desacoplado `SyncPushDrainWorker` bajo `_push_lock` cuando hay $\ge 5.000$ registros listos. Drena en ciclos continuos de 5.000 (sin pausas de sondeo ni sleeps de polling) mientras existan $\ge 5.000$ registros.
-- **Protección de Producción Continua**: Los remanentes menores a 5.000 se conservan en SQLite local. Los workers y el Watermark Pull no se detienen en ningún momento durante la subida masiva.
-- **Veda Nocturna (21:00 a 00:00 hs)**: Durante esta franja horaria se inhiben las subidas al VPS, resguardando los resultados en disco local.
+- **Protección de Backlog Local (Watermark Cap de 10.000)**: Si la suma de tareas activas (`pendientes + listos`) en SQLite alcanza el umbral de 10.000, el pull se pausa automáticamente para priorizar el drenaje de los lotes al VPS y garantizar que la cola `en_proceso` en MySQL nunca exceda las 10.000 tareas.
+- **Subida Continua Desacoplada (Bloques de a 5.000)**: Dispara en segundo plano un hilo desacoplado `SyncPushDrainWorker` bajo `_push_lock` cuando hay $\ge 5.000$ registros listos. Drena en ciclos continuos de 5.000 registros al VPS (sin pausas de sondeo ni sleeps de polling) hasta que el remanente sea $< 5.000$.
+- **Veda Nocturna (Lunes a Sábado vs. Domingos)**: De lunes a sábado rige la veda nocturna de 21:00 a 00:00 hs (se detiene la subida y los registros se conservan en disco local). Los **domingos NO rige la veda** (subida continua 24 horas del día).
+- **Auto-Sanitizador Atómico de Formatos Inválidos**: En el arranque (Boot) y en cada evaluación de pull/sweeper, el scheduler purga en bloque directamente en el VPS cualquier registro pendiente incompatible con el scraper (ej. Datuar con DNI nulo o CUIT corporativo 30/33/34), marcándolo como completado sin coincidencia sin descargarlo a SQLite ni consumir workers.
+
+
+---
+
+## 7. Control de Calidad Operativa: Umbral Mínimo de Efectividad (`--min-success-rate`)
+
+Para certificar que clústeres de alta concurrencia (como 20 workers simultáneos de Datuar sobre el Pool Tor) no degraden su rendimiento por bloqueos o fallos transitorios desapercibidos, [`SupervisorIndustrial`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/supervisor.py#L31) incorpora el parámetro de control de calidad:
+
+```python
+min_success_rate: float = 95.0
+```
+
+### Monitoreo en Tablero Industrial IPC
+El centinela de telemetría evalúa continuamente el ratio de consultas finalizadas con éxito (`coincidencias + sin_coincidencias`) frente al total de consultas procesadas (incluyendo errores controlados o transitorios):
+
+$$\text{Tasa de Efectividad} = \frac{\text{Coincidencias Positivas} + \text{Sin Coincidencias}}{\text{Total Consultas}} \times 100$$
+
+En el tablero en tiempo real, el supervisor reporta el indicador con alerta visual dinámica:
+- 🟢 **`[🟢 OK]`**: Tasa $\ge \text{min\_success\_rate}$ (ej. $\ge 95.0\%$).
+- ⚠️ **`[⚠️ DEGRADADO]`**: Tasa $< \text{min\_success\_rate}$, advirtiendo anomalías en proxies o rotación de IPs antes de causar fallas masivas.
+
+### Asignación Determinista de Puertos Tor por Worker Slot
+Cuando se activa el flag `--tor`, el supervisor calcula de forma matemática e inyecta explícitamente el puerto SOCKS y puerto de Control en los argumentos de cada worker (`tor_port` y `tor_control_port`), garantizando un particionamiento balanceado (máximo 3 workers por puerto SOCKS) sin depender de socket probes concurrentes propensos a timeout:
+
+$$\text{group\_idx} = \frac{\text{slot\_id} - 1}{3}$$
+$$\text{socks\_port} = 9050 + (\text{group\_idx} \times 2)$$
+
+### Demonio Dedicado de Alta Eficiencia: `demonio_datuar.bat`
+Para la ejecución desatendida 24/7 de Datuar con 20 workers y garantía de efectividad $\ge 95\%$, se dispone del launcher:
+
+```powershell
+.\demonio_datuar.bat
+```
+El script configura el pool de 7 instancias de Tor, 20 workers en paralelo, staging local SQLite WAL con push al VPS y flag `--min-success-rate 95.0`.
 
 ---
 

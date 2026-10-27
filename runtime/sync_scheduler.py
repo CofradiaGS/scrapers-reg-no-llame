@@ -93,9 +93,11 @@ class SyncSchedulerThread(threading.Thread):
         """
         Verifica si el horario actual (o provisto) se encuentra en la ventana habilitada para push
         en horario de Argentina (por defecto 00:00 a 21:00 hs; veda de 21:00 a 00:00 hs).
+        Regla especial: Los domingos NO rige la veda (subida continua 24hs). De lunes a sábado
+        rige la veda nocturna de 21:00 a 00:00 hs como estaba configurado originalmente.
         """
         now = dt or datetime.now()
-        # Si dt es provisto sin tzinfo (ej. pruebas unitarias), se evalúa directamente su .hour.
+        # Si dt es provisto sin tzinfo (ej. pruebas unitarias), se evalúa directamente su .hour y .weekday().
         # Si dt es None o tiene tzinfo, se resuelve en la zona horaria oficial de Argentina.
         if dt is None or dt.tzinfo is not None:
             try:
@@ -108,6 +110,11 @@ class SyncSchedulerThread(threading.Thread):
             except Exception:
                 pass
 
+        # Domingos: Sin veda (push continuo 24 horas)
+        if now.weekday() == 6:
+            return True
+
+        # Lunes a Sábado: Ventana horaria estándar (00:00 a 21:00 hs, veda 21:00 a 00:00 hs)
         inicio = self.sync_push_window_start_hour
         fin = self.sync_push_window_end_hour
         if inicio < fin:
@@ -262,8 +269,16 @@ class SyncSchedulerThread(threading.Thread):
             )
             if rescatados_boot > 0:
                 logger.info(f"✨ [BOOT SWEEPER] {rescatados_boot:,} registros huérfanos rescatados a 'pendiente' en el VPS (umbral: {timeout_huerfanos}m / {timeout_huerfanos/60:.1f}h).")
+
+            # Sanitización automática de formatos incompatibles en el arranque
+            if hasattr(self.remote_repo, "sanitizar_pendientes_invalidos_vps"):
+                self.remote_repo.sanitizar_pendientes_invalidos_vps(
+                    tipo_cola=self.tipo_cola,
+                    auto_id=self.auto_id,
+                    scraper_actual=self.scraper_actual
+                )
         except Exception as e_boot:
-            logger.warning(f"Aviso en verificación inicial de huérfanos VPS: {e_boot}")
+            logger.warning(f"Aviso en verificación inicial de huérfanos/sanitización VPS: {e_boot}")
 
         # 1. Comprobación inicial de arranque: Si la cola local está vacía o baja, recargar
         try:
@@ -294,7 +309,28 @@ class SyncSchedulerThread(threading.Thread):
                         pass
                     else:
                         pendientes = self.local_repo.contar_pendientes(tipo_cola=self.tipo_cola, scraper_actual=self.scraper_actual)
-                        if pendientes <= self.low_watermark:
+                        listos_actuales = self.local_repo.contar_listos_para_subir(tipo_cola=self.tipo_cola)
+                        max_backlog = int(getattr(config, "MAX_LOCAL_STAGING_BACKLOG", 10000))
+
+                        # Protección anti-acumulación en VPS: Si ya tenemos >= 10.000 tareas activas en staging,
+                        # esperar a que el push drene los listos antes de descargar más tareas del VPS
+                        if (pendientes + listos_actuales) >= max_backlog:
+                            logger.debug(
+                                f"⏸️ [WATERMARK PULL EN ESPERA] Backlog local activo ({pendientes + listos_actuales:,} tareas = "
+                                f"{pendientes:,} pendientes + {listos_actuales:,} listos) >= límite ({max_backlog:,}). "
+                                f"Priorizando drenaje de listos al VPS antes de solicitar nuevo bloque."
+                            )
+                        elif pendientes <= self.low_watermark:
+                            try:
+                                if hasattr(self.remote_repo, "sanitizar_pendientes_invalidos_vps"):
+                                    self.remote_repo.sanitizar_pendientes_invalidos_vps(
+                                        tipo_cola=self.tipo_cola,
+                                        auto_id=self.auto_id,
+                                        scraper_actual=self.scraper_actual
+                                    )
+                            except Exception as e_san:
+                                logger.warning(f"Aviso en sanitización previa al pull VPS: {e_san}")
+
                             res_pull = self.ejecutar_pull_inmediato(forzar=False)
                             if res_pull.get("ejecutado"):
                                 descargados = res_pull.get("descargados", 0)
@@ -337,7 +373,7 @@ class SyncSchedulerThread(threading.Thread):
                         )
                         self._push_thread.start()
 
-                # --- 3. EVALUAR BARRIDO DE HUÉRFANOS EN VPS (Auto-sanación periódica cada 10 min) ---
+                # --- 3. EVALUAR BARRIDO DE HUÉRFANOS Y SANITIZACIÓN EN VPS (Auto-sanación periódica cada 10 min) ---
                 if time.time() - self._ultimo_vps_sweep_time >= 600.0:
                     self._ultimo_vps_sweep_time = time.time()
                     try:
@@ -351,8 +387,15 @@ class SyncSchedulerThread(threading.Thread):
                         )
                         if resc > 0:
                             logger.info(f"🧹 [WATCHDOG PERIÓDICO VPS] {resc:,} registros huérfanos liberados a 'pendiente' en el VPS (umbral: {timeout_huerfanos}m / {timeout_huerfanos/60:.1f}h).")
+
+                        if hasattr(self.remote_repo, "sanitizar_pendientes_invalidos_vps"):
+                            self.remote_repo.sanitizar_pendientes_invalidos_vps(
+                                tipo_cola=self.tipo_cola,
+                                auto_id=self.auto_id,
+                                scraper_actual=self.scraper_actual
+                            )
                     except Exception as e_sw:
-                        logger.warning(f"Aviso en barrido periódico de huérfanos VPS: {e_sw}")
+                        logger.warning(f"Aviso en barrido periódico de huérfanos/sanitización VPS: {e_sw}")
 
             except Exception as e:
                 logger.error(f"❌ Excepción no controlada en SyncSchedulerThread: {e}", exc_info=True)

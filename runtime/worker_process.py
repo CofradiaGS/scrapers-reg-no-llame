@@ -48,9 +48,9 @@ def worker_lifecycle_process(
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    worker_tag = f"W{worker_slot}-G{generation}"
+    worker_tag = f"W{worker_slot:02d}-G{generation}"
     w_log = logging.getLogger(worker_tag)
-    w_log.info(
+    w_log.debug(
         f"[{worker_tag}] Iniciando worker (Scraper: {scraper_name.upper()}, PID: {os.getpid()}). "
         f"Límite de rotación preventiva: {max_queries} consultas."
     )
@@ -69,7 +69,7 @@ def worker_lifecycle_process(
                 request_queue=db_request_queue,
                 response_queue=db_response_queue
             )
-            w_log.info(f"[{worker_tag}] Conectado a Supervisor mediante IPC (0 sockets remotos directos a BD).")
+            w_log.debug(f"[{worker_tag}] Conectado a Supervisor mediante IPC (0 sockets remotos directos a BD).")
         else:
             if q_type == "cola_automatizacion":
                 from adapters.queue.cola_automatizacion_adapter import ColaAutomatizacionAdapter
@@ -87,6 +87,10 @@ def worker_lifecycle_process(
         kwargs = dict(scraper_kwargs or {})
         if "worker_slot" not in kwargs:
             kwargs["worker_slot"] = worker_slot
+        if "delay_min" not in kwargs:
+            kwargs["delay_min"] = delay_min
+        if "delay_max" not in kwargs:
+            kwargs["delay_max"] = delay_max
         scraper_engine = ScraperRegistry.obtener(scraper_name, **kwargs)
         scraper_engine.iniciar()
 
@@ -104,7 +108,7 @@ def worker_lifecycle_process(
             return
 
         # 3. Autenticación inicial del scraper
-        w_log.info(f"[{worker_tag}] Autenticando en motor {scraper_name.upper()}...")
+        w_log.debug(f"[{worker_tag}] Autenticando en motor {scraper_name.upper()}...")
         try:
             if not scraper_engine.autenticar():
                 err_msg = f"[{worker_tag}] No se pudo autenticar en el motor {scraper_name.upper()}."
@@ -124,7 +128,7 @@ def worker_lifecycle_process(
             if stop_event.is_set():
                 return
 
-        w_log.info(f"[{worker_tag}] ✅ Sesión activa. Iniciando consumo continuo de cola.")
+        w_log.debug(f"[{worker_tag}] Sesión activa. Iniciando consumo continuo de cola.")
 
         # 4. Inyección de dependencias en el Caso de Uso de Aplicación
         enacom_adapter = None
@@ -165,15 +169,20 @@ def worker_lifecycle_process(
                 "intentos": item.get("intentos", 1)
             })
 
+            dni_display = str(item.get("dni") or "").strip() or str(ani or "")
+            desc_clean = desc
+            if desc_clean.startswith("Datuar - "):
+                desc_clean = desc_clean[9:]
+
             if status == "coincidencia":
                 op_tag = f" [{operador.upper()}]" if operador and operador.lower() not in ("desconocido", "telcos") else ""
-                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> 🎯 COINCIDENCIA{op_tag} ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
+                w_log.info(f"🎯 COINCIDENCIA{op_tag:<9} | [{worker_tag}] ID:{item_id:<8} | DNI:{dni_display:<10} ({lat:4.2f}s) ➔ {desc_clean}")
             elif status == "sin_coincidencia":
-                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> ℹ️ SIN COINCIDENCIA ({lat}s) ➔ [{sig_scraper}:{sig_estado}]")
+                w_log.info(f"⚪ SIN COINCIDENCIA   | [{worker_tag}] ID:{item_id:<8} | DNI:{dni_display:<10} ({lat:4.2f}s) ➔ Sin registros en {scraper_name.capitalize()}")
             elif status == "salteado":
-                w_log.info(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> ⏩ SALTEADO ({lat}s) ➔ [{sig_scraper}:{sig_estado}] | {desc}")
+                w_log.debug(f"⏩ SALTEADO           | [{worker_tag}] ID:{item_id:<8} | DNI:{dni_display:<10} ({lat:4.2f}s) ➔ {desc_clean}")
             else:
-                w_log.error(f"[{worker_tag}] ID:{item_id} | ANI:{ani} -> ❌ ERROR ({lat}s): {desc}")
+                w_log.warning(f"❌ ERROR              | [{worker_tag}] ID:{item_id:<8} | DNI:{dni_display:<10} ({lat:4.2f}s) ➔ {desc_clean}")
 
         # 6. Bucle principal de consumo de lotes
         while not stop_event.is_set():
@@ -225,7 +234,7 @@ def worker_lifecycle_process(
                 continue
 
             consultas_realizadas += num_proc
-            w_log.info(f"[{worker_tag}] 💾 Lote de {num_proc} procesado y guardado. (Total gen: {consultas_realizadas}/{max_queries})")
+            w_log.debug(f"[{worker_tag}] 💾 Lote de {num_proc} procesado y guardado. (Total gen: {consultas_realizadas}/{max_queries})")
 
             # Jitter de cortesía entre lotes
             delay = random.uniform(delay_min, delay_max)
@@ -234,7 +243,7 @@ def worker_lifecycle_process(
     except Exception as e:
         w_log.critical(f"[{worker_tag}] Fallo crítico en proceso worker: {e}", exc_info=True)
     finally:
-        w_log.info(f"[{worker_tag}] Cerrando recursos del scraper...")
+        w_log.debug(f"[{worker_tag}] Cerrando recursos del scraper...")
         if scraper_engine:
             try:
                 scraper_engine.cerrar()

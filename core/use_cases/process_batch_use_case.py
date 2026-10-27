@@ -87,8 +87,11 @@ class ProcesarLoteUseCase:
         resultados = []
         unprocessed_ids = [r.id for r in lote]
         is_ipc_streaming = getattr(self.cola, "is_ipc", False)
+        fallos_transitorios_consecutivos = 0
 
         def registrar_resultado(item: Dict[str, Any]):
+            nonlocal fallos_transitorios_consecutivos
+            fallos_transitorios_consecutivos = 0
             resultados.append(item)
             if item["id"] in unprocessed_ids:
                 unprocessed_ids.remove(item["id"])
@@ -265,6 +268,7 @@ class ProcesarLoteUseCase:
                     "intentos": resultado.detalles.get("intentos", 1) if (resultado.detalles and isinstance(resultado.detalles, dict)) else 1
                 }
                 registrar_resultado(item_res)
+                fallos_transitorios_consecutivos = 0
 
             except FueraDeHorarioComercialException as e_hc:
                 logger.warning(
@@ -276,13 +280,19 @@ class ProcesarLoteUseCase:
                 break
 
             except ScraperTransientError as e_trans:
-                logger.warning(
-                    f"⚠️ Fallo transitorio de red / bloqueo IP en scraper (Línea {reg.linea.ani}): {e_trans}. "
-                    f"Interrumpiendo lote para permitir rotación/recuperación. {len(unprocessed_ids)} registros "
-                    f"restantes serán liberados intactos a estado 'pendiente'."
-                )
-                # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
-                break
+                fallos_transitorios_consecutivos += 1
+                if fallos_transitorios_consecutivos >= 4:
+                    logger.warning(
+                        f"⚠️ Pausa preventiva en lote tras 4 caídas transitorias consecutivas. "
+                        f"{len(unprocessed_ids)} registros liberados a 'pendiente' para rotación limpia."
+                    )
+                    break
+                else:
+                    logger.debug(
+                        f"⚠️ Reintento transitorio ID:{reg.id} (DNI:{linea_consulta.dni}): {e_trans}."
+                    )
+                    time.sleep(0.5)
+                    continue
 
             except Exception as e:
                 lat = round(time.time() - t0, 2)

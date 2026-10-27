@@ -101,14 +101,16 @@ La documentación se organiza de forma atómica y modular en 7 capas temáticas 
 * [37. Supervisor Inmortal y Auto-Spawn](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/06_runtime_y_concurrencia/supervisor_inmortal.md): Orquestador maestro que mantiene N workers activos, reemplazo preventivo, Despachador IPC y Centinela de sincronización `SyncSchedulerThread`.
 * [38. Watchdog Sweeper Centinela](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/06_runtime_y_concurrencia/watchdog_sweeper.md): Hilo de limpieza periódica de registros atascados por fallas imprevistas.
 * [39. Tablero de Métricas Industrial en Tiempo Real](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/06_runtime_y_concurrencia/tablero_metricas_ipc.md): Monitoreo de RPM, latencia promedio y distribución de estados vía colas IPC.
+* [40. Pool Multi-Instancia de Tor y Centinela de Resiliencia](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/06_runtime_y_concurrencia/pool_tor_multi_instancia.md): Particionamiento dinámico de 6 workers por puerto SOCKS, configuración torrc anti-fugas y Centinela TorPoolWatchdog para semanas de ejecución ininterrumpida.
+* [41. Gestor de Lista de Descanso y Cooldown de IPs (IPCooldownManager)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/06_runtime_y_concurrencia/cooldown_manager_ips.md): Subsistema de cuarentena automática para IPs con 2 bloqueos/captchas consecutivos, rotación forzada y sincronización dinámica con ExcludeExitNodes en Tor.
 
 ### Capa 07: Operación, Despliegue y Runbooks
-* [40. Comandos de la CLI Principal (`main.py`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/comandos_cli_main.md): Sintaxis de subcomandos (`stats`, `list-scrapers`, `test-line`, `test-batch`, `sweep-orphans`, `supervise`).
-* [41. Supervisor de Producción (`supervisor_vps.py`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/supervisor_produccion.md): Flags de producción (`--engine`, `--workers`, `--batch-size`, `--prioridad`, `--sync-now`, `--pull-now`, `--local-staging`).
-* [42. Demonio Permanente de Windows (`run_daemon.bat`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/demonio_windows_bat.md): Bucle permanente a prueba de fallos y configuración de variables de entorno `.env`.
-* [43. Runbook de Resolución de Problemas e Incidentes](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/resolucion_problemas.md): Protocolos de diagnóstico de VPN/F5, bloqueos de BD, fugas de RAM y errores de sesión JSF.
-* [44. Orquestación y Control de Cluster LAN (Master-Worker)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md): Sincronización automática de código Git y control centralizado de scrapers entre múltiples PCs en red local.
-* [45. Runbook: Enriquecimiento Total Banco Macro a SQLite](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/enriquecimiento_banco_macro_sqlite.md): Manual operativo de ingesta masiva de carteras, descubrimiento de líneas en IRIS por DNI, auditoría Telcos, reparación BCRA y exportación a Excel.
+* [42. Comandos de la CLI Principal (`main.py`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/comandos_cli_main.md): Sintaxis de subcomandos (`stats`, `list-scrapers`, `test-line`, `test-batch`, `sweep-orphans`, `supervise`).
+* [43. Supervisor de Producción (`supervisor_vps.py`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/supervisor_produccion.md): Flags de producción (`--engine`, `--workers`, `--batch-size`, `--prioridad`, `--sync-now`, `--pull-now`, `--local-staging`).
+* [44. Demonio Permanente de Windows (`run_daemon.bat`)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/demonio_windows_bat.md): Bucle permanente a prueba de fallos y configuración de variables de entorno `.env`.
+* [45. Runbook de Resolución de Problemas e Incidentes](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/resolucion_problemas.md): Protocolos de diagnóstico de VPN/F5, bloqueos de BD, fugas de RAM y errores de sesión JSF.
+* [46. Orquestación y Control de Cluster LAN (Master-Worker)](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/orquestacion_cluster_lan.md): Sincronización automática de código Git y control centralizado de scrapers entre múltiples PCs en red local.
+* [47. Runbook: Enriquecimiento Total Banco Macro a SQLite](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/07_operacion_y_runbooks/enriquecimiento_banco_macro_sqlite.md): Manual operativo de ingesta masiva de carteras, descubrimiento de líneas en IRIS por DNI, auditoría Telcos, reparación BCRA y exportación a Excel.
 
 ---
 
@@ -133,6 +135,10 @@ python main.py test-batch --scraper claro --batch-size 2 --dry-run --proxy-pool
 # 6. Limpieza manual de registros huérfanos
 python main.py sweep-orphans --minutos 10
 
-# 7. Ejecución industrial continua 24/7 (Demonio Windows)
+# 7. Ejecución industrial continua 24/7 (Demonio Windows Iris)
 .\run_daemon.bat --engine http --workers 9 --batch-size 12 --prioridad auto
+
+# 8. Demonio industrial Datuar 24/7 con 20 workers Tor y umbral de efectividad >=95%
+.\demonio_datuar.bat
 ```
+
