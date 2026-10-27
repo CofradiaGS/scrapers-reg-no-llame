@@ -230,6 +230,55 @@ class TestSQLiteStagingAdapter(unittest.TestCase):
         self.assertEqual(len(lote), 2)
 
 
+    def test_07_prioridad_geografica_cascada_y_filtro(self):
+        """
+        Verifica que reservar_lote en SQLite respete la cascada geográfica:
+        P1 (11 y Mendoza: 260, 261, 262, 263) ->
+        P2 (Resto de Cuyo: 264 San Juan, 265/266 San Luis, 380/382 La Rioja) ->
+        P3 (Resto del país).
+        Y que el filtro estricto por prioridad funcione.
+        """
+        from core.domain.enums import Prioridad
+
+        tareas = [
+            {"id": 7001, "numero_de_linea": "3415871971", "dni": None, "scraper_actual": "enacom_web"},  # P3 (Rosario)
+            {"id": 7002, "numero_de_linea": "2644112233", "dni": None, "scraper_actual": "enacom_web"},  # P2 (San Juan)
+            {"id": 7003, "numero_de_linea": "1144001111", "dni": None, "scraper_actual": "enacom_web"},  # P1 (AMBA 11)
+            {"id": 7004, "numero_de_linea": "2614556677", "dni": None, "scraper_actual": "enacom_web"},  # P1 (Mendoza 261)
+            {"id": 7005, "numero_de_linea": "2664556677", "dni": None, "scraper_actual": "enacom_web"},  # P2 (San Luis 266)
+            {"id": 7006, "numero_de_linea": "2995814274", "dni": None, "scraper_actual": "enacom_web"},  # P3 (Neuquén)
+        ]
+        self.adapter.insertar_tareas_descargadas(tareas)
+
+        # 1. Cascada Auto (prioridad=None): debe traer P1 primero, luego P2, luego P3
+        lote_auto = self.adapter.reservar_lote(batch_size=6, prioridad=None, scraper_nombre="enacom_web")
+        self.assertEqual(len(lote_auto), 6)
+        ids_auto = [r.id for r in lote_auto]
+        # P1: 7003 (11) y 7004 (261)
+        self.assertIn(ids_auto[0], [7003, 7004])
+        self.assertIn(ids_auto[1], [7003, 7004])
+        # P2: 7002 (264) y 7005 (266)
+        self.assertIn(ids_auto[2], [7002, 7005])
+        self.assertIn(ids_auto[3], [7002, 7005])
+        # P3: 7001 (341) y 7006 (299)
+        self.assertIn(ids_auto[4], [7001, 7006])
+        self.assertIn(ids_auto[5], [7001, 7006])
+
+        # Verificar enums y nombres
+        self.assertEqual(lote_auto[0].prioridad, Prioridad.P1_AMBA_MENDOZA)
+        self.assertEqual(lote_auto[2].prioridad, Prioridad.P2_CUYO)
+        self.assertEqual(lote_auto[4].prioridad, Prioridad.P3_RESTO)
+
+        # Revertir para probar filtro estricto
+        self.adapter.revertir_a_pendiente(ids_auto)
+
+        # 2. Filtro estricto prioridad=2 (Resto Cuyo)
+        lote_p2 = self.adapter.reservar_lote(batch_size=10, prioridad=2, scraper_nombre="enacom_web")
+        self.assertEqual(len(lote_p2), 2)
+        self.assertEqual(set(r.id for r in lote_p2), {7002, 7005})
+        self.assertTrue(all(r.prioridad == Prioridad.P2_CUYO for r in lote_p2))
+
+
 if __name__ == "__main__":
     unittest.main()
 

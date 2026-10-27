@@ -278,6 +278,39 @@ class TestReglaPipeline(unittest.TestCase):
         self.assertEqual(sig_sc2, "finalizado")
         self.assertEqual(sig_st2, EstadoRegistro.NO_COINCIDENCIA.value)
 
+    def test_10b_enacom_web_resolver_siguiente_etapa_es_terminal(self):
+        """
+        Verifica que ENACOM Web (y sus alias scraper_enacom/enacom) sea terminal.
+        Jamás debe reciclar hacia telcos ni hacia IRIS.
+        """
+        for alias in ("enacom_web", "scraper_enacom", "enacom"):
+            # Caso Coincidencia
+            res_coincidencia = ScrapeResult(
+                ani="1142243519",
+                status=StatusScraping.COINCIDENCIA,
+                fuente_scraper=alias,
+                operador="Claro"
+            )
+            sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+                scraper_actual=alias,
+                resultado=res_coincidencia
+            )
+            self.assertEqual(sig_sc, "finalizado", f"Alias {alias} debe finalizar en coincidencia")
+            self.assertEqual(sig_st, EstadoRegistro.COMPLETADO.value)
+
+            # Caso Sin Coincidencia
+            res_sin = ScrapeResult(
+                ani="1142243519",
+                status=StatusScraping.SIN_COINCIDENCIA,
+                fuente_scraper=alias
+            )
+            sig_sc, sig_st = ReglaPipeline.resolver_siguiente_etapa(
+                scraper_actual=alias,
+                resultado=res_sin
+            )
+            self.assertEqual(sig_sc, "finalizado", f"Alias {alias} debe finalizar sin coincidencia")
+            self.assertEqual(sig_st, EstadoRegistro.NO_COINCIDENCIA.value)
+
     def test_11_salvaguarda_iris_exclusiva_reg_no_llame(self):
         """
         Verifica que la regla 'IRIS primero' aplica estrictamente a queue_registro_no_llame

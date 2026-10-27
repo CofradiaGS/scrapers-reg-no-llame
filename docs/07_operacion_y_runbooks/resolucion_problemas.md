@@ -167,7 +167,7 @@ Ante cualquier eventualidad crítica en el entorno de producción, seguir este p
 * Tareas procesadas exitosamente en local figuran en el VPS con `estado = 'pendiente'` y `resultado = NULL` debido a scripts externos de recuperación o reseteos manuales nocturnos.
 
 ### 7.2. Procedimiento de Reconciliación (Runbook)
-Ejecutar el script industrial de rescate [`scripts/reconciliar_dia15_vps.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/scripts/reconciliar_dia15_vps.py):
+Ejecutar el script industrial de rescate [`scripts/reconciliar_dia15_vps.py`](file:///c:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/scripts/reconciliar_dia15_vps.py):
 
 ```powershell
 # Reconciliar una fecha específica (por defecto 2026-10-15) en lotes atómicos de 2.500

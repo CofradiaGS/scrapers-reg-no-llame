@@ -9,11 +9,12 @@ class Prioridad(IntEnum):
     """
     Niveles de prioridad de consumo de líneas telefónicas.
     P1: AMBA (11) y Mendoza completa
-    P2: Sur / Patagonia
+    P2: Resto de Cuyo (San Juan, San Luis, La Rioja)
     P3: Resto del país
     """
     P1_AMBA_MENDOZA = 1
-    P2_SUR_PATAGONIA = 2
+    P2_CUYO = 2
+    P2_SUR_PATAGONIA = 2  # Alias retrocompatible
     P3_RESTO = 3
 
     @classmethod
@@ -27,7 +28,7 @@ class Prioridad(IntEnum):
     def descripcion(self) -> str:
         desc = {
             1: "P1 (11 / Mendoza)",
-            2: "P2 (Sur / Patagonia)",
+            2: "P2 (Resto de Cuyo)",
             3: "P3 (Resto del País)"
         }
         return desc.get(self.value, "Desconocida")

@@ -25,6 +25,22 @@ from core.domain.entities import Linea, RegistroCola, Prioridad, EstadoRegistro
 
 logger = logging.getLogger("SQLiteStagingAdapter")
 
+# Rangos y expresiones de prioridad geográfica para SQLite local
+P1_SQL_COND = "(numero_de_linea LIKE '11%' OR numero_de_linea LIKE '260%' OR numero_de_linea LIKE '261%' OR numero_de_linea LIKE '262%' OR numero_de_linea LIKE '263%')"
+P2_SQL_COND = "(numero_de_linea LIKE '264%' OR numero_de_linea LIKE '265%' OR numero_de_linea LIKE '266%' OR numero_de_linea LIKE '380%' OR numero_de_linea LIKE '382%')"
+P3_SQL_COND = f"NOT ({P1_SQL_COND} OR {P2_SQL_COND})"
+
+ORDER_BY_PRIORIDAD = f"""
+    ORDER BY 
+        CASE 
+            WHEN {P1_SQL_COND} THEN 1
+            WHEN {P2_SQL_COND} THEN 2
+            ELSE 3
+        END ASC,
+        (dni IS NOT NULL AND dni != '') DESC,
+        id_vps ASC
+"""
+
 
 class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
     """Adaptador de persistencia local en SQLite (WAL) para Staging Offline-First."""
@@ -168,14 +184,28 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
 
             cond_active = "AND (active IS NULL OR active = 0)" if self.tipo_cola == "registro_no_llame" else ""
 
+            cond_prio = ""
+            if prioridad == 1:
+                cond_prio = f"AND {P1_SQL_COND}"
+            elif prioridad == 2:
+                cond_prio = f"AND {P2_SQL_COND}"
+            elif prioridad == 3:
+                cond_prio = f"AND {P3_SQL_COND}"
+
             if canon in ("enacom_web", "scraper_enacom"):
                 cursor = conn.execute(f"""
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
+<<<<<<< Updated upstream
                     WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
                       AND scraper_actual IN ('enacom_web', 'scraper_enacom')
                     ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
+=======
+                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active} {cond_prio}
+                      AND scraper_actual IN ('enacom_web', 'scraper_enacom', 'enacom')
+                    {ORDER_BY_PRIORIDAD}
+>>>>>>> Stashed changes
                     LIMIT ?;
                 """, [self.tipo_cola] + params_auto + [batch_size])
             elif canon == "telcos":
@@ -231,12 +261,26 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                 if "active" in f.keys() and f["active"] is not None:
                     active_val = bool(f["active"])
 
+                if canon in ("enacom_web", "scraper_enacom"):
+                    if num_linea.startswith(('11', '260', '261', '262', '263')):
+                        prio_enum = Prioridad.P1_AMBA_MENDOZA
+                        prio_nom = "P1 (11 / Mendoza)"
+                    elif num_linea.startswith(('264', '265', '266', '380', '382')):
+                        prio_enum = Prioridad.P2_CUYO
+                        prio_nom = "P2 (Resto de Cuyo)"
+                    else:
+                        prio_enum = Prioridad.P3_RESTO
+                        prio_nom = "P3 (Resto del País)"
+                else:
+                    prio_enum = Prioridad.P2_SUR_PATAGONIA
+                    prio_nom = "P2 (Staging Local)"
+
                 linea_ent = Linea(ani=num_linea, dni=dni_val)
                 reg = RegistroCola(
                     id=f["id_vps"],
                     linea=linea_ent,
-                    prioridad=Prioridad.P2_SUR_PATAGONIA,
-                    prioridad_nombre="P2 (Staging Local)",
+                    prioridad=prio_enum,
+                    prioridad_nombre=prio_nom,
                     estado=EstadoRegistro.PROCESANDO,
                     scraper_actual=f["scraper_actual"] or scraper_nombre,
                     fuente=f["fuente"],
@@ -688,27 +732,33 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     canon = "telcos"
                 else:
                     canon = nombre_clean
+                cond_auto = ""
+                params_auto = []
+                if q_type == "cola_automatizacion" and self.auto_id:
+                    cond_auto = "AND auto_id = ?"
+                    params_auto = [self.auto_id]
+
                 cond_active = "AND (active IS NULL OR active = 0)" if q_type == "registro_no_llame" else ""
                 if canon in ("enacom_web", "scraper_enacom"):
                     cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
-                          AND scraper_actual IN ('enacom_web', 'scraper_enacom');
-                    """, (q_type,))
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
+                          AND scraper_actual IN ('enacom_web', 'scraper_enacom', 'enacom');
+                    """, [q_type] + params_auto)
                 elif canon == "telcos":
                     cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active}
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
                           AND scraper_actual IN ('telcos', 'claro', 'personal', 'movistar');
-                    """, (q_type,))
+                    """, [q_type] + params_auto)
                 else:
                     cursor = conn.execute(f"""
                         SELECT COUNT(*) as pendientes
                         FROM tareas_staging
-                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_active} AND scraper_actual = ?;
-                    """, (q_type, canon))
+                        WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active} AND scraper_actual = ?;
+                    """, [q_type] + params_auto + [canon])
             else:
                 cond_active = "AND (active IS NULL OR active = 0)" if q_type == "registro_no_llame" else ""
                 cursor = conn.execute(f"""

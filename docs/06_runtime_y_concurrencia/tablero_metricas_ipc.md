@@ -133,7 +133,16 @@ def _metrics_dashboard_loop(self):
             print(f"  • Estado Red / Conectividad:{status_vpn}")
             print(f"  • Workers en paralelo:      {self.workers_count} slots activos")
             print(f"  • Total procesados:         {total_proc:,} registros | Ritmo: {rpm} reg/min")
+            mostrar_desglose = (
+                any(k in self.scraper_name.lower() for k in ("telco", "enacom", "claro", "personal", "movistar"))
+                or len(stats["por_operador"]) > 0
+            )
             print(f"  • Coincidencias positivas:  {stats['completados']:,}")
+            if mostrar_desglose and stats["completados"] > 0 and stats["por_operador"]:
+                for op_nom, cant in sorted(stats["por_operador"].items(), key=lambda x: x[1], reverse=True):
+                    if cant > 0:
+                        pct = round((cant / stats['completados']) * 100, 1)
+                        print(f"      - {op_nom + ':':<24} {cant:,} ({pct}%)")
             print(f"  • Sin coincidencias:        {stats['no_coincidencias']:,}")
             print(f"  • Errores controlados:      {stats['errores']:,}")
             print(f"  • Rotaciones preventivas:   {stats['reciclados']:,} relevos anti-leak")
@@ -163,19 +172,24 @@ $$\text{Latencia Promedio} = \frac{1}{K} \sum_{i=1}^{K} \text{latencia}_i \quad 
 
 ## 5. Salida Visual en Consola
 
-Cada 25 segundos, el supervisor imprime la siguiente ficha técnica en la salida estándar (`sys.stdout`):
+Cada 25 segundos, el supervisor imprime la siguiente ficha técnica en la salida estándar (`sys.stdout`) con desglose dinámico porcentual de operadores para scrapers multi-compañía (ENACOM y Telcos):
 
 ```text
 ========================================================================
-📊 TABLERO 24/7 SUPERVISOR INDUSTRIAL | 2026-09-18 21:30:00
-  • Scraper Activo:           IRIS_HTTP (Auto (P1->P2->P3))
-  • Estado Red / Conectividad:VERDE (Operativo)
-  • Workers en paralelo:      9 slots activos
-  • Total procesados:         18,450 registros | Ritmo: 142.5 reg/min
-  • Coincidencias positivas:  4,120
-  • Sin coincidencias:        14,210
-  • Errores controlados:      120
-  • Rotaciones preventivas:   52 relevos anti-leak
-  • Latencia promedio:        0.39s por consulta
+📊 TABLERO 24/7 SUPERVISOR INDUSTRIAL | 2026-10-21 19:44:59
+  • Scraper Activo:           ENACOM (Auto (P1->P2->P3))
+  • Modo Filtrado:            Estándar (TTL 7 días)
+  • Estado Operativo:         VERDE (Operativo)
+  • Workers en paralelo:      6 slots activos
+  • Total procesados:         20 registros | Ritmo: 23.3 reg/min
+  • Coincidencias positivas:  20
+      - Movistar:                12 (60.0%)
+      - Claro:                   5 (25.0%)
+      - Personal:                3 (15.0%)
+  • Sin coincidencias:        0
+  • Errores controlados:      0
+  • Rotaciones preventivas:   0 relevos anti-leak
+  • Latencia promedio:        11.06s por consulta
+  • Buffer en RAM (Binlog):   20/500 en espera (flush cada 300s / hace 51s)
 ========================================================================
 ```

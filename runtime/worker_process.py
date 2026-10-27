@@ -161,7 +161,8 @@ def worker_lifecycle_process(
                 "slot": worker_slot,
                 "scraper": scraper_name,
                 "operador": operador,
-                "latency": lat
+                "latency": lat,
+                "intentos": item.get("intentos", 1)
             })
 
             if status == "coincidencia":

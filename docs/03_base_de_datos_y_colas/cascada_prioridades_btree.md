@@ -1,4 +1,4 @@
-﻿# Cascada de Prioridades B-Tree Geográfica
+# Cascada de Prioridades B-Tree Geográfica
 
 Este documento documenta la estrategia de consumo por prioridades geográficas implementada en [`MySQLQueueAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L25-L35), detallando los rangos numéricos B-Tree sobre el número telefónico (`ani`), el algoritmo de cascada con penalización temporal (`backoff`), y su correlación con la numeración de telecomunicaciones en Argentina.
 
@@ -9,25 +9,33 @@ Este documento documenta la estrategia de consumo por prioridades geográficas i
 Las líneas telefónicas argentinas cuentan con 10 dígitos (código de área sin prefijo 0 + número local sin prefijo 15). Al almacenar el ANI como `BIGINT UNSIGNED`, las consultas aprovechan comparaciones matemáticas en árbol B-Tree mediante operadores `BETWEEN`, evitando operaciones costosas con cadenas (`LIKE '11%'` o `SUBSTRING`):
 
 ```python
-# Rangos numéricos B-Tree sobre columna ani (BIGINT de 10 dígitos)
+# Rangos numéricos B-Tree sobre columna ani (BIGINT de 10 dígitos) - MySQL VPS (IRIS)
 SQL_RANGE_P1 = "((ani BETWEEN 1100000000 AND 1199999999) OR (ani BETWEEN 2600000000 AND 2639999999))"
 SQL_RANGE_P2 = "((ani BETWEEN 2800000000 AND 2809999999) OR (ani BETWEEN 2900000000 AND 2999999999))"
-SQL_RANGE_P3 = f"NOT ({SQL_RANGE_P1} OR {SQL_RANGE_P2})"
+SQL_RANGE_P3 = f"(ani BETWEEN 1000000000 AND 9999999999) AND NOT ({SQL_RANGE_P1} OR {SQL_RANGE_P2})"
 ```
 
 ### Detalle de Prioridades y Cobertura Territorial
 
+#### A. Cola VPS Central (`queue_registro_no_llame` - IRIS)
 | Prioridad | Nombre / Nivel | Filtro SQL / Rangos de ANI | Zonas Geográficas Cubiertas | Justificación de Negocio |
 | :--- | :--- | :--- | :--- | :--- |
 | **P1** | `P1 (11 / Mendoza)` | `1100000000` - `1199999999`<br>`2600000000` - `2639999999` | **AMBA**: CABA y Gran Buenos Aires (11).<br>**Mendoza**: Capital/Gran Mendoza (261), San Rafael (260), San Martín/Este (263). | Mayor volumen comercial, mayor tasa de conversión en portabilidades numéricas y contacto. |
-| **P2** | `P2 (Sur / Patagonia)` | `2800000000` - `2809999999`<br>`2900000000` - `2999999999` | **Patagonia y Región Sur**: Rawson/Trelew/Pto. Madryn (280), Neuquén/Río Negro (299), Bariloche (294), Comodoro Rivadavia (297), Bahía Blanca (291), Río Gallegos/Tierra del Fuego (2966/2901). | Segmento estratégico de alto ticket promedio en telecomunicaciones fijas y móviles. |
+| **P2** | `P2 (Sur / Patagonia)` | `2800000000` - `2809999999`<br>`2900000000` - `2999999999` | **Patagonia y Región Sur**: Rawson/Trelew/Pto. Madryn (280), Neuquén/Río Negro (299), Bariloche (294), Comodoro Rivadavia (297), Bahía Blanca (291), Río Gallegos/Tierra del Fuego (2966/2901). | Segmento estratégico de alto ticket promedio en telecomunicaciones fijas y móviles para IRIS. |
 | **P3** | `P3 (Resto del País)` | Complemento booleano:<br>`NOT (P1 OR P2)` | Córdoba (351), Rosario/Santa Fe (341/342), Tucumán (381), Salta, Corrientes, Entre Ríos y demás áreas del interior. | Consumo continuo de fondo sin saturar las colas principales. |
+
+#### B. Cola Staging Local Especializada (`tareas_staging` - Scraper ENACOM)
+Para el scraper ENACOM, [`SQLiteStagingAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py#L25-L40) especializa la prioridad según la distribución de clientes de la operación:
+- **P1**: AMBA (`11`) y Mendoza completa (`260`, `261`, `262`, `263`).
+- **P2**: **Resto de Cuyo**: San Juan (`264`), San Luis (`265`, `266`) y La Rioja (`380`, `382`).
+- **P3**: Resto del País.
+*(Los scrapers Telcos e IRIS en staging local mantienen su consumo optimizado por presencia de DNI).*
 
 ---
 
 ## 2. Configuración y Mapeo con el Dominio
 
-En el código fuente, la configuración se asocia al enum de dominio [`Prioridad`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/enums.py#L8-L17) mediante el diccionario [`PRIORIDADES_CONFIG`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34):
+En el código fuente de [`MySQLQueueAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34), la configuración se asocia al enum de dominio [`Prioridad`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/enums.py#L8-L18):
 
 ```python
 PRIORIDADES_CONFIG = {

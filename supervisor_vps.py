@@ -35,6 +35,11 @@ if sys.stderr.encoding != 'utf-8':
 if hasattr(multiprocessing, "set_executable"):
     multiprocessing.set_executable(sys.executable)
 
+# En procesos hijos spawn, ignorar SIGINT de inmediato para evitar KeyboardInterrupt ruidosos al detener el supervisor
+if multiprocessing.current_process().name != 'MainProcess':
+    import signal
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
 PROJECT_ROOT = Path(__file__).parent.resolve()
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -86,7 +91,7 @@ def main():
     parser = argparse.ArgumentParser(description="Supervisor Industrial 24/7 Multi-Scraper VPS")
     parser.add_argument("--scraper", type=str, default=None, help="Scraper a ejecutar (ej: iris, iris_http, iris_browser, datuar, claro, movistar, personal). Por defecto se deduce de --engine.")
     parser.add_argument("--engine", choices=["browser", "http"], default="http", help="Motor de extracción para IRIS: 'http' (HTTP Puro Ultrarrápido, default: http) o 'browser' (Chromium Playwright)")
-    parser.add_argument("--prioridad", choices=["auto", "1", "2", "3"], default="auto", help="Estrategia de priorización: 'auto' (cascada P1 -> P2 -> P3), '1' (Solo 11 y Mendoza), '2' (Solo Sur), '3' (Solo Resto)")
+    parser.add_argument("--prioridad", choices=["auto", "1", "2", "3"], default="auto", help="Estrategia de priorización: 'auto' (cascada P1 -> P2 -> P3), '1' (Solo 11 y Mendoza), '2' (Solo Resto de Cuyo), '3' (Solo Resto)")
     parser.add_argument("--workers", type=int, default=9, help="Cantidad de workers concurrentes (default: 9)")
     parser.add_argument("--batch-size", type=int, default=50, help="Tamaño de lote por reclamo en VPS (default: 50)")
     parser.add_argument("--buffer-size", type=int, default=getattr(config, "BUFFER_FLUSH_SIZE", 500), help="Cantidad de registros acumulados en RAM antes de flush atómico (default: 500)")
