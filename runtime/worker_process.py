@@ -131,12 +131,14 @@ def worker_lifecycle_process(
         w_log.debug(f"[{worker_tag}] Sesión activa. Iniciando consumo continuo de cola.")
 
         # 4. Inyección de dependencias en el Caso de Uso de Aplicación
+        # El bloque local 'enacom' (EnacomBlockAdapter) solo se suma cuando el registro pasa por IRIS.
         enacom_adapter = None
-        try:
-            from adapters.enacom.enacom_adapter import EnacomBlockAdapter
-            enacom_adapter = EnacomBlockAdapter()
-        except Exception as e_enacom:
-            w_log.warning(f"[{worker_tag}] No se pudo inicializar EnacomBlockAdapter: {e_enacom}")
+        if "iris" in scraper_name.lower():
+            try:
+                from adapters.enacom.enacom_adapter import EnacomBlockAdapter
+                enacom_adapter = EnacomBlockAdapter()
+            except Exception as e_enacom:
+                w_log.warning(f"[{worker_tag}] No se pudo inicializar EnacomBlockAdapter: {e_enacom}")
 
         cadena_worker = None
         use_case = ProcesarLoteUseCase(

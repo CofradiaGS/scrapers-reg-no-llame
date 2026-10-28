@@ -82,7 +82,7 @@ A diferencia de los motores de enriquecimiento, los scrapers de operadoras comer
 
 ## 3. Implementación en Código de Dominio y Ventana Temporal (TTL 7 Días)
 
-La lógica de esta regla reside en la clase [`ReglaPipeline`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
+La lógica de esta regla reside en la clase [`ReglaPipeline`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py):
 
 ```python
 class ReglaPipeline:
@@ -221,9 +221,9 @@ Garantizar que los workers de compañías auditen **exclusivamente registros sin
 
 ## 5. Fusión Acumulativa de Datos JSON (`datos_json`)
 
-A medida que una línea recorre los distintos eslabones de la cadena, cada scraper encapsula sus datos bajo su propia clave (*namespace*) llamando a [`resultado.to_namespace_dict()`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L97-L111).
+A medida que una línea recorre los distintos eslabones de la cadena, cada scraper encapsula sus datos bajo su propia clave (*namespace*) llamando a [`resultado.to_namespace_dict()`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/entities.py#L97-L111).
 
-El caso de uso [`ProcesarLoteUseCase`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L81-L84) toma el diccionario existente en la base de datos y ejecuta:
+El caso de uso [`ProcesarLoteUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py#L81-L84) toma el diccionario existente en la base de datos y ejecuta:
 ```python
 datos_acumulados = dict(reg.datos_existentes or {})
 datos_acumulados.update(resultado.to_namespace_dict())
@@ -336,7 +336,7 @@ WHERE fuente LIKE '%"iris"%'
 ---
 
 ## 7. Referencias Cruzadas
-- [Regla del Pipeline en Dominio](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
-- [Caso de Uso: Procesar Lote](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
-- [Entidades y Value Objects de Dominio](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
+- [Regla del Pipeline en Dominio](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/regla_pipeline_dominio.md)
+- [Caso de Uso: Procesar Lote](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/caso_uso_procesar_lote.md)
+- [Entidades y Value Objects de Dominio](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/docs/02_dominio_y_casos_de_uso/entidades_y_value_objects.md)
 - [Esquema de Base de Datos y Colas](../03_base_de_datos_y_colas/esquema_ddl_vps.md)

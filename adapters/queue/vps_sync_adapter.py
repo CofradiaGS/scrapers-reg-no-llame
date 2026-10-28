@@ -701,6 +701,9 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         res_dict = {}
                     if isinstance(res_dict, dict) and "iris" in res_dict:
                         res_dict = self._formatear_iris_cola_auto(res_dict)
+                    elif isinstance(res_dict, dict) and "enacom" in res_dict:
+                        # El bloque local 'enacom' solo debe incluirse cuando el registro pasa por IRIS
+                        res_dict = {k: v for k, v in res_dict.items() if k != "enacom"}
                     res_str = json.dumps(res_dict, ensure_ascii=False) if res_dict else "{}"
 
                     err = item.get("error_msg")

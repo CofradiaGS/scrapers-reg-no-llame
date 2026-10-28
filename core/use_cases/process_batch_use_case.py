@@ -125,8 +125,9 @@ class ProcesarLoteUseCase:
                     except Exception:
                         datos_previos = {}
 
-                # Enriquecimiento determinista de bloque oficial ENACOM si no existe previamente
-                if self.operator_lookup and "enacom" not in datos_previos:
+                # Enriquecimiento determinista de bloque oficial ENACOM (exclusivo cuando pasa por IRIS)
+                es_iris = "iris" in self.scraper.nombre.lower()
+                if self.operator_lookup and es_iris and "enacom" not in datos_previos:
                     enacom_data = self.operator_lookup.consultar_bloque(reg.linea.ani)
                     if enacom_data:
                         datos_previos["enacom"] = enacom_data.to_dict()

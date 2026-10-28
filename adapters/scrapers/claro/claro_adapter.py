@@ -337,7 +337,7 @@ class ClaroAdapter(BaseScraperAdapter):
                 # Ante HTTP 418/419 (WAF Bot Challenge), 403/429 (Rate Limit), 5xx o Timeouts/Red
                 TOTAL_REINTENTOS = 3
                 MAX_INTENTOS = 1 + TOTAL_REINTENTOS
-                req_timeout = (18.0, 15.0) if self.use_tor else self.timeout
+                req_timeout = (12.0, 10.0) if self.use_tor else self.timeout
                 resp = None
                 ultimo_error = None
 
@@ -384,27 +384,20 @@ class ClaroAdapter(BaseScraperAdapter):
                         ultimo_error = str(net_err)
                         if intento < MAX_INTENTOS:
                             backoff_sec = 1.0 * intento + random.uniform(0.1, 0.4)
-                            if intento >= 2 and self.use_tor:
+                            if self.use_tor:
                                 logger.warning(
-                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout persistente en Claro vía Tor ({net_err}). "
-                                    f"Renovando circuito Tor aislado y reintentando tras pausa de {backoff_sec:.1f}s..."
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Claro ({net_err}). "
+                                    f"Renovando circuito Tor y reintentando tras pausa de {backoff_sec:.1f}s..."
                                 )
                                 self._rotar_circuito_instantaneo()
-                            elif self.use_tor:
-                                logger.warning(
-                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Claro vía Tor ({net_err}). "
-                                    f"Reintentando en canal Tor tras pausa de {backoff_sec:.1f}s..."
-                                )
                             else:
                                 logger.warning(
-                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Error de red directo en Claro ({net_err}). "
-                                    f"Esperando {backoff_sec:.1f}s..."
+                                    f"⚠️ [REINTENTO {intento}/{TOTAL_REINTENTOS}] Latencia/Timeout en Claro ({net_err}). "
+                                    f"Reintentando tras pausa de {backoff_sec:.1f}s..."
                                 )
                             time.sleep(backoff_sec)
                             continue
                         else:
-                            if self.use_tor:
-                                self._rotar_circuito_instantaneo()
                             raise ScraperTransientError(
                                 f"Error de red/timeout en ClaroAdapter tras {TOTAL_REINTENTOS} reintentos Tor: {ultimo_error}"
                             )

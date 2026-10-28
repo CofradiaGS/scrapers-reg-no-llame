@@ -6,7 +6,7 @@ Este documento especifica el diseño, la base matemática, la integración hexag
 
 ## 1. Propósito y Filosofía del Motor
 
-A diferencia de los motores de scraping tradicionales basados en red ([`IrisHttpAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) o pasarelas de pago Cobro Express), el motor ENACOM es un **enriquecedor estático, determinista y de latencia cero**:
+A diferencia de los motores de scraping tradicionales basados en red ([`IrisHttpAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/iris/iris_http_adapter.py) o pasarelas de pago Cobro Express), el motor ENACOM es un **enriquecedor estático, determinista y de latencia cero**:
 - **100% Fuera de Línea (Offline)**: No realiza peticiones HTTP, no consume proxies ni resuelve captchas.
 - **Rendimiento Industrial**: Carga en memoria RAM en **~80 milisegundos** y resuelve a más de **1.000.000 de consultas por segundo**.
 - **Fidelidad Matemática Total**: Basado en el registro oficial consolidado de **48.903 bloques de numeración** otorgados por el Estado Nacional Argentino mediante la Secretaría de Comunicaciones (SC), Comisión Nacional de Comunicaciones (CNC) y ENACOM.
@@ -48,7 +48,7 @@ flowchart TD
 ```
 
 ### 2.1. Contrato del Puerto (`IOperatorLookupPort`)
-Definido en [`core/ports/operator_lookup_port.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/ports/operator_lookup_port.py):
+Definido en [`core/ports/operator_lookup_port.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/ports/operator_lookup_port.py):
 ```python
 class IOperatorLookupPort(ABC):
     @abstractmethod
@@ -60,7 +60,7 @@ class IOperatorLookupPort(ABC):
 ```
 
 ### 2.2. Adaptador Concreto (`EnacomBlockAdapter`)
-Implementado en [`adapters/enacom/enacom_adapter.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/enacom/enacom_adapter.py):
+Implementado en [`adapters/enacom/enacom_adapter.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/enacom/enacom_adapter.py):
 - Implementa resolución jerárquica por longitud de prefijo descendente `(8, 7, 6)`.
 - Diccionario maestro con los **300 indicativos telefónicos de la República Argentina** mapeados a sus respectivas provincias.
 - Normalización canónica de razones sociales oficiales hacia las marcas comerciales (`Telecom Argentina` ➔ `Personal`, `Telefónica/CRM` ➔ `Movistar`, `AMX Argentina` ➔ `Claro`, `Telecentro`).
@@ -159,10 +159,13 @@ El método `consultar_bloque_dict` evalúa el ANI únicamente sobre longitudes d
 
 ## 5. Modos de Operación
 
-### 5.1. Modo JIT (Just-In-Time) en el Runtime Concurrente
-Integrado automáticamente en [`ProcesarLoteUseCase.ejecutar_lote`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py):
-- Cuando un subproceso worker en [`worker_process.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py) reclama un lote, verifica si `datos_json["enacom"]` ya existe.
-- Si no está presente, resuelve el bloque en memoria (**0.0001 segundos**) y lo incorpora de forma acumulativa antes de persistir los resultados.
+### 5.1. Modo JIT (Just-In-Time) en el Runtime Concurrente (Exclusivo para IRIS)
+Integrado automáticamente en [`ProcesarLoteUseCase.ejecutar_lote`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py):
+- **Diferenciación entre `enacom` y `scraper_enacom`**:
+  - `enacom` corresponde a este motor estático local en Python ([`EnacomBlockAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/enacom/enacom_adapter.py)).
+  - `scraper_enacom` corresponde al scraper web en vivo ([`EnacomWebAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/enacom_web/enacom_web_adapter.py)) que resuelve captcha OCR en el portal de ENACOM.
+- **Alcance Exclusivo para IRIS**: Tanto en [`worker_process.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/runtime/worker_process.py) como en [`ProcesarLoteUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py), [`ColaAutomatizacionAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/cola_automatizacion_adapter.py) y [`VPSSyncAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py), el bloque local `datos_json["enacom"]` se suma **únicamente cuando el registro pasa por IRIS** (`iris`, `iris_http`, `iris_browser` o `auto_id = 'iris_scraper'`).
+- Si un registro pasa por cualquier otro `auto_id` o scraper independiente (`scraper_cobro_express`, `scraper_enacom`, `datuar`, `cuitonline`, `bcra`, etc.), **no** se inyecta ni persiste el bloque `enacom` local.
 
 ### 5.2. Modo Enriquecimiento Masivo por Lotes de Alta Velocidad (`scripts/enrich_enacom.py`)
 Cuando la base de datos se encuentra en reposo, es posible barrer masivamente los 3.1 millones de líneas con transacciones atómicas agrupadas:

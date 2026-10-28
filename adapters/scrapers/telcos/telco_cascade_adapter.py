@@ -8,7 +8,7 @@ Ejecuta el flujo de extracción en cascada con cortocircuito:
 2. Personal: si Claro dio sin coincidencia (o no había DNI). Si da COINCIDENCIA ➔ corta y finaliza.
 3. Movistar: si Personal dio sin coincidencia. Si da COINCIDENCIA ➔ corta y finaliza.
 4. Sin coincidencias: si ninguna operadora halló deuda, retorna SIN_COINCIDENCIA
-   consolidando los 3 resultados y el bloque oficial ENACOM.
+   consolidando los 3 resultados.
 """
 import time
 import logging
@@ -112,7 +112,7 @@ class TelcoCascadeAdapter(BaseScraperAdapter):
         """
         Ejecuta la cascada con cortocircuito:
         Claro (si DNI) ➔ Personal ➔ Movistar ➔ Sin coincidencias.
-        Enriquece determinísticamente el bloque ENACOM y acumula la historia completa.
+        Acumula la historia completa de las compañías consultadas.
         """
         self._validar_horario()
 

@@ -132,5 +132,48 @@ class TestEnacomBlockAdapter(unittest.TestCase):
         self.assertEqual(rec["datos_json"]["enacom"]["operador_origen"], "Personal")
         self.assertEqual(rec["datos_json"]["enacom"]["provincia_origen"], "Salta")
 
+    def test_08_non_iris_scraper_does_not_enrich_local_enacom(self):
+        """Verifica que ningún otro scraper distinto de IRIS agregue el bloque local 'enacom'."""
+        from adapters.queue.memory_adapter import MemoryQueueAdapter
+        from core.use_cases.process_batch_use_case import ProcesarLoteUseCase
+        from core.domain.entities import ScrapeResult
+        from core.domain.enums import StatusScraping
+        from unittest.mock import MagicMock
+
+        cola = MemoryQueueAdapter(initial_records=[{
+            "id": 102,
+            "ani": "3876858008",
+            "dni": "30111222",
+            "prioridad": 1,
+            "estado": "pendiente",
+            "scraper_actual": "telcos",
+            "tipo_cola": "cola_automatizacion",
+            "fuente": "[]",
+            "datos_json": {}
+        }])
+
+        mock_scraper = MagicMock()
+        mock_scraper.nombre = "telcos"
+        mock_scraper.consultar_linea.return_value = ScrapeResult(
+            ani="3876858008",
+            status=StatusScraping.COINCIDENCIA,
+            fuente_scraper="claro",
+            operador="Claro",
+            descripcion="Deuda Claro"
+        )
+
+        use_case = ProcesarLoteUseCase(
+            cola_repo=cola,
+            scraper_engine=mock_scraper,
+            operator_lookup=self.adapter
+        )
+
+        procesados, _ = use_case.ejecutar_lote(batch_size=1)
+        self.assertEqual(procesados, 1)
+
+        rec = cola.records[102]
+        self.assertNotIn("enacom", rec["datos_json"])
+        self.assertIn("claro", rec["datos_json"])
+
 if __name__ == "__main__":
     unittest.main()

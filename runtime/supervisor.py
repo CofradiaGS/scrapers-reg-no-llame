@@ -1042,6 +1042,7 @@ class SupervisorIndustrial:
             elif self.scraper_kwargs.get("use_tor", config.TOR_ENABLED):
                 import math
                 from adapters.network.tor_controller import TorController
+<<<<<<< Updated upstream
                 workers_per_port = int(getattr(config, "WORKERS_PER_TOR_PORT", 3))
                 needed_tor_instances = max(1, math.ceil(self.workers_count / workers_per_port))
                 logger.info(
@@ -1060,6 +1061,44 @@ class SupervisorIndustrial:
                         f"✅ [SUPERVISOR] Pool de Tor 100% operativo ({len(tor_pool)} instancias). "
                         "Propagando tor_external_daemon=True a workers."
                     )
+=======
+                num_tor_daemons = min(4, max(1, (self.workers_count + 7) // 8)) if self.workers_count >= 15 else 1
+                self.tor_daemons = []
+                base_socks = int(config.TOR_SOCKS_PORT_BASE)
+                base_ctrl = int(config.TOR_CONTROL_PORT_BASE)
+
+                if num_tor_daemons > 1:
+                    logger.info(f"🧅 [SUPERVISOR] Inicializando pool Tor Multi-Instancia ({num_tor_daemons} daemons) para {self.workers_count} workers...")
+                    from concurrent.futures import ThreadPoolExecutor
+                    def _init_daemon(idx: int):
+                        p_socks = base_socks + (idx * 2)
+                        p_ctrl = base_ctrl + (idx * 2)
+                        daemon = TorController(socks_port=p_socks, control_port=p_ctrl, is_owner=True)
+                        if daemon.ensure_running(timeout_sec=180):
+                            return daemon
+                        logger.warning(f"⚠️ No se pudo inicializar instancia Tor en puerto {p_socks}.")
+                        return None
+
+                    with ThreadPoolExecutor(max_workers=num_tor_daemons) as executor:
+                        results = list(executor.map(_init_daemon, range(num_tor_daemons)))
+                    self.tor_daemons = [d for d in results if d is not None]
+                    TorController._cached_alive_ports = []
+                    alive = TorController.get_alive_tor_ports()
+                    logger.info(f"✅ [SUPERVISOR] Pool Tor multi-instancia activo con {len(alive)} puertos SOCKS: {alive}")
+                else:
+                    tor_daemon = TorController(
+                        socks_port=base_socks,
+                        control_port=base_ctrl,
+                        is_owner=True
+                    )
+                    self.tor_daemons.append(tor_daemon)
+                    logger.info("🧅 [SUPERVISOR] Verificando y asegurando demonio Tor único compartido (Stream Isolation)...")
+                    if not tor_daemon.ensure_running(timeout_sec=180):
+                        logger.error("❌ [SUPERVISOR] No se pudo completar el bootstrap de Tor centralizado.")
+                    else:
+                        logger.info("✅ [SUPERVISOR] Demonio Tor centralizado 100% operativo. Propagando tor_external_daemon=True a workers.")
+
+>>>>>>> Stashed changes
                 self.scraper_kwargs["tor_external_daemon"] = True
                 use_tor_pool = True
 
@@ -1145,10 +1184,20 @@ class SupervisorIndustrial:
         self._dispatcher_stop.set()
         disp_thread.join(timeout=5.0)
 
+<<<<<<< Updated upstream
         if use_tor_pool:
             logger.info("🧅 Deteniendo pool multi-instancia de Tor...")
             from adapters.network.tor_controller import TorController
             TorController.stop_pool()
+=======
+        if hasattr(self, "tor_daemons") and self.tor_daemons:
+            logger.info(f"🧅 Deteniendo {len(self.tor_daemons)} demonios Tor compartidos...")
+            for td in self.tor_daemons:
+                td.stop()
+        elif tor_daemon is not None:
+            logger.info("🧅 Deteniendo demonio Tor compartido...")
+            tor_daemon.stop()
+>>>>>>> Stashed changes
 
         print("\n" + "*" * 75)
         print("🏁 Supervisión 24/7 finalizada ordenadamente. Base de datos protegida.")

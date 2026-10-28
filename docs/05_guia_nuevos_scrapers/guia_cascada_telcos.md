@@ -2,9 +2,9 @@
 
 > **Capa 05: Guía de Nuevos Scrapers** | Adaptador Compuesto `TelcoCascadeAdapter`
 
-El adaptador [`TelcoCascadeAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/telcos/telco_cascade_adapter.py) orquesta la resolución secuencial de líneas exclusivamente en las tres principales compañías telefónicas de Argentina (Claro, Personal y Movistar), aplicando la regla innegociable de cortocircuito (*short-circuit*).
+El adaptador [`TelcoCascadeAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/telcos/telco_cascade_adapter.py) orquesta la resolución secuencial de líneas exclusivamente en las tres principales compañías telefónicas de Argentina (Claro, Personal y Movistar), aplicando la regla innegociable de cortocircuito (*short-circuit*).
 
-Está registrado en [`ScraperRegistry`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo los alias:
+Está registrado en [`ScraperRegistry`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/registry.py) bajo los alias:
 - `'telcos'` (alias principal)
 - `'telco_cascade'`
 - `'claro_personal_movistar'`
@@ -118,19 +118,19 @@ En caso de no coincidencia en ninguna telco (con DNI disponible):
 
 Para materializar esta estrategia sin degradar el rendimiento del motor de base de datos, se implementó una reserva optimizada en 3 componentes:
 
-1. **`MySQLQueueAdapter` ([`adapters/queue/mysql_vps_adapter.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py))**:
+1. **`MySQLQueueAdapter` ([`adapters/queue/mysql_vps_adapter.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py))**:
    - Al invocar `reservar_lote()` con `canon == "telcos"`, ejecuta primero una consulta indexada con `AND (dni IS NOT NULL AND dni != '')` bajo `FOR UPDATE SKIP LOCKED`.
    - Si la cantidad obtenida es menor al `batch_size`, complementa el remanente con una segunda consulta con `AND (dni IS NULL OR dni = '')`. Esto evita un costoso `filesort` sobre millones de registros y mantiene el tiempo de reserva por debajo de 0.6s.
-2. **`VpsSyncAdapter` ([`adapters/queue/vps_sync_adapter.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py))**:
+2. **`VpsSyncAdapter` ([`adapters/queue/vps_sync_adapter.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/vps_sync_adapter.py))**:
    - En la sincronización de staging (`descargar_lote_vps()`), si el scraper es `"telcos"`, reclama primero hasta el límite registros con DNI, y completa con registros sin DNI solo si no llena el cupo.
-3. **`SQLiteStagingAdapter` ([`adapters/queue/sqlite_staging_adapter.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py))**:
+3. **`SQLiteStagingAdapter` ([`adapters/queue/sqlite_staging_adapter.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/sqlite_staging_adapter.py))**:
    - En SQLite local, `reservar_lote()` para Telcos ordena por `(dni IS NOT NULL AND dni != '') DESC, id_vps ASC`, garantizando que los workers consuman en RAM primero todas las líneas con DNI.
 
 ---
 
 ## 5. Política de Resiliencia y 3 Reintentos ante Bloqueos WAF
 
-Para evitar falsos positivos de finalización por rate-limiting o desafíos bot de la pasarela de Cobro Express (`pagosce.cobroexpress.com.ar`), los adaptadores [`ClaroAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py), [`PersonalAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) y [`MovistarAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) aplican un ciclo unificado de **3 reintentos automáticos** (hasta 4 intentos en total):
+Para evitar falsos positivos de finalización por rate-limiting o desafíos bot de la pasarela de Cobro Express (`pagosce.cobroexpress.com.ar`), los adaptadores [`ClaroAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/claro/claro_adapter.py), [`PersonalAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/personal/personal_adapter.py) y [`MovistarAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/scrapers/movistar/movistar_adapter.py) aplican un ciclo unificado de **3 reintentos automáticos** (hasta 4 intentos en total):
 
 1. **Disparadores de Reintento**:
    - Bloqueo WAF / Desafío Bot: `HTTP 418` (*I'm a teapot*) o `HTTP 419`.
@@ -141,8 +141,8 @@ Para evitar falsos positivos de finalización por rate-limiting o desafíos bot 
    - **Rotación Forzada de Circuito Tor**: Emisión de señal reactiva `SIGNAL NEWNYM` para obtener una nueva IP de salida.
    - **Backoff Progresivo**: Pausa incremental (`1.0s` en el 1°, `2.0s` en el 2°, `3.0s` en el 3°).
 3. **Comportamiento ante Agotamiento de Reintentos**:
-   - Si tras los 3 reintentos persiste el bloqueo de red, el adaptador eleva [`ScraperTransientError`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py).
-   - En [`ProcessBatchUseCase`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py), esta excepción interrumpe el lote y revierte los registros a estado `pendiente` en SQLite local, garantizando que **jamás se marque como completada ni se queme en el CRM una línea afectada por caídas de infraestructura**.
+   - Si tras los 3 reintentos persiste el bloqueo de red, el adaptador eleva [`ScraperTransientError`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py).
+   - En [`ProcessBatchUseCase`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/use_cases/process_batch_use_case.py), esta excepción interrumpe el lote y revierte los registros a estado `pendiente` en SQLite local, garantizando que **jamás se marque como completada ni se queme en el CRM una línea afectada por caídas de infraestructura**.
 
 ---
 

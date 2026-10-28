@@ -317,19 +317,22 @@ class ColaAutomatizacionAdapter(IColaRepositorioPort):
         resultado_final: Dict[str, Any] = {}
 
         # 2. Bloque ENACOM: recuperar de datos acumulados o consultar EnacomBlockAdapter determinísticamente
-        bloque_enacom = datos_totales.get("enacom")
-        if not bloque_enacom and ani_actual:
-            try:
-                from adapters.enacom.enacom_adapter import EnacomBlockAdapter
-                enacom_adapter = EnacomBlockAdapter()
-                bloque_enacom = enacom_adapter.consultar_bloque_dict(ani_actual)
-            except Exception as e_enacom:
-                logger.debug(f"No se pudo consultar bloque ENACOM para {ani_actual}: {e_enacom}")
+        #    EXCLUSIVO cuando el registro pasa por IRIS (auto_id de IRIS o presencia de bloque iris).
+        es_auto_iris = "iris" in str(self.auto_id or "").lower() or bool(datos_iris)
+        if es_auto_iris:
+            bloque_enacom = datos_totales.get("enacom")
+            if not bloque_enacom and ani_actual:
+                try:
+                    from adapters.enacom.enacom_adapter import EnacomBlockAdapter
+                    enacom_adapter = EnacomBlockAdapter()
+                    bloque_enacom = enacom_adapter.consultar_bloque_dict(ani_actual)
+                except Exception as e_enacom:
+                    logger.debug(f"No se pudo consultar bloque ENACOM para {ani_actual}: {e_enacom}")
 
-        if bloque_enacom:
-            if isinstance(bloque_enacom, dict) and "ultima_modificacion" not in bloque_enacom:
-                bloque_enacom["ultima_modificacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            resultado_final["enacom"] = bloque_enacom
+            if bloque_enacom:
+                if isinstance(bloque_enacom, dict) and "ultima_modificacion" not in bloque_enacom:
+                    bloque_enacom["ultima_modificacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                resultado_final["enacom"] = bloque_enacom
 
         # 3. Registros históricos de operaciones de IRIS agrupados por tipo con ultima_modificacion
         ahora_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

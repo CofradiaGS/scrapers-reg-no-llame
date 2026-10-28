@@ -1,6 +1,6 @@
 # Cascada de Prioridades B-Tree Geográfica
 
-Este documento documenta la estrategia de consumo por prioridades geográficas implementada en [`MySQLQueueAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L25-L35), detallando los rangos numéricos B-Tree sobre el número telefónico (`ani`), el algoritmo de cascada con penalización temporal (`backoff`), y su correlación con la numeración de telecomunicaciones en Argentina.
+Este documento documenta la estrategia de consumo por prioridades geográficas implementada en [`MySQLQueueAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L25-L35), detallando los rangos numéricos B-Tree sobre el número telefónico (`ani`), el algoritmo de cascada con penalización temporal (`backoff`), y su correlación con la numeración de telecomunicaciones en Argentina.
 
 ---
 
@@ -35,7 +35,11 @@ Para el scraper ENACOM, [`SQLiteStagingAdapter`](file:///C:/Users/Usuario/Docume
 
 ## 2. Configuración y Mapeo con el Dominio
 
+<<<<<<< Updated upstream
 En el código fuente de [`MySQLQueueAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34), la configuración se asocia al enum de dominio [`Prioridad`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/enums.py#L8-L18):
+=======
+En el código fuente, la configuración se asocia al enum de dominio [`Prioridad`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/enums.py#L8-L17) mediante el diccionario [`PRIORIDADES_CONFIG`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L30-L34):
+>>>>>>> Stashed changes
 
 ```python
 PRIORIDADES_CONFIG = {
@@ -51,7 +55,7 @@ PRIORIDADES_CONFIG = {
 
 Si el adaptador intentara consultar P1 incondicionalmente en cada ciclo, y la cola P1 estuviera vacía, se generarían cientos de queries vacías por segundo consumiendo ciclos del motor de base de datos. Por otro lado, si P1 tiene millones de filas, P2 y P3 jamás serían procesadas a menos que se regule la asignación.
 
-Para mitigar el costo de búsquedas en colas vacías, [`MySQLQueueAdapter`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L42) implementa un registro interno de agotamiento temporal:
+Para mitigar el costo de búsquedas en colas vacías, [`MySQLQueueAdapter`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/adapters/queue/mysql_vps_adapter.py#L42) implementa un registro interno de agotamiento temporal:
 
 ```python
 self._prio_exhausted_until: Dict[int, float] = {1: 0.0, 2: 0.0}

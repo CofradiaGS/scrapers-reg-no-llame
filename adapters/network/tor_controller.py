@@ -49,8 +49,15 @@ class TorController:
         self.password = password or config.TOR_CONTROL_PASSWORD
         self.tor_path = tor_path or config.TOR_PATH
         self.is_owner = is_owner
+<<<<<<< Updated upstream
         # Aislamiento total de directorios de datos por puerto SOCKS (evita colisiones de lock/estado)
         default_dir = os.path.join(os.getcwd(), "tor_data", f"port_{self.socks_port}")
+=======
+        # Usar tor_data/ raíz cuando hay torrc (el DataDirectory del torrc apunta ahí)
+        # Usar tor_data/port_NNNN solo si no hay torrc (multi-instancia sin torrc)
+        torrc_path = os.path.join(os.getcwd(), "torrc")
+        default_dir = os.path.join(os.getcwd(), "tor_data") if (os.path.exists(torrc_path) and self.socks_port == int(config.TOR_SOCKS_PORT_BASE)) else os.path.join(os.getcwd(), "tor_data", f"port_{self.socks_port}")
+>>>>>>> Stashed changes
         self.data_dir = os.path.abspath(data_dir or default_dir)
         self._process: Optional[subprocess.Popen] = None
 
@@ -438,6 +445,15 @@ class TorController:
             time.sleep(0.5)
 
         if not self.is_port_open(self.control_port):
+            # Auto-recuperación de lock huérfano tras reinicio de PC o caída inesperada
+            lock_path = os.path.join(self.data_dir, "lock")
+            if os.path.exists(lock_path) and not self.is_port_open(self.socks_port):
+                try:
+                    os.remove(lock_path)
+                    logger.info(f"🧹 [TOR CLEANUP] Archivo lock huérfano removido de '{self.data_dir}'.")
+                except Exception:
+                    pass
+
             logger.info(
                 f"Iniciando instancia Tor (SOCKS: {self.socks_port}, Control: {self.control_port}, "
                 f"DataDir: '{self.data_dir}')..."
@@ -487,12 +503,23 @@ class TorController:
                     f.write(f"ControlPort {self.control_port}\n")
                     f.write("CookieAuthentication 0\n")
                     f.write("DormantCanceledByStartup 1\n")
+<<<<<<< Updated upstream
                     f.write(f"CircuitBuildTimeout {circuit_timeout}\n")
                     f.write("KeepalivePeriod 60\n")
                     f.write(f"MaxCircuitDirtiness {circuit_dirtiness}\n")
                     f.write(f"MaxClientCircuitsPending {max_pending}\n")
                     f.write("AvoidDiskWrites 1\n")
                     f.write("ClientOnly 1\n")
+=======
+                    # No restringir ExitNodes a {ar},{cl},{uy},{br}: la pasarela no aplica geo-bloqueo
+                    # y el pool sudamericano (<15 nodos) colapsa por congestión bajo 20 workers paralelos.
+                    # Tampoco forzar NumEntryGuards 8 (provoca estancamiento de handshakes tras reinicios).
+                    f.write("CircuitBuildTimeout 60\n")
+                    f.write("KeepalivePeriod 60\n")
+                    f.write("MaxCircuitDirtiness 300\n")
+                    f.write("MaxClientCircuitsPending 64\n")
+                    f.write("LearnCircuitBuildTimeout 1\n")
+>>>>>>> Stashed changes
 
                 cmd = [self.tor_path, "-f", runtime_torrc]
                 creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0
@@ -529,6 +556,7 @@ class TorController:
                 except Exception:
                     pass
                 logger.info("Conexión al ControlPort establecida. Esperando bootstrap 100%...")
+                stuck_low_ticks = 0
                 while time.time() - t0 < timeout_sec:
                     if not ctrl.is_alive():
                         logger.warning("La conexión con el puerto de control de Tor se interrumpió.")
@@ -542,10 +570,30 @@ class TorController:
                                 break
                         progress = int(progress_str) if progress_str.isdigit() else 0
                         logger.info(f"Bootstrap: {progress}% — {info[:80]}")
+
+                        # Recuperación ante estancamiento temprano por relays viejos
+                        if progress < 25:
+                            stuck_low_ticks += 1
+                            if stuck_low_ticks == 10:  # 20 segundos estancado en <=14%
+                                logger.warning("⚠️ Tor demorado en handshake inicial. Renovando selección de relays...")
+                                try:
+                                    from stem import Signal
+                                    ctrl.signal(Signal.NEWNYM)
+                                except Exception:
+                                    pass
+                        else:
+                            stuck_low_ticks = 0
+
                         if progress >= 100 and self.is_port_open(self.socks_port):
                             logger.info(f"Tor listo y bootstrapped al 100% en {self.get_proxy_url()}.")
-                            self._warmup_circuits()
-                            return True
+                            if self._warmup_circuits():
+                                return True
+                            else:
+                                logger.warning("⚠️ Tor bootstrapped pero warmup inicial falló; esperando 3s para reintentar...")
+                                time.sleep(3.0)
+                                if self._warmup_circuits():
+                                    return True
+                                return True  # Continuar permitiendo que los workers arranquen con sus propios reintentos
                     except Exception as poll_err:
                         logger.debug(f"Poll error (ignorado): {poll_err}")
                         if not ctrl.is_alive():
@@ -557,21 +605,39 @@ class TorController:
         logger.warning(f"Tor no completó bootstrap en {timeout_sec}s.")
         return False
 
-    def _warmup_circuits(self) -> None:
-        """Precalienta el pool de circuitos de Tor antes de admitir tráfico de workers concurrentes."""
-        logger.info("🔥 [TOR WARMUP] Precalentando circuitos iniciales de Tor antes de liberar workers...")
-        t0 = time.time()
+    def _warmup_circuits(self, max_attempts: int = 4) -> bool:
+        """Precalienta y verifica los circuitos iniciales de Tor antes de admitir tráfico de workers concurrentes."""
+        logger.info("🔥 [TOR WARMUP] Precalentando y verificando circuitos de Tor antes de liberar workers...")
+        proxy = self.get_proxy_url()
+        proxies = {"http": proxy, "https": proxy}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+
+        for attempt in range(1, max_attempts + 1):
+            t0 = time.time()
+            try:
+                resp = requests.get(
+                    "https://pagosce.cobroexpress.com.ar",
+                    proxies=proxies,
+                    timeout=(12.0, 8.0),
+                    headers=headers
+                )
+                logger.info(f"✅ [TOR WARMUP] Circuito verificado con éxito (HTTP {resp.status_code}) en {time.time()-t0:.2f}s.")
+                return True
+            except Exception as e:
+                logger.info(f"⏳ [TOR WARMUP] Intento {attempt}/{max_attempts} en espera de circuito de salida ({type(e).__name__}). Pausa de 2.5s...")
+                time.sleep(2.5)
+
+        # Fallback a ipify si Cobro Express tuviera alguna demora transitoria
         try:
-            proxy = self.get_proxy_url()
-            resp = requests.get(
-                "https://pagosce.cobroexpress.com.ar",
-                proxies={"http": proxy, "https": proxy},
-                timeout=(20.0, 10.0),
-                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            )
-            logger.info(f"✅ [TOR WARMUP] Circuito inicial verificado con éxito (HTTP {resp.status_code}) en {time.time()-t0:.2f}s.")
-        except Exception as e:
-            logger.info(f"ℹ️ [TOR WARMUP] Sondeo inicial concluido ({type(e).__name__}) en {time.time()-t0:.2f}s. Red Tor lista.")
+            t0 = time.time()
+            resp = requests.get("https://api.ipify.org", proxies=proxies, timeout=(8.0, 6.0))
+            logger.info(f"✅ [TOR WARMUP] Circuito verificado vía ipify ({resp.text.strip()}) en {time.time()-t0:.2f}s.")
+            return True
+        except Exception:
+            pass
+
+        logger.warning("⚠️ [TOR WARMUP] No se pudo verificar salida HTTPS en Tor tras sondeos repetidos.")
+        return False
 
     def rotate_ip(self, force_new_circuit: bool = False) -> bool:
         """

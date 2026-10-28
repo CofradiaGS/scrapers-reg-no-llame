@@ -17,7 +17,7 @@ La ejecución de consultas automatizadas fuera de las ventanas laborales habitua
 
 ## 2. Reglas de Negocio de la Ventana Operativa
 
-La política gobernada por [`PoliticaHorarioComercial`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) establece ventanas operativas estrictas bajo la zona horaria oficial de Argentina (**UTC-3 / `America/Argentina/Buenos_Aires`**), diferenciando según el tipo de pasarela externa:
+La política gobernada por [`PoliticaHorarioComercial`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py) establece ventanas operativas estrictas bajo la zona horaria oficial de Argentina (**UTC-3 / `America/Argentina/Buenos_Aires`**), diferenciando según el tipo de pasarela externa:
 
 ### A. Ventana para Portales Oficiales Corporativos (IRIS Movistar BPM)
 * `HORARIO_COMERCIAL_FIN_LV = "21:00"`
@@ -88,7 +88,7 @@ flowchart TD
 
 ## 4. Estructura de la Clase de Dominio (`PoliticaHorarioComercial`)
 
-Ubicación: [`core/domain/schedule.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py).
+Ubicación: [`core/domain/schedule.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/schedule.py).
 
 ### Firmas y Métodos
 
@@ -105,7 +105,7 @@ Ubicación: [`core/domain/schedule.py`](file:///C:/Users/Usuario/Documents/GitHu
 
 ## 5. Excepciones de Dominio
 
-Se incorporó la excepción tipada en [`core/domain/exceptions.py`](file:///C:/Users/Usuario/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py):
+Se incorporó la excepción tipada en [`core/domain/exceptions.py`](file:///C:/Users/automatizacion.crm/Documents/GitHub/scrapers-reg-no-llame/core/domain/exceptions.py):
 
 ```python
 class FueraDeHorarioComercialException(ScraperException):
