@@ -125,19 +125,7 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                       AND fecha_fin IS NULL
                       AND (resultado IS NULL OR resultado = '')
                       AND (target_pc IS NULL OR target_pc = '' OR FIND_IN_SET(%s, target_pc) > 0 OR target_pc = 'PC-00')
-<<<<<<< Updated upstream
                     ORDER BY id ASC
-=======
-                      AND (
-                          estado = 'pendiente'
-                          OR (
-                              estado = 'en_proceso'
-                              AND (resultado IS NULL OR resultado = '')
-                              AND fecha_inicio < NOW() - INTERVAL {timeout_lease_min} MINUTE
-                          )
-                      )
-                    ORDER BY prioridad ASC, id ASC
->>>>>>> Stashed changes
                     LIMIT %s
                     FOR UPDATE SKIP LOCKED;
                 """
@@ -200,17 +188,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                     return []
 
                 ids = [f["id"] for f in filas]
-<<<<<<< Updated upstream
-                # Actualización en chunks de 1000 para no agotar el buffer de bloqueos de InnoDB (Error 1206)
-                chunk_size = 1000
-                for i in range(0, len(ids), chunk_size):
-                    chunk_ids = ids[i:i + chunk_size]
-=======
                 # Micro-chunking de 500 IDs para evitar Error 1206 (Total number of locks exceeds lock table size)
                 sub_chunk = 500
                 for i in range(0, len(ids), sub_chunk):
                     chunk_ids = ids[i:i + sub_chunk]
->>>>>>> Stashed changes
                     placeholders = ", ".join(["%s"] * len(chunk_ids))
                     query_update = f"""
                         UPDATE cola_automatizacion
@@ -218,14 +199,10 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                             target_pc = %s,
                             instance_id = %s,
                             fecha_inicio = NOW()
-<<<<<<< Updated upstream
                         WHERE id IN ({placeholders})
                           AND estado != 'completado'
                           AND estado NOT IN ('completado', 'finalizado')
                           AND fecha_fin IS NULL;
-=======
-                        WHERE id IN ({placeholders});
->>>>>>> Stashed changes
                     """
                     cursor.execute(query_update, [target_pc_id, instance_id] + chunk_ids)
                 conn.commit()
@@ -272,13 +249,8 @@ class VPSSyncAdapter(ISyncRemoteRepoPort):
                         "dni": f.get("dni"),
                         "auto_id": f.get("auto_id") or target_auto_id,
                         "target_pc": target_pc_id,
-<<<<<<< Updated upstream
-                        "scraper_actual": scraper_actual or "telcos",
-                        "fuente": f.get("fuente") or f.get("auto_id") or target_auto_id,
-=======
                         "scraper_actual": sc_dest,
-                        "fuente": f.get("auto_id") or target_auto_id,
->>>>>>> Stashed changes
+                        "fuente": f.get("fuente") or f.get("auto_id") or target_auto_id,
                         "tipo_cola": "cola_automatizacion",
                         "datos": f.get("payload") or {}
                     })

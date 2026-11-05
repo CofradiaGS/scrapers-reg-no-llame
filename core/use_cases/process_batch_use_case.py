@@ -281,10 +281,27 @@ class ProcesarLoteUseCase:
                 # No se remueve reg.id de unprocessed_ids para que sea devuelto intacto a pendiente
                 break
 
+            except (KeyboardInterrupt, SystemExit):
+                logger.info(
+                    f"🛑 Interrupción (Ctrl+C) recibida en línea {reg.linea.ani}. "
+                    f"Liberando {len(unprocessed_ids)} registros restantes intactos a 'pendiente'..."
+                )
+                break
+
             except Exception as e:
+                # Si se solicitó la parada del supervisor (Ctrl+C), no marcar como error; liberar a pendiente
+                if should_stop and should_stop():
+                    logger.info(f"Parada en curso por Ctrl+C (Línea {reg.linea.ani}). Interrumpiendo lote sin registrar error...")
+                    break
+
+                err_msg = str(e).replace("\n", " ").strip()
+                err_msg_lower = err_msg.lower()
+                if any(k in err_msg_lower for k in ("target closed", "browser has been closed", "connection closed while reading", "pipe is broken", "interrupted system call", "task was destroyed")):
+                    logger.info(f"Conexión de scraper interrumpida por parada de proceso (Línea {reg.linea.ani}). Liberando a 'pendiente'...")
+                    break
+
                 lat = round(time.time() - t0, 2)
                 err_type = type(e).__name__
-                err_msg = str(e).replace("\n", " ").strip()
                 err_code = getattr(e, "code", None) or getattr(e, "status_code", None) or getattr(e, "errno", None)
                 if not err_code and hasattr(e, "response") and getattr(e.response, "status_code", None):
                     err_code = e.response.status_code

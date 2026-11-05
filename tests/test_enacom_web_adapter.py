@@ -79,12 +79,12 @@ class TestEnacomWebAdapter(unittest.TestCase):
         self.assertGreater(cleaned.shape[1], 180)
 
     def test_rotacion_preventiva_proactiva_ip(self):
-        """Verifica que el límite por IP sea 25 y que rotar_proxy resetee el contador."""
-        self.assertEqual(self.adapter.MAX_CONSULTAS_POR_IP, 25)
+        """Verifica que el límite por IP sea 85 y que rotar_proxy resetee el contador."""
+        self.assertEqual(self.adapter.MAX_CONSULTAS_POR_IP, 85)
         self.assertEqual(self.adapter._consultas_con_esta_ip, 0)
 
         # Simular consultas
-        self.adapter._consultas_con_esta_ip = 25
+        self.adapter._consultas_con_esta_ip = 85
         # Simular rotar_proxy sin abrir browser real
         self.adapter.rotar_proxy = lambda: setattr(self.adapter, "_consultas_con_esta_ip", 0) or True
         self.adapter.rotar_proxy()

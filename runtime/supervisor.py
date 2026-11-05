@@ -98,6 +98,7 @@ class SupervisorIndustrial:
 
         self.stop_event = Event()
         self.pause_event = Event()
+        self._shutdown_counter = 0
         self._pause_reasons: set[str] = set()
         self._pause_lock = threading.Lock()
         self.stats_queue = Queue()
@@ -856,8 +857,28 @@ class SupervisorIndustrial:
         self.worker_slots[slot_id] = {"process": p, "gen": generation}
         logger.info(f"🚀 Worker Slot {slot_id} lanzado ({self.scraper_name.upper()}, Gen {generation}, PID {p.pid}).")
 
+    def _forzar_terminacion_inmediata_workers(self):
+        """Termina forzosamente todos los workers hijos sin demoras."""
+        for s_id, slot_info in list(self.worker_slots.items()):
+            proc = slot_info.get("process")
+            if proc and proc.is_alive():
+                try:
+                    proc.terminate()
+                except Exception:
+                    pass
+        time.sleep(0.2)
+        for s_id, slot_info in list(self.worker_slots.items()):
+            proc = slot_info.get("process")
+            if proc and proc.is_alive():
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+
     def ejecutar(self):
         """Punto de entrada principal para iniciar la supervisión continua."""
+        import atexit
+        atexit.register(self._forzar_terminacion_inmediata_workers)
         estado_hc = self.politica_horario.obtener_estado()
         desc_hc = "IGNORADO (--forzar-horario)" if self.forzar_horario else estado_hc["descripcion"]
 
@@ -944,8 +965,19 @@ class SupervisorIndustrial:
 
         # 2. Configurar manejo de señales
         def handle_shutdown(signum, frame):
-            print("\n🛑 Señal de detención recibida. Notificando a todos los workers para apagado limpio...")
-            self.stop_event.set()
+            self._shutdown_counter += 1
+            if self._shutdown_counter == 1:
+                print("\n🛑 Señal de detención (Ctrl+C) recibida. Notificando a todos los workers para apagado limpio...", flush=True)
+                print("   (Presiona Ctrl+C una vez más para forzar terminación inmediata de todos los procesos)", flush=True)
+                self.stop_event.set()
+            else:
+                print("\n⚡ [FORZADO] Terminando inmediatamente todos los procesos workers...", flush=True)
+                self._forzar_terminacion_inmediata_workers()
+                try:
+                    self._flush_write_buffer()
+                except Exception:
+                    pass
+                os._exit(0)
 
         signal.signal(signal.SIGINT, handle_shutdown)
         if hasattr(signal, "SIGTERM"):
@@ -1025,15 +1057,17 @@ class SupervisorIndustrial:
                         time.sleep(1.0)
                         self._spawn_worker(s_id, nueva_gen)
 
-        # 8. Apagado ordenado
-        logger.info("Esperando que los workers activos completen sus lotes en curso...")
-        for s_id, slot_info in self.worker_slots.items():
-            proc: Process = slot_info["process"]
-            if proc.is_alive():
-                proc.join(timeout=15.0)
-                if proc.is_alive():
-                    logger.warning(f"Slot {s_id} no respondió en 15s. Forzando terminación...")
-                    proc.terminate()
+        # 8. Apagado ordenado rápido y en paralelo
+        logger.info("Esperando que los workers activos finalicen sus consultas en curso (máx 3.0s)...")
+        t_deadline = time.time() + 3.0
+        while time.time() < t_deadline:
+            vivos = [s["process"] for s in self.worker_slots.values() if s["process"].is_alive()]
+            if not vivos:
+                break
+            time.sleep(0.15)
+
+        # Si aún quedan workers vivos tras el deadline, forzar terminación inmediata
+        self._forzar_terminacion_inmediata_workers()
 
         # Detener centinela de sincronización si está activo
         if self.sync_scheduler is not None:
@@ -1052,3 +1086,8 @@ class SupervisorIndustrial:
         print("\n" + "*" * 75)
         print("🏁 Supervisión 24/7 finalizada ordenadamente. Base de datos protegida.")
         print("*" * 75)
+        try:
+            import atexit
+            atexit.unregister(self._forzar_terminacion_inmediata_workers)
+        except Exception:
+            pass

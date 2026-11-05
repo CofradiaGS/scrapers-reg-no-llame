@@ -1,22 +1,12 @@
 # -*- coding: utf-8 -*-
 """
 Script de Ingesta / Alimentación: Cobro Express -> ENACOM Web (cola_automatizacion)
-Transfiere registros procesados en el mes vigente por 'scraper_cobro_express'
-que hayan resultado en 'sin_coincidencia' en las 3 operadoras (Claro, Personal y Movistar)
-hacia nuevas tareas independientes con auto_id = 'scraper_enacom' para PC-08.
-
-Características técnicas:
-- Inserciones en lotes atómicos de hasta 5.000 registros por commit.
-- Idempotencia garantizada vía UNIQUE KEY (auto_id, numero_de_linea) con INSERT IGNORE.
-- dias_desde_ultimo_cambio = NULL (solicitud explícita del operador).
-- Preservación íntegra de payload, prioridad, dni y paso_por_iris.
-- Trazabilidad con scrapers_intentados = 'scraper_cobro_express'.
-- Paginación basada en claves (WHERE c.id > last_id) para latencias mínimas sobre tablas de 70M filas.
-
-Uso:
-    python scripts/alimentar_enacom_desde_cobro_express.py --dry-run
-    python scripts/alimentar_enacom_desde_cobro_express.py --batch-size 5000 --target-pc PC-08
-    python scripts/alimentar_enacom_desde_cobro_express.py --limit 10000
+Transfiere registros procesados por 'scraper_cobro_express' que hayan resultado
+en 'sin_coincidencia' hacia nuevas tareas independientes con:
+- auto_id = 'scraper_enacom'
+- prioridad = 2 (prioridad fija según requerimiento operativo)
+- target_pc = PC-08 (o el configurado)
+- Paginación circular con auto-reset continuo (nunca se queda trabado al final)
 """
 
 import sys
@@ -26,6 +16,7 @@ import json
 import argparse
 from datetime import datetime
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 
 # Asegurar UTF-8 en stdout/stderr para Windows PowerShell
 if hasattr(sys.stdout, "reconfigure"):
@@ -40,6 +31,8 @@ import mysql.connector
 from dotenv import load_dotenv
 
 load_dotenv()
+
+CURSOR_FILE = Path(__file__).resolve().parent.parent / "data" / "cursor_alimentacion_ce_enacom.json"
 
 
 def conectar_bd():
@@ -56,37 +49,28 @@ def conectar_bd():
     )
 
 
-def obtener_id_minimo_mes_vigente(conn, fecha_inicio_mes: str) -> int:
+def obtener_id_minimo_mes_vigente(conn, fecha_inicio_mes: Optional[str] = None) -> int:
     """
-    Obtiene el ID mínimo con fecha_fin en el mes vigente utilizando el índice idx_fecha_fin
-    para que la paginación principal corra sobre rangos de IDs exactos sin full-table-scans.
+    Obtiene el ID mínimo de Cobro Express completado utilizando el índice
+    idx_cola_auto_estado para respuesta ultra-rápida (< 0.01s).
     """
     cursor = conn.cursor(dictionary=True)
-    query = """
-        SELECT id 
-        FROM cola_automatizacion 
-        WHERE fecha_fin >= %s 
-        ORDER BY fecha_fin ASC 
-        LIMIT 1;
-    """
-    cursor.execute(query, (fecha_inicio_mes,))
-    row = cursor.fetchone()
-    cursor.close()
-    if row and row.get("id"):
-        return row["id"]
-    # Fallback seguro: buscar fecha_creacion
-    cursor = conn.cursor(dictionary=True)
-    query_fallback = """
-        SELECT id 
-        FROM cola_automatizacion 
-        WHERE fecha_creacion >= %s 
-        ORDER BY id ASC 
-        LIMIT 1;
-    """
-    cursor.execute(query_fallback, (fecha_inicio_mes,))
-    row_fb = cursor.fetchone()
-    cursor.close()
-    return row_fb["id"] if row_fb and row_fb.get("id") else 0
+    try:
+        query = """
+            SELECT MIN(id) AS id 
+            FROM cola_automatizacion FORCE INDEX (idx_cola_auto_estado)
+            WHERE auto_id = 'scraper_cobro_express'
+              AND estado = 'completado';
+        """
+        cursor.execute(query)
+        row = cursor.fetchone()
+        if row and row.get("id"):
+            return int(row["id"])
+    except Exception:
+        pass
+    finally:
+        cursor.close()
+    return 18441011
 
 
 def calcular_fecha_desde(meses: int = 2) -> str:
@@ -98,11 +82,6 @@ def calcular_fecha_desde(meses: int = 2) -> str:
         mes += 12
         anio -= 1
     return f"{anio:04d}-{mes:02d}-01 00:00:00"
-
-
-from pathlib import Path
-
-CURSOR_FILE = Path(__file__).resolve().parent.parent / "data" / "cursor_alimentacion_ce_enacom.json"
 
 
 SQL_FILTRO_P1 = "(c.numero_de_linea LIKE '11%' OR c.numero_de_linea LIKE '260%' OR c.numero_de_linea LIKE '261%' OR c.numero_de_linea LIKE '262%' OR c.numero_de_linea LIKE '263%')"
@@ -121,26 +100,6 @@ SQL_FILTRO_P3 = f"""NOT (
 )"""
 
 
-def calcular_prioridad_enacom(numero_de_linea: str) -> int:
-    """
-    Calcula la prioridad geográfica para ENACOM Web según la regla de negocio:
-    - Prioridad 1: Buenos Aires / AMBA (11) y Mendoza completa (260, 261, 262, 263).
-    - Prioridad 2: Cuyo (264, 265, 266, 380, 382) y Sur / Patagonia (280, 299, 298, 297, 294, 291, 2901, 2966, 2964, 2920).
-    - Prioridad 3: Resto del país.
-    """
-    num = "".join(filter(str.isdigit, str(numero_de_linea or "")))
-    if num.startswith(('11', '260', '261', '262', '263')):
-        return 1
-    elif num.startswith((
-        '264', '265', '266', '380', '382',
-        '280', '299', '298', '297', '294',
-        '291', '2901', '2966', '2964', '2920'
-    )):
-        return 2
-    else:
-        return 3
-
-
 def obtener_cursores_guardados(min_id: int) -> Dict[str, int]:
     """Recupera los cursores por nivel de prioridad para paginación incremental."""
     base = min_id - 1
@@ -150,9 +109,9 @@ def obtener_cursores_guardados(min_id: int) -> Dict[str, int]:
             with open(CURSOR_FILE, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 for k in ("prio_1", "prio_2", "prio_3"):
-                    if k in data:
+                    if k in data and int(data[k]) > 0:
                         cursores[k] = max(base, int(data[k]))
-                    elif "ultimo_id" in data:
+                    elif "ultimo_id" in data and int(data["ultimo_id"]) > 0:
                         cursores[k] = max(base, int(data["ultimo_id"]))
     except Exception:
         pass
@@ -188,16 +147,14 @@ def alimentar_enacom(
 ) -> int:
     start_time = time.time()
     ahora = datetime.now()
-    if not fecha_desde:
-        fecha_desde = calcular_fecha_desde(meses)
 
     if not silent:
         print("=" * 80)
         print("ALIMENTADOR COLA AUTOMATIZACIÓN: Cobro Express -> ENACOM Web")
         print(f"Fecha/Hora inicio:       {ahora.strftime('%Y-%m-%d %H:%M:%S')}")
-        print(f"Ventana temporal:        Últimos {meses} meses (>= {fecha_desde})")
         print(f"Tamaño de lote (batch):  {batch_size:,} registros")
         print(f"Target PC destino:       {target_pc}")
+        print(f"Prioridad asignada:      2 (Prio fija para ENACOM)")
         print(f"Límite total a insertar: {f'{limit_total:,}' if limit_total else 'Sin límite (todos los elegibles)'}")
         print(f"Estrategia de Prioridad: Cascada P1 (AMBA/Mza) -> P2 (Sur/Cuyo) -> P3 (Resto)")
         print(f"Modo DRY-RUN:            {'SÍ (Simulación sin escrituras)' if dry_run else 'NO (Producción activa)'}")
@@ -209,13 +166,10 @@ def alimentar_enacom(
         owns_conn = True
 
     # 1. Determinar ID base de la ventana
+    min_id = obtener_id_minimo_mes_vigente(conn)
     if not silent:
-        print(f"\n🔍 Calculando ID inicial para la ventana desde {fecha_desde[:10]}...")
-    min_id = obtener_id_minimo_mes_vigente(conn, fecha_desde)
-    if not silent:
-        print(f"   -> ID mínimo detectado para {fecha_desde[:7]}: {min_id:,}")
+        print(f"\n🔍 ID mínimo detectado para Cobro Express completado: {min_id:,}")
 
-    # Query de inserción atómica (nota: paso_por_iris es columna generada automáticamente por MySQL)
     query_insert = """
         INSERT IGNORE INTO cola_automatizacion (
             prioridad,
@@ -255,120 +209,137 @@ def alimentar_enacom(
         (3, "Prioridad 3 (Resto del país)", SQL_FILTRO_P3, "prio_3")
     ]
 
+    # Query optimizada: busca completados sin coincidencia positiva en telcos
+    query_select = """
+        SELECT c.id, c.numero_de_linea, c.dni, c.prioridad, c.target_pc,
+               c.scrapers_intentados, c.paso_por_iris, c.payload
+        FROM cola_automatizacion c FORCE INDEX (idx_cola_auto_estado)
+        WHERE c.id > %s
+          AND c.auto_id = 'scraper_cobro_express'
+          AND c.estado = 'completado'
+          AND {filtro_prio}
+          AND (
+              (c.resultado NOT LIKE '%"status": "coincidencia"%' AND c.resultado NOT LIKE '%"status":"coincidencia"%')
+              OR (
+                  JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.claro.status')) = 'sin_coincidencia'
+                  AND (JSON_EXTRACT(c.resultado, '$.personal.status') IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.personal.status')) = 'sin_coincidencia')
+                  AND (JSON_EXTRACT(c.resultado, '$.movistar.status') IS NULL OR JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.movistar.status')) = 'sin_coincidencia')
+              )
+          )
+        LIMIT %s;
+    """
+
+    # Bucle circular: hasta 2 pasadas si el cursor estaba al fondo y no insertó nada
+    max_pasadas = 2
     try:
-        for prio_num, prio_nombre, filtro_prio, cursor_key in niveles_prioridad:
-            if limit_total and total_insertados >= limit_total:
-                break
+        for pasada in range(1, max_pasadas + 1):
+            for prio_num, prio_nombre, filtro_prio, cursor_key in niveles_prioridad:
+                if limit_total and total_insertados >= limit_total:
+                    break
 
-            cursor_actual = cursores.get(cursor_key, min_id - 1)
-            if not silent:
-                print(f"\n🎯 [BUSCANDO {prio_nombre}] Cursor inicial: {cursor_actual:,}", flush=True)
+                cursor_actual = cursores.get(cursor_key, min_id - 1)
+                q_prio = query_select.format(filtro_prio=filtro_prio)
 
-            while True:
-                # Calcular cuánto pedir en este lote
-                if limit_total:
-                    restante = limit_total - total_insertados
-                    if restante <= 0:
+                while True:
+                    if limit_total:
+                        restante = limit_total - total_insertados
+                        if restante <= 0:
+                            break
+                        pedir_lote = min(batch_size, restante)
+                    else:
+                        pedir_lote = batch_size
+
+                    t0_batch = time.time()
+                    cur_read.execute(q_prio, (cursor_actual, pedir_lote))
+                    filas = cur_read.fetchall()
+
+                    if not filas:
+                        # Auto-reset del cursor a min_id - 1 para que en la próxima vuelta barra desde el inicio
+                        cursores[cursor_key] = min_id - 1
+                        guardar_cursores(cursores)
                         break
-                    pedir_lote = min(batch_size, restante)
-                else:
-                    pedir_lote = batch_size
 
-                t0_batch = time.time()
-                query_select = f"""
-                    SELECT c.id, c.numero_de_linea, c.dni, c.prioridad, c.target_pc,
-                           c.scrapers_intentados, c.paso_por_iris, c.payload
-                    FROM cola_automatizacion c FORCE INDEX (PRIMARY)
-                    WHERE c.id > %s
-                      AND c.auto_id = 'scraper_cobro_express'
-                      AND c.estado = 'completado'
-                      AND c.fecha_fin >= %s
-                      AND {filtro_prio}
-                      AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.claro.status')) = 'sin_coincidencia'
-                      AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.personal.status')) = 'sin_coincidencia'
-                      AND JSON_UNQUOTE(JSON_EXTRACT(c.resultado, '$.movistar.status')) = 'sin_coincidencia'
-                    LIMIT %s;
-                """
-                cur_read.execute(query_select, (cursor_actual, fecha_desde, pedir_lote))
-                filas = cur_read.fetchall()
+                    lote_num += 1
+                    total_leidos += len(filas)
+                    cursor_actual = filas[-1]["id"]
+                    cursores[cursor_key] = cursor_actual
 
-                if not filas:
+                    buffer_insert = []
+                    for r in filas:
+                        num_linea = str(r.get("numero_de_linea") or "").strip()
+                        pay_raw = r.get("payload")
+                        pay_dict = pay_raw if isinstance(pay_raw, dict) else {}
+                        if isinstance(pay_raw, str):
+                            try:
+                                pay_dict = json.loads(pay_raw)
+                            except Exception:
+                                pay_dict = {}
+
+                        if not num_linea or len(num_linea) != 10:
+                            cand = str(pay_dict.get("numero_de_linea") or pay_dict.get("ani") or pay_dict.get("linea") or "").strip()
+                            cand_dig = "".join(filter(str.isdigit, cand))
+                            if len(cand_dig) == 10:
+                                num_linea = cand_dig
+
+                        dni_val = str(r.get("dni") or pay_dict.get("dni") or "").strip()
+                        dni_limpio = "".join(filter(str.isdigit, dni_val)) if dni_val else None
+
+                        payload_str = json.dumps(pay_dict, ensure_ascii=False) if pay_dict else json.dumps(r.get("payload") or {}, ensure_ascii=False)
+                        paso_iris = bool(r.get("paso_por_iris"))
+                        scrapers_str = "iris_scraper,scraper_cobro_express" if paso_iris else "scraper_cobro_express"
+
+                        # Inserción con PRIORIDAD FIJA = 2 para ENACOM
+                        record = (
+                            2,                # prioridad = 2 según requerimiento
+                            target_pc,        # target_pc
+                            "pendiente",      # estado
+                            "scraper_enacom", # auto_id
+                            payload_str,
+                            None,             # dias_desde_ultimo_cambio = NULL
+                            num_linea,
+                            dni_limpio,
+                            scrapers_str
+                        )
+                        buffer_insert.append(record)
+
+                    if not dry_run:
+                        cur_write.executemany(query_insert, buffer_insert)
+                        conn.commit()
+                        insertadas_este_lote = cur_write.rowcount
+                        ignoradas_este_lote = len(buffer_insert) - insertadas_este_lote
+                        guardar_cursores(cursores)
+                    else:
+                        insertadas_este_lote = len(buffer_insert)
+                        ignoradas_este_lote = 0
+
+                    total_insertados += insertadas_este_lote
+                    total_ignorados_duplicados += ignoradas_este_lote
+                    t_lote = round(time.time() - t0_batch, 2)
+
                     if not silent:
-                        print(f"   [FIN NIVEL] No hay más registros en {prio_nombre}. Avanzando a la siguiente prioridad si resta cupo.", flush=True)
-                    break
+                        print(
+                            f"   [{prio_nombre} Lote #{lote_num:03d}] Leídos: {len(filas):,d} | "
+                            f"Insertados: {insertadas_este_lote:,d} | "
+                            f"Ignorados/Dupl: {ignoradas_este_lote:,d} | "
+                            f"Último ID: {cursor_actual} | "
+                            f"Tiempo: {t_lote}s",
+                            flush=True
+                        )
 
-                lote_num += 1
-                total_leidos += len(filas)
-                cursor_actual = filas[-1]["id"]
-                cursores[cursor_key] = cursor_actual
+                    if len(filas) < pedir_lote:
+                        cursores[cursor_key] = min_id - 1
+                        guardar_cursores(cursores)
+                        break
 
-                buffer_insert = []
-                for r in filas:
-                    num_linea = str(r.get("numero_de_linea") or "").strip()
-                    pay_raw = r.get("payload")
-                    pay_dict = pay_raw if isinstance(pay_raw, dict) else {}
-                    if isinstance(pay_raw, str):
-                        try:
-                            pay_dict = json.loads(pay_raw)
-                        except Exception:
-                            pay_dict = {}
-
-                    if not num_linea or len(num_linea) != 10:
-                        cand = str(pay_dict.get("numero_de_linea") or pay_dict.get("ani") or pay_dict.get("linea") or "").strip()
-                        cand_dig = "".join(filter(str.isdigit, cand))
-                        if len(cand_dig) == 10:
-                            num_linea = cand_dig
-
-                    dni_val = str(r.get("dni") or pay_dict.get("dni") or "").strip()
-                    dni_limpio = "".join(filter(str.isdigit, dni_val)) if dni_val else None
-
-                    payload_str = json.dumps(pay_dict, ensure_ascii=False) if pay_dict else json.dumps(r.get("payload") or {}, ensure_ascii=False)
-                    paso_iris = bool(r.get("paso_por_iris"))
-                    scrapers_str = "iris_scraper,scraper_cobro_express" if paso_iris else "scraper_cobro_express"
-
-                    record = (
-                        prio_num,
-                        target_pc,
-                        "pendiente",
-                        "scraper_enacom",
-                        payload_str,
-                        None,  # dias_desde_ultimo_cambio = NULL
-                        num_linea,
-                        dni_limpio,
-                        scrapers_str
-                    )
-                    buffer_insert.append(record)
-
-                if not dry_run:
-                    cur_write.executemany(query_insert, buffer_insert)
-                    conn.commit()
-                    insertadas_este_lote = cur_write.rowcount
-                    ignoradas_este_lote = len(buffer_insert) - insertadas_este_lote
-                    guardar_cursores(cursores)
-                else:
-                    insertadas_este_lote = len(buffer_insert)
-                    ignoradas_este_lote = 0
-
-                total_insertados += insertadas_este_lote
-                total_ignorados_duplicados += ignoradas_este_lote
-                t_lote = round(time.time() - t0_batch, 2)
-
-                if not silent:
-                    print(
-                        f"   [{prio_nombre} Lote #{lote_num:03d}] Leídos: {len(filas):,d} | "
-                        f"Insertados: {insertadas_este_lote:,d} | "
-                        f"Ignorados/Dupl: {ignoradas_este_lote:,d} | "
-                        f"Último ID: {cursor_actual} | "
-                        f"Tiempo: {t_lote}s",
-                        flush=True
-                    )
-
-                if len(filas) < pedir_lote:
-                    if not silent:
-                        print(f"   [FIN NIVEL] Alcanzado límite disponible en {prio_nombre}.", flush=True)
-                    break
-
-
+            # Si ya se insertaron registros o ya se alcanzó el límite, no se necesita segunda pasada
+            if total_insertados > 0 or (limit_total and total_insertados >= limit_total):
+                break
+            else:
+                # Si en la primera pasada no insertó nada (porque los cursores estaban al final),
+                # reiniciar todos los cursores a min_id - 1 para la segunda pasada
+                for k in ("prio_1", "prio_2", "prio_3"):
+                    cursores[k] = min_id - 1
+                guardar_cursores(cursores)
 
     except Exception as e:
         if owns_conn:
@@ -418,8 +389,8 @@ if __name__ == "__main__":
     parser.add_argument("--target-pc", type=str, default="PC-08", help="Target PC asignado (default: PC-08)")
     parser.add_argument("--limit", type=int, default=None, help="Límite máximo total de registros a transferir")
     parser.add_argument("--dry-run", action="store_true", help="Simula la operación sin escribir en MySQL")
-    parser.add_argument("--meses", type=int, default=2, help="Cantidad de meses vigentes a incluir hacia atrás (default: 2, ej: septiembre y octubre)")
-    parser.add_argument("--fecha-desde", type=str, default=None, help="Fecha mínima exacta YYYY-MM-DD (default: calcula los últimos N meses)")
+    parser.add_argument("--meses", type=int, default=2, help="Cantidad de meses vigentes a incluir hacia atrás (default: 2)")
+    parser.add_argument("--fecha-desde", type=str, default=None, help="Fecha mínima exacta YYYY-MM-DD")
 
     args = parser.parse_args()
 

@@ -43,6 +43,8 @@ def registrar_ip_bloqueada(ip: str, motivo: str):
     """Registra una IP en la lista negra diaria con expiración automática a medianoche."""
     _ip_tracker_singleton.registrar_bloqueo_100(ip, motivo)
 
+_STATIC_ASSET_CACHE: Dict[str, bytes] = {}
+
 
 class EnacomWebAdapter(BaseScraperAdapter):
     """
@@ -51,12 +53,12 @@ class EnacomWebAdapter(BaseScraperAdapter):
     """
 
     PORTAL_URL = "https://numeracion.enacom.gob.ar/Numeracion.aspx"
-    MAX_CONSULTAS_POR_IP: int = 25
+    MAX_CONSULTAS_POR_IP: int = 85
 
     def __init__(
         self,
         headless: bool = True,
-        max_retries: int = 4,
+        max_retries: int = 6,
         proxy: Optional[str] = None,
         use_tor: bool = False,
         tor_socks_port: int = 9050,
@@ -99,11 +101,43 @@ class EnacomWebAdapter(BaseScraperAdapter):
         pass
 
     def _ensure_static_assets(self) -> None:
-        """Asegura que el directorio de cache estático exista."""
+        """Asegura que los scripts y assets estáticos estén cacheados localmente en SSD y RAM."""
         try:
             self._static_cache_dir.mkdir(parents=True, exist_ok=True)
+            for f in self._static_cache_dir.glob("*.js"):
+                if f.stat().st_size > 100:
+                    _STATIC_ASSET_CACHE[f.name] = f.read_bytes()
         except Exception as e:
             logger.warning(f"No se pudo inicializar directorio de cache estático ({e}).")
+
+    def _get_cached_asset(self, url: str) -> Optional[bytes]:
+        """
+        Devuelve el contenido en bytes de un script estático (ej: recaptcha__*.js)
+        desde la caché en RAM/SSD. Si no existe aún en disco, lo descarga directamente
+        SIN usar proxy (0 KB consumidos sobre la red residencial) y lo guarda para reuso permanente.
+        """
+        import hashlib
+        fname = hashlib.md5(url.encode()).hexdigest() + "_" + Path(url.split("?")[0]).name
+        if fname in _STATIC_ASSET_CACHE:
+            return _STATIC_ASSET_CACHE[fname]
+
+        fpath = self._static_cache_dir / fname
+        if fpath.exists() and fpath.stat().st_size > 500:
+            data = fpath.read_bytes()
+            _STATIC_ASSET_CACHE[fname] = data
+            return data
+
+        try:
+            import requests, urllib3
+            urllib3.disable_warnings()
+            r = requests.get(url, verify=False, timeout=8)
+            if r.status_code == 200 and len(r.content) > 500:
+                fpath.write_bytes(r.content)
+                _STATIC_ASSET_CACHE[fname] = r.content
+                return r.content
+        except Exception as e:
+            logger.debug(f"Aviso descarga directa de asset estático ({url}): {e}")
+        return None
 
     def _setup_page_routes(self, target: Any) -> None:
         """
@@ -111,7 +145,8 @@ class EnacomWebAdapter(BaseScraperAdapter):
         1. Bloqueo total (abort) de hojas de estilo (.css, fonts, media). Chromium headless no requiere render visual.
         2. Bloqueo total de imágenes superfluas (logos, favicons, banners), permitiendo exclusivamente Captcha.aspx.
         3. Bloqueo de rastreadores externos y analítica (google-analytics, doubleclick, etc.).
-        4. Tráfico transaccional esencial (portal ENACOM, Captcha.aspx, Google reCAPTCHA v3 y jQuery) permitido de forma nativa.
+        4. Fulfill local a costo 0 de proxy para scripts pesados (jQuery, Google reCAPTCHA v3 scripts en gstatic).
+        5. Tráfico transaccional esencial (portal ENACOM y Captcha.aspx) permitido de forma nativa.
         """
         def intercept_route(route):
             try:
@@ -135,7 +170,27 @@ class EnacomWebAdapter(BaseScraperAdapter):
                 ]):
                     return route.abort()
 
-                # 4. Continuar tráfico transaccional esencial
+                # 4. Fulfill local de jQuery desde caché SSD/RAM (0 KB sobre proxy residencial)
+                if "jquery" in url:
+                    b = _STATIC_ASSET_CACHE.get("jquery.js")
+                    if b:
+                        return route.fulfill(status=200, content_type="application/javascript", body=b)
+
+                # 4.1 Fulfill local de scripts de Google reCAPTCHA v3 desde caché SSD/RAM (0 KB sobre proxy)
+                if "recaptcha__" in url:
+                    b = self._get_cached_asset(route.request.url)
+                    if b:
+                        return route.fulfill(
+                            status=200,
+                            headers={
+                                "Access-Control-Allow-Origin": "*",
+                                "Cross-Origin-Resource-Policy": "cross-origin",
+                                "Content-Type": "text/javascript",
+                            },
+                            body=b
+                        )
+
+                # 5. Continuar tráfico transaccional esencial
                 return route.continue_()
             except Exception:
                 try:
@@ -345,7 +400,8 @@ class EnacomWebAdapter(BaseScraperAdapter):
             if p_cfg:
                 context_kwargs["proxy"] = p_cfg
 
-        for intento_con in range(4):
+        max_intentos_con = 15
+        for intento_con in range(max_intentos_con):
             try:
                 self._ultimo_captcha_bytes = None
                 self._context = self._browser.new_context(**context_kwargs)
@@ -370,7 +426,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
                 if not apta:
                     logger.warning(
                         f"⚠️ Smartproxy asignó IP no apta ({self._ip_actual} - {motivo_eval}). "
-                        f"Rotando inmediatamente de sesión residencial sin consultar ENACOM (0 GB gastados)..."
+                        f"Rotando inmediatamente de sesión residencial sin consultar ENACOM (0 GB gastados, descarte #{intento_con + 1}/{max_intentos_con})..."
                     )
                     try:
                         self._page.close()
@@ -409,7 +465,7 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     self._page = None
                     self._context = None
                     return None
-                logger.warning(f"Aviso conexión con portal ENACOM (intento {intento_con + 1}/4): {e}")
+                logger.warning(f"Aviso conexión con portal ENACOM (intento {intento_con + 1}/{max_intentos_con}): {e}")
                 try:
                     if self._page and not self._page.is_closed():
                         self._page.close()
@@ -422,10 +478,10 @@ class EnacomWebAdapter(BaseScraperAdapter):
                     pass
                 self._page = None
                 self._context = None
-                if intento_con == 3:
+                if intento_con == max_intentos_con - 1:
                     # En caso de agotarse los intentos con Smartproxy, reintentar reinicializando browser
                     self.close()
-                    logger.error(f"Falla de conectividad persistente con Smartproxy hacia ENACOM: {e}")
+                    logger.error(f"Falla de conectividad persistente con Smartproxy hacia ENACOM tras {max_intentos_con} intentos: {e}")
                     return None
                 if self.proxy:
                     p_cfg = self._formatear_proxy_playwright(self.proxy, force_new_session=True)
@@ -665,59 +721,76 @@ class EnacomWebAdapter(BaseScraperAdapter):
                         if (elCap) elCap.value = '{code}';
                     }}""")
 
-                    # Generar token reCAPTCHA v3 fresco directamente y marcar recaptchaValidado = true
-                    # Esto garantiza envío sincronizado y evita fallos de token expirado o retrasos async
-                    try:
-                        page.evaluate("""async () => {
-                            return new Promise((resolve) => {
-                                window.recaptchaValidado = false;
-                                if (document.getElementById('hfRecaptchaToken')) {
-                                    document.getElementById('hfRecaptchaToken').value = '';
-                                }
-                                if (typeof grecaptcha === 'undefined') {
-                                    resolve('');
-                                    return;
-                                }
-                                grecaptcha.ready(function () {
-                                    grecaptcha.execute('6Lc7ETMaAAAAABEtagDEGehZ_xpYTo0gQSibJbxC', { action: 'buscar' })
-                                        .then(function (token) {
-                                            if (token) {
-                                                const hf = document.getElementById('hfRecaptchaToken');
-                                                if (hf) hf.value = token;
-                                                window.recaptchaValidado = true;
-                                            }
-                                            resolve(token || '');
-                                        })
-                                        .catch(() => resolve(''));
-                                });
-                            });
-                        }""")
-                    except Exception as e_tok:
-                        logger.debug(f"[{ani_clean}] Aviso obtención token reCAPTCHA: {e_tok}")
-
-                    logger.debug(f"[{ani_clean}] Enviando formulario con captcha '{code}'...")
-
-                    # 4. Esperar respuesta POST del servidor de forma reactiva por evento (< 1s)
+                    # 4. Enviar formulario mediante fetch() in-page (CERO navegación de página, ahorra > 99% de ancho de banda)
                     post_html = ""
                     self._ultimo_captcha_bytes = None
                     try:
-                        with page.expect_response(
-                            lambda r: "Numeracion.aspx" in r.url and r.request.method == "POST",
-                            timeout=20000
-                        ) as post_resp_info:
-                            page.click("#BtnBuscar")
-                        if post_resp_info and post_resp_info.value:
-                            post_html = post_resp_info.value.text()
-                        page.wait_for_load_state("domcontentloaded", timeout=10000)
-                        try:
-                            page.wait_for_function(
-                                "() => { const img = document.getElementById('imgCaptcha'); return img && img.complete; }",
-                                timeout=3000
-                            )
-                        except Exception:
-                            pass
+                        post_html = page.evaluate(f"""async () => {{
+                            return new Promise(async (resolve) => {{
+                                try {{
+                                    let token = '';
+                                    if (typeof grecaptcha !== 'undefined') {{
+                                        token = await new Promise((resTok) => {{
+                                            const to = setTimeout(() => resTok(''), 12000);
+                                            grecaptcha.ready(function () {{
+                                                grecaptcha.execute('6Lc7ETMaAAAAABEtagDEGehZ_xpYTo0gQSibJbxC', {{ action: 'buscar' }})
+                                                    .then(t => {{ clearTimeout(to); resTok(t || ''); }})
+                                                    .catch(() => {{ clearTimeout(to); resTok(''); }});
+                                            }});
+                                        }});
+                                    }}
+
+                                    const formData = new URLSearchParams();
+                                    const vs = document.getElementById('__VIEWSTATE')?.value || '';
+                                    const vg = document.getElementById('__VIEWSTATEGENERATOR')?.value || '';
+                                    const ev = document.getElementById('__EVENTVALIDATION')?.value || '';
+                                    formData.append('__VIEWSTATE', vs);
+                                    formData.append('__VIEWSTATEGENERATOR', vg);
+                                    formData.append('__EVENTVALIDATION', ev);
+                                    formData.append('hfRecaptchaToken', token);
+                                    formData.append('TxtNumero', '{ani_clean}');
+                                    formData.append('TxtCaptcha', '{code}');
+                                    formData.append('BtnBuscar', 'Consultar');
+
+                                    const resp = await fetch('./Numeracion.aspx', {{
+                                        method: 'POST',
+                                        headers: {{ 'Content-Type': 'application/x-www-form-urlencoded' }},
+                                        body: formData.toString()
+                                    }});
+                                    const html = await resp.text();
+
+                                    // Sincronizar ViewState en DOM para la siguiente consulta
+                                    const parser = new DOMParser();
+                                    const doc = parser.parseFromString(html, 'text/html');
+                                    const newVs = doc.getElementById('__VIEWSTATE');
+                                    const newEv = doc.getElementById('__EVENTVALIDATION');
+                                    if (newVs && document.getElementById('__VIEWSTATE')) {{
+                                        document.getElementById('__VIEWSTATE').value = newVs.value;
+                                    }}
+                                    if (newEv && document.getElementById('__EVENTVALIDATION')) {{
+                                        document.getElementById('__EVENTVALIDATION').value = newEv.value;
+                                    }}
+
+                                    // Recargar imagen del captcha en DOM para la siguiente consulta
+                                    const img = document.getElementById('imgCaptcha');
+                                    if (img) {{
+                                        await new Promise((resImg) => {{
+                                            img.onload = resImg;
+                                            img.onerror = resImg;
+                                            img.src = 'Captcha.aspx?v=' + Date.now();
+                                            setTimeout(resImg, 2000);
+                                        }});
+                                    }}
+
+                                    resolve(html);
+                                }} catch(err) {{
+                                    resolve('');
+                                }}
+                            }});
+                        }}""")
                     except Exception as e_post:
-                        logger.debug(f"[{ani_clean}] Espera de evento POST finalizada ({e_post})")
+                        logger.debug(f"[{ani_clean}] Aviso ejecución fetch in-page: {e_post}")
+                        post_html = ""
 
                     # 5. Lectura atómica ultra-rápida (HTML directo < 1ms, zero-CDP overhead)
                     encontrado = False

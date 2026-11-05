@@ -197,15 +197,9 @@ class SQLiteStagingAdapter(IColaRepositorioPort, ISyncLocalRepoPort):
                     SELECT id_vps, tipo_cola, numero_de_linea, dni, auto_id, target_pc, 
                            scraper_actual, payload_origen, resultado_json, fuente, active
                     FROM tareas_staging
-<<<<<<< Updated upstream
-                    WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active}
-                      AND scraper_actual IN ('enacom_web', 'scraper_enacom')
-                    ORDER BY (dni IS NOT NULL AND dni != '') DESC, id_vps ASC
-=======
                     WHERE estado_local = 'pendiente' AND tipo_cola = ? {cond_auto} {cond_active} {cond_prio}
                       AND scraper_actual IN ('enacom_web', 'scraper_enacom', 'enacom')
                     {ORDER_BY_PRIORIDAD}
->>>>>>> Stashed changes
                     LIMIT ?;
                 """, [self.tipo_cola] + params_auto + [batch_size])
             elif canon == "telcos":

@@ -127,7 +127,7 @@ class EnacomIPTracker:
                 if bloqueada_100 == 1:
                     return False, f"IP {ip} ya consumió las 100 consultas diarias en ENACOM", 0.0
 
-                if consultas_hoy >= 95:
+                if consultas_hoy >= 85:
                     return False, f"IP {ip} en umbral de seguridad ({consultas_hoy}/100 consultas hoy)", 0.0
 
                 # 2. Verificar si está en período de enfriamiento por límite de 5 consultas/minuto
@@ -160,7 +160,7 @@ class EnacomIPTracker:
                         fecha_dia = excluded.fecha_dia,
                         consultas_hoy = CASE WHEN enacom_ip_status.fecha_dia = excluded.fecha_dia THEN enacom_ip_status.consultas_hoy + 1 ELSE 1 END,
                         ultima_consulta = excluded.ultima_consulta,
-                        bloqueada_100 = CASE WHEN enacom_ip_status.consultas_hoy + 1 >= 98 THEN 1 ELSE enacom_ip_status.bloqueada_100 END,
+                        bloqueada_100 = CASE WHEN enacom_ip_status.consultas_hoy + 1 >= 85 THEN 1 ELSE enacom_ip_status.bloqueada_100 END,
                         actualizado_el = datetime('now', 'localtime');
                 """, (ip, hoy, now_ts))
                 conn.commit()

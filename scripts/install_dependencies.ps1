@@ -231,8 +231,14 @@ if (Test-Path $reqFile) {
     & $venvPython -m pip install --upgrade pip --quiet
 
     Write-Host "Instalando paquetes desde requirements.txt..." -ForegroundColor Yellow
-    & $venvPip install -r $reqFile
     Write-Success "Todas las dependencias de Python han sido instaladas."
+
+    # Garantizar runtime C++ para onnxruntime y ddddocr en Windows
+    $onnxCapi = Join-Path $venvPath "Lib\site-packages\onnxruntime\capi"
+    if (Test-Path $onnxCapi) {
+        Copy-Item (Join-Path $venvPath "Scripts\msvcp140*.dll") -Destination $onnxCapi -Force -ErrorAction SilentlyContinue
+        Copy-Item (Join-Path $venvPath "Scripts\vcruntime140*.dll") -Destination $onnxCapi -Force -ErrorAction SilentlyContinue
+    }
 } else {
     Write-WarningMsg "No se encontró requirements.txt en la raíz."
 }

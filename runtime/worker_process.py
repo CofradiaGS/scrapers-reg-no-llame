@@ -46,7 +46,13 @@ def worker_lifecycle_process(
     - Soporta IPCWorkerQueueAdapter (0 conexiones directas a MySQL) o MySQLQueueAdapter directo.
     - Manejo de señales: ignora SIGINT para que el supervisor coordine el apagado seguro.
     """
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    def _worker_sigint_handler(signum, frame):
+        stop_event.set()
+
+    try:
+        signal.signal(signal.SIGINT, _worker_sigint_handler)
+    except Exception:
+        pass
 
     worker_tag = f"W{worker_slot}-G{generation}"
     w_log = logging.getLogger(worker_tag)
@@ -227,10 +233,19 @@ def worker_lifecycle_process(
             consultas_realizadas += num_proc
             w_log.info(f"[{worker_tag}] 💾 Lote de {num_proc} procesado y guardado. (Total gen: {consultas_realizadas}/{max_queries})")
 
-            # Jitter de cortesía entre lotes
-            delay = random.uniform(delay_min, delay_max)
-            time.sleep(delay)
+            if stop_event.is_set():
+                break
 
+            # Jitter de cortesía entre lotes (interrumpible inmediatamente por stop_event)
+            delay = random.uniform(delay_min, delay_max)
+            t_fin_delay = time.time() + delay
+            while time.time() < t_fin_delay:
+                if stop_event.is_set():
+                    break
+                time.sleep(0.1)
+
+    except (KeyboardInterrupt, SystemExit):
+        w_log.info(f"[{worker_tag}] Detención solicitada (Ctrl+C). Finalizando proceso limpiamente...")
     except Exception as e:
         w_log.critical(f"[{worker_tag}] Fallo crítico en proceso worker: {e}", exc_info=True)
     finally:
@@ -241,12 +256,15 @@ def worker_lifecycle_process(
             except Exception:
                 pass
 
-        stats_queue.put({
-            "tipo": "worker_exit",
-            "slot": worker_slot,
-            "gen": generation,
-            "scraper": scraper_name,
-            "consultas": consultas_realizadas,
-            "recycled": consultas_realizadas >= max_queries
-        })
+        try:
+            stats_queue.put_nowait({
+                "tipo": "worker_exit",
+                "slot": worker_slot,
+                "gen": generation,
+                "scraper": scraper_name,
+                "consultas": consultas_realizadas,
+                "recycled": consultas_realizadas >= max_queries
+            })
+        except Exception:
+            pass
         w_log.info(f"[{worker_tag}] Proceso finalizado. Total consultas ejecutadas: {consultas_realizadas}.")

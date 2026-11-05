@@ -210,4 +210,8 @@ def main():
 
 if __name__ == "__main__":
     multiprocessing.freeze_support()
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n🛑 Proceso supervisor finalizado limpiamente por el usuario.")
+        sys.exit(0)
